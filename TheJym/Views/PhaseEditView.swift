@@ -22,6 +22,7 @@ struct PhaseEditView: View {
 
     @State private var newDayName = ""
     @State private var showingNewDayAlert = false
+    @State private var editingDayID: PersistentIdentifier?
 
     var body: some View {
         NavigationStack {
@@ -41,14 +42,18 @@ struct PhaseEditView: View {
                                         get: { day.name },
                                         set: { day.name = $0 }))
                                         .font(.headline)
+                                        .fixedSize()
                                     Spacer()
-                                    NavigationLink {
-                                        PhaseDayEditView(day: day, exerciseDefs: exerciseDefs, bars: bars)
+                                    Button {
+                                        editingDayID = day.persistentModelID
                                     } label: {
                                         Text("\(day.plannedExercises.count) exercise\(day.plannedExercises.count == 1 ? "" : "s")")
-                                            .font(.caption).foregroundStyle(.secondary)
+                                            .font(.subheadline.weight(.semibold))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(Color.accentColor.opacity(0.15), in: Capsule())
                                     }
-                                    .fixedSize()
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }
@@ -87,6 +92,11 @@ struct PhaseEditView: View {
                     addDay(name: trimmed, isRest: false)
                 }
                 Button("Cancel", role: .cancel) { newDayName = "" }
+            }
+            .navigationDestination(item: $editingDayID) { id in
+                if let day = phase.orderedDays.first(where: { $0.persistentModelID == id }) {
+                    PhaseDayEditView(day: day, exerciseDefs: exerciseDefs, bars: bars)
+                }
             }
         }
     }

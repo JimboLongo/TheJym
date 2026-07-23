@@ -29,6 +29,7 @@ struct PhaseBuilderView: View {
     @State private var newDayName = ""
     @State private var showingNewDayAlert = false
     @State private var pendingPreset: SplitPreset?
+    @State private var editingDayID: UUID?
 
     struct SplitPreset {
         let name: String
@@ -146,14 +147,18 @@ struct PhaseBuilderView: View {
                                     HStack {
                                         TextField("Day name", text: $day.name)
                                             .font(.headline)
+                                            .fixedSize()
                                         Spacer()
-                                        NavigationLink {
-                                            DayEditorView(day: $day, exerciseDefs: exerciseDefs, bars: bars)
+                                        Button {
+                                            editingDayID = day.id
                                         } label: {
                                             Text("\(day.exercises.count) exercise\(day.exercises.count == 1 ? "" : "s")")
-                                                .font(.caption).foregroundStyle(.secondary)
+                                                .font(.subheadline.weight(.semibold))
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 6)
+                                                .background(Color.accentColor.opacity(0.15), in: Capsule())
                                         }
-                                        .fixedSize()
+                                        .buttonStyle(.plain)
                                     }
                                     if let source = copySource(for: day) {
                                         Toggle("Copy from \(source.name)", isOn: Binding(
@@ -226,7 +231,22 @@ struct PhaseBuilderView: View {
                 Button("Cancel", role: .cancel) { pendingPreset = nil }
             }
             .onAppear(perform: seed)
+            .navigationDestination(item: $editingDayID) { id in
+                DayEditorView(day: bindingForDay(id: id), exerciseDefs: exerciseDefs, bars: bars)
+            }
         }
+    }
+
+    /// Looked up by id (not a fixed index) so it stays valid across
+    /// reordering/deleting other days while this one's editor is open.
+    private func bindingForDay(id: UUID) -> Binding<DayDraft> {
+        Binding(
+            get: { dayDrafts.first { $0.id == id } ?? DayDraft(name: "", isRest: false) },
+            set: { newValue in
+                if let idx = dayDrafts.firstIndex(where: { $0.id == id }) {
+                    dayDrafts[idx] = newValue
+                }
+            })
     }
 
     private func choosePreset(_ preset: SplitPreset) {
