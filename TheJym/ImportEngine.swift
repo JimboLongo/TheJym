@@ -61,7 +61,8 @@ enum ImportEngine {
     static func importIntoStore(_ rows: [ImportedSet], context: ModelContext) -> ImportResult {
         let cal = Calendar.current
         let byDay = Dictionary(grouping: rows) { cal.startOfDay(for: $0.date) }
-        var knownExerciseNames = Set((try? context.fetch(FetchDescriptor<ExerciseDef>()))?.map(\.name) ?? [])
+        let existingDefs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
+        var knownDefs = Dictionary(uniqueKeysWithValues: existingDefs.map { ($0.name, $0) })
 
         var sessionsCreated = 0
         var setsImported = 0
@@ -87,7 +88,7 @@ enum ImportEngine {
                     idx = logs.count - 1
                     logIndexByName[row.exerciseName] = idx
                     setCounts[idx] = 0
-                    ExerciseDef.ensureAnyVariantExists(name: row.exerciseName, knownNames: &knownExerciseNames, context: context)
+                    ExerciseDef.ensureAnyVariantExists(name: row.exerciseName, knownDefs: &knownDefs, context: context)
                 }
                 let setIndex = setCounts[idx] ?? 0
                 let set = SetLog(index: setIndex, weight: row.weight, reps: row.reps)

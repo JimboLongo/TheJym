@@ -68,10 +68,39 @@ struct PhaseBuilderView: View {
         var name: String
         var isRest: Bool
         var exercises: [DraftExercise] = []
+        /// Set while this day's list is a straight copy of another day's —
+        /// drives the "Copy from X" checkbox's checked state.
+        var copiedFromID: UUID?
     }
 
     private var canSave: Bool {
         !dayDrafts.isEmpty && dayDrafts.contains { !$0.isRest && !$0.exercises.isEmpty }
+    }
+
+    /// If `name` looks like the second half of an A/B or 1/2 pair (e.g. "Legs
+    /// B", "Push 2"), the counterpart name to offer a "copy from" shortcut for.
+    private static func copyCounterpartName(for name: String) -> String? {
+        let parts = name.trimmingCharacters(in: .whitespaces).split(separator: " ")
+        guard parts.count >= 2, let last = parts.last else { return nil }
+        let base = parts.dropLast().joined(separator: " ")
+
+        if last.count == 1, let ch = last.first, ch.isLetter, ch.isUppercase, ch != "A" {
+            return "\(base) A"
+        }
+        if let n = Int(last), n >= 2 {
+            return "\(base) 1"
+        }
+        return nil
+    }
+
+    /// The day to offer copying from, if `day`'s name has a counterpart that
+    /// already exists and has exercises to copy.
+    private func copySource(for day: DayDraft) -> DayDraft? {
+        guard let counterpart = Self.copyCounterpartName(for: day.name) else { return nil }
+        return dayDrafts.first {
+            !$0.isRest && !$0.exercises.isEmpty && $0.id != day.id &&
+            $0.name.localizedCaseInsensitiveCompare(counterpart) == .orderedSame
+        }
     }
 
     var body: some View {
@@ -106,13 +135,35 @@ struct PhaseBuilderView: View {
                         if day.isRest {
                             Text("Rest").foregroundStyle(.secondary)
                         } else {
-                            NavigationLink {
-                                DayEditorView(day: $day, exerciseDefs: exerciseDefs, bars: bars)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(day.name).font(.headline)
-                                    Text("\(day.exercises.count) exercise\(day.exercises.count == 1 ? "" : "s")")
-                                        .font(.caption).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    TextField("Day name", text: $day.name)
+                                        .font(.headline)
+                                    Spacer()
+                                    NavigationLink {
+                                        DayEditorView(day: $day, exerciseDefs: exerciseDefs, bars: bars)
+                                    } label: {
+                                        Text("\(day.exercises.count) exercise\(day.exercises.count == 1 ? "" : "s")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    .fixedSize()
+                                }
+                                if let source = copySource(for: day) {
+                                    Toggle("Copy from \(source.name)", isOn: Binding(
+                                        get: { day.copiedFromID == source.id },
+                                        set: { checked in
+                                            if checked {
+                                                day.exercises = source.exercises.map {
+                                                    DraftExercise(name: $0.name, repsText: $0.repsText,
+                                                                  weightsText: $0.weightsText, isLowerBody: $0.isLowerBody)
+                                                }
+                                                day.copiedFromID = source.id
+                                            } else {
+                                                day.exercises = []
+                                                day.copiedFromID = nil
+                                            }
+                                        }))
+                                        .font(.caption)
                                 }
                             }
                         }
@@ -204,7 +255,7 @@ struct PhaseBuilderView: View {
         let phase = Phase(number: nextNumber, totalCycles: cycles, deloadCycle: deload)
         context.insert(phase)
 
-        var knownVariantKeys = Set(exerciseDefs.map(\.variantKey))
+        var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
         for (dayOrder, dayDraft) in dayDrafts.enumerated() {
             let day = PhaseDay(order: dayOrder, name: dayDraft.name, isRest: dayDraft.isRest)
             day.phase = phase
@@ -221,7 +272,7 @@ struct PhaseBuilderView: View {
                 context.insert(pe)
 
                 ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps, isLowerBody: d.isLowerBody,
-                                                knownVariantKeys: &knownVariantKeys, context: context)
+                                                knownDefs: &knownDefs, context: context)
             }
         }
         try? context.save()
@@ -233,16 +284,14 @@ struct PhaseBuilderView: View {
 /// or extend the shared Exercises library, so anything added here shows up
 /// there too.
 struct DayEditorView: View {
+    @Environment(\.modelContext) private var context
     @Binding var day: PhaseBuilderView.DayDraft
     let exerciseDefs: [ExerciseDef]
     let bars: [Bar]
 
     @State private var showingNewExerciseSheet = false
-    @State private var prefilledName: String?
-
-    private var groupedExerciseDefs: [(name: String, variants: [ExerciseDef])] {
-        ExerciseDef.grouped(exerciseDefs)
-    }
+    @State private var addSetTarget: ExerciseDef?
+    @State private var newSetReps = ""
 
     var body: some View {
         List {
@@ -252,39 +301,51 @@ struct DayEditorView: View {
             .onDelete { idx in day.exercises.remove(atOffsets: idx) }
 
             Menu("Add Exercise") {
-                ForEach(groupedExerciseDefs, id: \.name) { group in
-                    Menu(group.name) {
-                        ForEach(group.variants, id: \.persistentModelID) { def in
-                            Button(def.targetReps.map(String.init).joined(separator: "/")) {
-                                addToDay(def)
+                ForEach(exerciseDefs, id: \.persistentModelID) { def in
+                    if def.repSchemes.isEmpty {
+                        Button("\(def.name)…") { addSetTarget = def }
+                    } else {
+                        Menu(def.name) {
+                            ForEach(def.repSchemes, id: \.self) { reps in
+                                Button(reps.map(String.init).joined(separator: "/")) {
+                                    addToDay(def, reps: reps)
+                                }
                             }
-                        }
-                        Divider()
-                        Button("Add New Set…") {
-                            prefilledName = group.name
-                            showingNewExerciseSheet = true
+                            Divider()
+                            Button("Add New Set…") { addSetTarget = def }
                         }
                     }
                 }
                 Divider()
-                Button("New Exercise…") {
-                    prefilledName = nil
-                    showingNewExerciseSheet = true
-                }
+                Button("New Exercise…") { showingNewExerciseSheet = true }
             }
         }
         .navigationTitle(day.name)
         .sheet(isPresented: $showingNewExerciseSheet) {
-            ExerciseEditView(def: nil, bars: bars, prefilledName: prefilledName) { newDef in
-                addToDay(newDef)
+            ExerciseEditView(def: nil, bars: bars) { newDef in
+                addToDay(newDef, reps: newDef.repSchemes.first ?? [8, 8, 8])
             }
+        }
+        .alert("Add a Set to \(addSetTarget?.name ?? "")",
+               isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
+            TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
+            Button("Add") {
+                let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                newSetReps = ""
+                guard !reps.isEmpty, let def = addSetTarget else { addSetTarget = nil; return }
+                def.addRepScheme(reps)
+                try? context.save()
+                addToDay(def, reps: reps)
+                addSetTarget = nil
+            }
+            Button("Cancel", role: .cancel) { newSetReps = ""; addSetTarget = nil }
         }
     }
 
-    private func addToDay(_ def: ExerciseDef) {
+    private func addToDay(_ def: ExerciseDef, reps: [Int]) {
         day.exercises.append(
             PhaseBuilderView.DraftExercise(name: def.name,
-                                           repsText: def.targetReps.map(String.init).joined(separator: "/"),
+                                           repsText: reps.map(String.init).joined(separator: "/"),
                                            weightsText: "",
                                            isLowerBody: def.isLowerBody))
     }

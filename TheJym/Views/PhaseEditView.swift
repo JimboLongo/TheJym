@@ -35,14 +35,19 @@ struct PhaseEditView: View {
                         if day.isRest {
                             Text("Rest").foregroundStyle(.secondary)
                         } else {
-                            NavigationLink {
-                                PhaseDayEditView(day: day, exerciseDefs: exerciseDefs, bars: bars)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(day.name).font(.headline)
+                            HStack {
+                                TextField("Day name", text: Binding(
+                                    get: { day.name },
+                                    set: { day.name = $0 }))
+                                    .font(.headline)
+                                Spacer()
+                                NavigationLink {
+                                    PhaseDayEditView(day: day, exerciseDefs: exerciseDefs, bars: bars)
+                                } label: {
                                     Text("\(day.plannedExercises.count) exercise\(day.plannedExercises.count == 1 ? "" : "s")")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
+                                .fixedSize()
                             }
                         }
                     }
@@ -54,7 +59,7 @@ struct PhaseEditView: View {
                 } header: {
                     Text("One Cycle")
                 } footer: {
-                    Text("Deleting a day here doesn't delete workouts you've already logged for it — they stay in History without a day attached.")
+                    Text("Rename, reorder, add, or delete days freely — deleting a day doesn't delete workouts you've already logged for it, they stay in History without a day attached.")
                 }
             }
             .navigationTitle("Edit Phase \(phase.number)")
@@ -109,20 +114,15 @@ struct PhaseDayEditView: View {
     let bars: [Bar]
 
     @State private var showingNewExerciseSheet = false
-    @State private var prefilledName: String?
+    @State private var addSetTarget: ExerciseDef?
+    @State private var newSetReps = ""
 
-    private var groupedExerciseDefs: [(name: String, variants: [ExerciseDef])] {
-        ExerciseDef.grouped(exerciseDefs)
-    }
     private var sortedExercises: [PlannedExercise] {
         day.plannedExercises.sorted { $0.order < $1.order }
     }
 
     var body: some View {
         Form {
-            Section("Day Name") {
-                TextField("Day name", text: $day.name)
-            }
             Section("Exercises") {
                 ForEach(sortedExercises, id: \.persistentModelID) { pe in
                     PlannedExerciseRow(pe: pe)
@@ -132,39 +132,51 @@ struct PhaseDayEditView: View {
                     for i in idx { context.delete(sorted[i]) }
                 }
                 Menu("Add Exercise") {
-                    ForEach(groupedExerciseDefs, id: \.name) { group in
-                        Menu(group.name) {
-                            ForEach(group.variants, id: \.persistentModelID) { def in
-                                Button(def.targetReps.map(String.init).joined(separator: "/")) {
-                                    addExercise(def)
+                    ForEach(exerciseDefs, id: \.persistentModelID) { def in
+                        if def.repSchemes.isEmpty {
+                            Button("\(def.name)…") { addSetTarget = def }
+                        } else {
+                            Menu(def.name) {
+                                ForEach(def.repSchemes, id: \.self) { reps in
+                                    Button(reps.map(String.init).joined(separator: "/")) {
+                                        addExercise(def, reps: reps)
+                                    }
                                 }
-                            }
-                            Divider()
-                            Button("Add New Set…") {
-                                prefilledName = group.name
-                                showingNewExerciseSheet = true
+                                Divider()
+                                Button("Add New Set…") { addSetTarget = def }
                             }
                         }
                     }
                     Divider()
-                    Button("New Exercise…") {
-                        prefilledName = nil
-                        showingNewExerciseSheet = true
-                    }
+                    Button("New Exercise…") { showingNewExerciseSheet = true }
                 }
             }
         }
         .navigationTitle(day.name)
         .sheet(isPresented: $showingNewExerciseSheet) {
-            ExerciseEditView(def: nil, bars: bars, prefilledName: prefilledName) { newDef in
-                addExercise(newDef)
+            ExerciseEditView(def: nil, bars: bars) { newDef in
+                addExercise(newDef, reps: newDef.repSchemes.first ?? [8, 8, 8])
             }
+        }
+        .alert("Add a Set to \(addSetTarget?.name ?? "")",
+               isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
+            TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
+            Button("Add") {
+                let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                newSetReps = ""
+                guard !reps.isEmpty, let def = addSetTarget else { addSetTarget = nil; return }
+                def.addRepScheme(reps)
+                try? context.save()
+                addExercise(def, reps: reps)
+                addSetTarget = nil
+            }
+            Button("Cancel", role: .cancel) { newSetReps = ""; addSetTarget = nil }
         }
     }
 
-    private func addExercise(_ def: ExerciseDef) {
+    private func addExercise(_ def: ExerciseDef, reps: [Int]) {
         let pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
-                                 targetReps: def.targetReps, isLowerBody: def.isLowerBody)
+                                 targetReps: reps, isLowerBody: def.isLowerBody)
         pe.day = day
         context.insert(pe)
     }

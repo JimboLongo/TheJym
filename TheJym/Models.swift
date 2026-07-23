@@ -83,61 +83,59 @@ final class Bar {
 
 // MARK: - Exercise library
 
-/// A persistent, user-managed exercise definition: name, default rep scheme,
-/// tagged equipment, and notes. Lives independently of any Phase — Phase Setup
-/// picks from these, and the exercise's history spans every phase it's used in.
-///
-/// The same name can have multiple rep-scheme *variants* — "Back Squat"
-/// 8/8/8 and "Back Squat" 6/8/10 are two distinct ExerciseDef rows, each
-/// independently tagged and each with its own history.
+/// A persistent, user-managed exercise definition. Equipment, notes, and
+/// isLowerBody belong to the exercise itself, regardless of rep scheme.
+/// `repSchemes` is the list of saved "sets" under it (e.g. "Back Squat" might
+/// have both 8/8/8 and 6/8/10 saved) — each has its own logged history, but
+/// they all share the same equipment/notes. Lives independently of any
+/// Phase — Phase Setup picks from these, and history spans every phase used in.
 @Model
 final class ExerciseDef {
-    var name: String
-    var targetReps: [Int]          // default rep scheme, e.g. [5,5,5,3,3,3]
+    @Attribute(.unique) var name: String
     var isLowerBody: Bool          // used by progression engine for jump sizes
     var notes: String = ""
     var equipment: Bar?
+    var repSchemes: [[Int]] = []   // saved sets, e.g. [[5,5,5,3,3,3], [8,8,8]]
 
-    init(name: String, targetReps: [Int] = [8, 8, 8], isLowerBody: Bool = false,
-         notes: String = "", equipment: Bar? = nil) {
+    init(name: String, isLowerBody: Bool = false, notes: String = "",
+         equipment: Bar? = nil, repSchemes: [[Int]] = []) {
         self.name = name
-        self.targetReps = targetReps
         self.isLowerBody = isLowerBody
         self.notes = notes
         self.equipment = equipment
+        self.repSchemes = repSchemes
     }
 
-    /// Identifies a specific name + rep-scheme variant, e.g. "Back Squat|8/8/8".
-    var variantKey: String { "\(name)|\(targetReps.map(String.init).joined(separator: "/"))" }
+    /// Adds `reps` as a saved set if it isn't already present.
+    func addRepScheme(_ reps: [Int]) {
+        guard !reps.isEmpty, !repSchemes.contains(reps) else { return }
+        repSchemes.append(reps)
+    }
 
-    /// Groups a list of definitions by name, sorted alphabetically, with each
-    /// name's variants sorted by rep scheme — shared by the Exercises tab and
-    /// Phase Setup's exercise picker.
-    static func grouped(_ defs: [ExerciseDef]) -> [(name: String, variants: [ExerciseDef])] {
-        let byName = Dictionary(grouping: defs, by: \.name)
-        return byName.keys.sorted().map { name in
-            (name, byName[name]!.sorted { $0.targetReps.lexicographicallyPrecedes($1.targetReps) })
+    /// Ensures `name` exists in the library, and that `targetReps` is one of
+    /// its saved sets — creating the exercise and/or adding the set as
+    /// needed. Used by Phase Setup, where the rep scheme is meaningful (a
+    /// real target, not just a log of what happened).
+    static func ensureVariantExists(name: String, targetReps: [Int], isLowerBody: Bool = false,
+                                    knownDefs: inout [String: ExerciseDef], context: ModelContext) {
+        if let def = knownDefs[name] {
+            def.addRepScheme(targetReps)
+        } else {
+            let def = ExerciseDef(name: name, isLowerBody: isLowerBody,
+                                  repSchemes: targetReps.isEmpty ? [] : [targetReps])
+            context.insert(def)
+            knownDefs[name] = def
         }
     }
 
-    /// Creates a new variant (name + rep scheme) if this exact combination
-    /// doesn't exist yet. Used by Phase Setup, where the rep scheme is
-    /// meaningful (a real target, not just a log of what happened).
-    static func ensureVariantExists(name: String, targetReps: [Int], isLowerBody: Bool = false,
-                                    knownVariantKeys: inout Set<String>, context: ModelContext) {
-        let key = "\(name)|\(targetReps.map(String.init).joined(separator: "/"))"
-        guard !knownVariantKeys.contains(key) else { return }
-        context.insert(ExerciseDef(name: name, targetReps: targetReps, isLowerBody: isLowerBody))
-        knownVariantKeys.insert(key)
-    }
-
-    /// Creates a bare entry for `name` only if no variant of it exists yet —
-    /// used where there's no meaningful target rep scheme (a CSV import or a
-    /// manually back-filled historical workout just logs what happened).
-    static func ensureAnyVariantExists(name: String, knownNames: inout Set<String>, context: ModelContext) {
-        guard !knownNames.contains(name) else { return }
-        context.insert(ExerciseDef(name: name))
-        knownNames.insert(name)
+    /// Ensures `name` exists in the library at all — used where there's no
+    /// meaningful target rep scheme (a CSV import or a manually back-filled
+    /// historical workout just logs what happened).
+    static func ensureAnyVariantExists(name: String, knownDefs: inout [String: ExerciseDef], context: ModelContext) {
+        guard knownDefs[name] == nil else { return }
+        let def = ExerciseDef(name: name)
+        context.insert(def)
+        knownDefs[name] = def
     }
 }
 

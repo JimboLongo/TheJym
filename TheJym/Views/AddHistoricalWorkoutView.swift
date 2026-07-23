@@ -105,7 +105,7 @@ struct AddHistoricalWorkoutView: View {
         let session = WorkoutSession(date: date, dayLabel: "Manual", cycleNumber: 0)
         context.insert(session)
 
-        var knownNames = Set(exerciseDefs.map(\.name))
+        var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
         for (order, entry) in entries.enumerated() {
             let log = ExerciseLog(exerciseName: entry.name, targetReps: [], order: order)
             log.session = session
@@ -115,7 +115,7 @@ struct AddHistoricalWorkoutView: View {
                 set.exerciseLog = log
                 context.insert(set)
             }
-            ExerciseDef.ensureAnyVariantExists(name: entry.name, knownNames: &knownNames, context: context)
+            ExerciseDef.ensureAnyVariantExists(name: entry.name, knownDefs: &knownDefs, context: context)
         }
         try? context.save()
         dismiss()

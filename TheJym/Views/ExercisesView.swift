@@ -2,13 +2,10 @@
 //  ExercisesView.swift
 //  TheJym
 //
-//  A persistent, user-managed exercise library: add exercises, tag their
-//  equipment, jot notes, and pull up each one's full logged history
-//  (most recent first) — independent of any Phase.
-//
-//  The same name can have multiple rep-scheme variants (e.g. "Back Squat"
-//  8/8/8 vs 6/8/10) — each is tracked as its own ExerciseDef with its own
-//  history. Names with a single variant skip the extra tap.
+//  A persistent, user-managed exercise library, one row per exercise name.
+//  Tapping an exercise shows its equipment and notes (which apply regardless
+//  of rep scheme) plus its list of saved sets below; tapping a set shows the
+//  logged history for that exact exercise/set combo.
 //
 
 import SwiftUI
@@ -21,10 +18,6 @@ struct ExercisesView: View {
     @Query private var allLogs: [ExerciseLog]
 
     @State private var showingAdd = false
-
-    private var groups: [(name: String, variants: [ExerciseDef])] {
-        ExerciseDef.grouped(exerciseDefs)
-    }
 
     var body: some View {
         NavigationStack {
@@ -39,31 +32,21 @@ struct ExercisesView: View {
                             .buttonStyle(.borderedProminent)
                     }
                 }
-                ForEach(groups, id: \.name) { group in
-                    if group.variants.count == 1, let only = group.variants.first {
-                        NavigationLink {
-                            ExerciseDetailView(def: only, bars: bars, allLogs: allLogs, matchByVariantOnly: false)
-                        } label: {
-                            exerciseRow(only)
-                        }
-                    } else {
-                        NavigationLink {
-                            ExerciseVariantsView(name: group.name, variants: group.variants,
-                                                 bars: bars, allLogs: allLogs)
-                        } label: {
-                            HStack {
-                                Text(group.name).font(.headline)
-                                Spacer()
-                                Text("\(group.variants.count) variants")
-                                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(exerciseDefs, id: \.persistentModelID) { def in
+                    NavigationLink {
+                        ExerciseDetailView(def: def, bars: bars, allLogs: allLogs)
+                    } label: {
+                        HStack {
+                            Text(def.name).font(.headline)
+                            Spacer()
+                            if let eq = def.equipment {
+                                Text(eq.name).font(.caption).foregroundStyle(.secondary)
                             }
                         }
                     }
                 }
                 .onDelete { idx in
-                    for i in idx {
-                        for def in groups[i].variants { context.delete(def) }
-                    }
+                    for i in idx { context.delete(exerciseDefs[i]) }
                     try? context.save()
                 }
             }
@@ -78,57 +61,11 @@ struct ExercisesView: View {
             }
         }
     }
-
-    private func exerciseRow(_ def: ExerciseDef) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(def.name).font(.headline)
-                Spacer()
-                if let eq = def.equipment {
-                    Text(eq.name).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Text(def.targetReps.map(String.init).joined(separator: "/"))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-        }
-    }
 }
 
-/// Shown when a name has more than one rep-scheme variant — e.g. tapping
-/// "Back Squat" here lists "8/8/8" and "6/8/10" as separate entries.
-struct ExerciseVariantsView: View {
-    @Environment(\.modelContext) private var context
-    let name: String
-    let variants: [ExerciseDef]
-    let bars: [Bar]
-    let allLogs: [ExerciseLog]
-
-    var body: some View {
-        List {
-            ForEach(variants, id: \.persistentModelID) { def in
-                NavigationLink {
-                    ExerciseDetailView(def: def, bars: bars, allLogs: allLogs, matchByVariantOnly: true)
-                } label: {
-                    HStack {
-                        Text(def.targetReps.map(String.init).joined(separator: "/"))
-                            .font(.system(.body, design: .monospaced))
-                        Spacer()
-                        if let eq = def.equipment {
-                            Text(eq.name).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .onDelete { idx in
-                for i in idx { context.delete(variants[i]) }
-                try? context.save()
-            }
-        }
-        .navigationTitle(name)
-    }
-}
-
+/// Add a brand-new exercise (name + starting set + equipment/notes), or edit
+/// an existing one's name/equipment/notes in place. Editing never touches
+/// saved sets — those are managed from ExerciseDetailView.
 struct ExerciseEditView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -137,9 +74,6 @@ struct ExerciseEditView: View {
     /// nil = creating a new exercise; otherwise editing this one in place.
     let def: ExerciseDef?
     let bars: [Bar]
-    /// Pre-fills the name field for a new exercise (e.g. "add a new set" for
-    /// an existing name) — ignored when `def` is non-nil.
-    var prefilledName: String? = nil
     /// Called with the created/edited definition right before dismissing.
     var onSave: ((ExerciseDef) -> Void)? = nil
 
@@ -154,10 +88,10 @@ struct ExerciseEditView: View {
     }
 
     /// Only relevant when creating new — editing in place can't collide with itself.
-    private var isDuplicate: Bool {
+    private var isDuplicateName: Bool {
         guard def == nil else { return false }
-        let key = "\(name.trimmingCharacters(in: .whitespaces))|\(reps.map(String.init).joined(separator: "/"))"
-        return allDefs.contains { $0.variantKey == key }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        return allDefs.contains { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
     var body: some View {
@@ -165,12 +99,14 @@ struct ExerciseEditView: View {
             Form {
                 Section {
                     TextField("Exercise name", text: $name)
-                    TextField("Reps e.g. 5/5/5/3/3/3", text: $repsText)
-                        .keyboardType(.numbersAndPunctuation)
-                        .font(.system(.body, design: .monospaced))
+                    if def == nil {
+                        TextField("Starting set (reps) e.g. 5/5/5/3/3/3", text: $repsText)
+                            .keyboardType(.numbersAndPunctuation)
+                            .font(.system(.body, design: .monospaced))
+                    }
                     Toggle("Lower Body", isOn: $isLowerBody)
-                    if isDuplicate {
-                        Label("This exact name + rep scheme already exists.", systemImage: "exclamationmark.triangle")
+                    if isDuplicateName {
+                        Label("An exercise with this name already exists.", systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.orange)
                     }
                 }
@@ -190,43 +126,40 @@ struct ExerciseEditView: View {
                         .lineLimit(1...4)
                 }
             }
-            .navigationTitle(def == nil ? "Add Exercise" : "Edit Exercise")
+            .navigationTitle(def == nil ? "New Exercise" : "Edit Exercise")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || reps.isEmpty || isDuplicate)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || (def == nil && reps.isEmpty) || isDuplicateName)
                 }
             }
             .onAppear {
-                if let def {
-                    name = def.name
-                    repsText = def.targetReps.map(String.init).joined(separator: "/")
-                    isLowerBody = def.isLowerBody
-                    notes = def.notes
-                    equipmentID = def.equipment?.persistentModelID
-                } else if let prefilledName {
-                    name = prefilledName
-                }
+                guard let def else { return }
+                name = def.name
+                isLowerBody = def.isLowerBody
+                notes = def.notes
+                equipmentID = def.equipment?.persistentModelID
             }
         }
     }
 
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmedName.isEmpty, !reps.isEmpty, !isDuplicate else { return }
+        guard !trimmedName.isEmpty, !isDuplicateName else { return }
         let equipment = bars.first { $0.persistentModelID == equipmentID }
         let saved: ExerciseDef
         if let def {
             def.name = trimmedName
-            def.targetReps = reps
             def.isLowerBody = isLowerBody
             def.notes = notes
             def.equipment = equipment
             saved = def
         } else {
-            let newDef = ExerciseDef(name: trimmedName, targetReps: reps, isLowerBody: isLowerBody,
-                                     notes: notes, equipment: equipment)
+            guard !reps.isEmpty else { return }
+            let newDef = ExerciseDef(name: trimmedName, isLowerBody: isLowerBody,
+                                     notes: notes, equipment: equipment, repSchemes: [reps])
             context.insert(newDef)
             saved = newDef
         }
@@ -237,23 +170,14 @@ struct ExerciseEditView: View {
 }
 
 struct ExerciseDetailView: View {
+    @Environment(\.modelContext) private var context
     let def: ExerciseDef
     let bars: [Bar]
     let allLogs: [ExerciseLog]
-    /// true when sibling variants exist for this name — narrows history to
-    /// exactly this rep scheme rather than every log under the name.
-    let matchByVariantOnly: Bool
 
     @State private var showingEdit = false
-
-    private var history: [ExerciseLog] {
-        allLogs
-            .filter {
-                guard $0.exerciseName == def.name, !$0.sets.isEmpty else { return false }
-                return matchByVariantOnly ? $0.targetReps == def.targetReps : true
-            }
-            .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
-    }
+    @State private var showingAddSet = false
+    @State private var newSetReps = ""
 
     var body: some View {
         List {
@@ -268,9 +192,65 @@ struct ExerciseDetailView: View {
                 }
             }
 
+            Section("Saved Sets") {
+                if def.repSchemes.isEmpty {
+                    Text("No sets saved yet.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(def.repSchemes, id: \.self) { reps in
+                        NavigationLink {
+                            ExerciseSetHistoryView(def: def, reps: reps, allLogs: allLogs)
+                        } label: {
+                            Text(reps.map(String.init).joined(separator: "/"))
+                                .font(.system(.body, design: .monospaced))
+                        }
+                    }
+                    .onDelete { idx in
+                        def.repSchemes.remove(atOffsets: idx)
+                        try? context.save()
+                    }
+                }
+                Button("Add Set…") { showingAddSet = true }
+            }
+        }
+        .navigationTitle(def.name)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Edit") { showingEdit = true }
+            }
+        }
+        .sheet(isPresented: $showingEdit) {
+            ExerciseEditView(def: def, bars: bars)
+        }
+        .alert("Add a Set", isPresented: $showingAddSet) {
+            TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
+            Button("Add") {
+                let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                newSetReps = ""
+                def.addRepScheme(reps)
+                try? context.save()
+            }
+            Button("Cancel", role: .cancel) { newSetReps = "" }
+        }
+    }
+}
+
+/// History for one exact exercise/set combo, most recent first.
+struct ExerciseSetHistoryView: View {
+    let def: ExerciseDef
+    let reps: [Int]
+    let allLogs: [ExerciseLog]
+
+    private var history: [ExerciseLog] {
+        allLogs
+            .filter { $0.exerciseName == def.name && $0.targetReps == reps && !$0.sets.isEmpty }
+            .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
+    }
+
+    var body: some View {
+        List {
             if history.isEmpty {
                 ContentUnavailableView("No History Yet", systemImage: "clock",
-                                       description: Text("Log this exercise in a workout and it'll show up here."))
+                                       description: Text("Log this set in a workout and it'll show up here."))
             } else {
                 ForEach(history, id: \.persistentModelID) { log in
                     Section(Formatters.date.string(from: log.session?.date ?? .distantPast)) {
@@ -286,14 +266,6 @@ struct ExerciseDetailView: View {
                 }
             }
         }
-        .navigationTitle(def.name)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Edit") { showingEdit = true }
-            }
-        }
-        .sheet(isPresented: $showingEdit) {
-            ExerciseEditView(def: def, bars: bars)
-        }
+        .navigationTitle(reps.map(String.init).joined(separator: "/"))
     }
 }
