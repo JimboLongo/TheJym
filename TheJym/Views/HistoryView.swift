@@ -95,13 +95,6 @@ struct HistoryView: View {
                         Section {
                             ForEach(filteredRows) { row in
                                 rowView(row)
-                                    .swipeActions {
-                                        Button(role: .destructive) {
-                                            delete(row)
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                    }
                             }
                         } header: {
                             headerRow
@@ -159,6 +152,7 @@ struct HistoryView: View {
                 Text("Source").frame(width: Col.source, alignment: .leading)
             }
             .padding(.horizontal, 12)
+            Color.clear.frame(width: Col.action)
         }
         .font(.caption.bold())
         .padding(.vertical, 6)
@@ -207,6 +201,14 @@ struct HistoryView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            Button {
+                delete(row)
+            } label: {
+                Image(systemName: "trash").foregroundStyle(.red)
+            }
+            .frame(width: Col.action)
+            .buttonStyle(.plain)
         }
         .font(.system(.caption, design: .monospaced))
         .padding(.vertical, 6)
