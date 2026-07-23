@@ -91,16 +91,26 @@ struct HistoryView: View {
                 } else if filteredRows.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else {
-                    List {
-                        Section {
-                            ForEach(filteredRows) { row in
-                                rowView(row)
+                    GeometryReader { geo in
+                        ScrollView(.horizontal) {
+                            ScrollView(.vertical) {
+                                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                                    Section {
+                                        ForEach(filteredRows) { row in
+                                            rowView(row)
+                                            Divider()
+                                        }
+                                    } header: {
+                                        VStack(spacing: 0) {
+                                            headerRow
+                                            Divider()
+                                        }
+                                    }
+                                }
                             }
-                        } header: {
-                            headerRow
+                            .frame(height: geo.size.height)
                         }
                     }
-                    .listStyle(.plain)
                 }
             }
             .navigationTitle("History")
@@ -177,30 +187,28 @@ struct HistoryView: View {
             .frame(width: Col.action)
             .buttonStyle(.plain)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                NavigationLink {
-                    SessionDetailView(session: row.session)
-                } label: {
-                    HStack(spacing: 0) {
-                        Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
-                        Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(log.exerciseName)
-                            Text(sets.isEmpty ? "—" : sets).foregroundStyle(.secondary)
-                        }
-                        .frame(width: exerciseColWidth, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(weights)
-                            Text("(\(reps))").foregroundStyle(.secondary)
-                        }
-                        .frame(width: liftsColWidth, alignment: .leading)
-                        Text(source).frame(width: Col.source, alignment: .leading)
+            NavigationLink {
+                SessionDetailView(session: row.session)
+            } label: {
+                HStack(spacing: 0) {
+                    Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
+                    Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(log.exerciseName)
+                        Text(sets.isEmpty ? "—" : sets).foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 12)
-                    .contentShape(Rectangle())
+                    .frame(width: exerciseColWidth, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(weights)
+                        Text("(\(reps))").foregroundStyle(.secondary)
+                    }
+                    .frame(width: liftsColWidth, alignment: .leading)
+                    Text(source).frame(width: Col.source, alignment: .leading)
                 }
-                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
             Button {
                 delete(row)
