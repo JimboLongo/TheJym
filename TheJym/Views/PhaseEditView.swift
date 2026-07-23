@@ -142,7 +142,12 @@ struct PhaseDayEditView: View {
                     let sorted = sortedExercises
                     for i in idx { context.delete(sorted[i]) }
                 }
-                Button("Add Exercise") { showingAddExercise = true }
+                Button {
+                    showingAddExercise = true
+                } label: {
+                    Text("Add Exercise")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
             }
         }
         .navigationTitle(day.name)

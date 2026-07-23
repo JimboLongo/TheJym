@@ -333,7 +333,12 @@ struct DayEditorView: View {
             }
             .onDelete { idx in day.exercises.remove(atOffsets: idx) }
 
-            Button("Add Exercise") { showingAddExercise = true }
+            Button {
+                showingAddExercise = true
+            } label: {
+                Text("Add Exercise")
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
         }
         .navigationTitle(day.name)
         .sheet(isPresented: $showingAddExercise) {
@@ -365,6 +370,14 @@ struct AddExerciseToDayView: View {
     @State private var showingNewExerciseSheet = false
     @State private var addSetTarget: ExerciseDef?
     @State private var newSetReps = ""
+    @State private var searchText = ""
+    @State private var selectedDef: ExerciseDef?
+
+    private var filteredDefs: [ExerciseDef] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return exerciseDefs }
+        return exerciseDefs.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+    }
 
     var body: some View {
         NavigationStack {
@@ -372,27 +385,21 @@ struct AddExerciseToDayView: View {
                 if exerciseDefs.isEmpty {
                     Text("No exercises yet — create one below.")
                         .font(.caption).foregroundStyle(.secondary)
-                }
-                ForEach(exerciseDefs, id: \.persistentModelID) { def in
-                    Section(def.name) {
-                        if def.repSchemes.isEmpty {
-                            Text("No saved sets yet").font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            ForEach(def.repSchemes, id: \.self) { reps in
-                                Button {
-                                    onPick(def, reps)
-                                    dismiss()
-                                } label: {
-                                    Text(reps.map(String.init).joined(separator: "/"))
-                                        .font(.system(.body, design: .monospaced))
-                                }
-                            }
+                } else if filteredDefs.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    ForEach(filteredDefs, id: \.persistentModelID) { def in
+                        Button {
+                            selectedDef = def
+                        } label: {
+                            Text(def.name)
+                                .foregroundStyle(.primary)
                         }
-                        Button("Add New Set…") { addSetTarget = def }
                     }
                 }
             }
             .navigationTitle("Add Exercise")
+            .searchable(text: $searchText, prompt: "Filter exercises")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
@@ -403,6 +410,23 @@ struct AddExerciseToDayView: View {
                 ExerciseEditView(def: nil, bars: bars) { newDef in
                     onPick(newDef, newDef.repSchemes.first ?? [8, 8, 8])
                     dismiss()
+                }
+            }
+            .confirmationDialog(selectedDef?.name ?? "", isPresented: Binding(
+                get: { selectedDef != nil },
+                set: { if !$0 { selectedDef = nil } }), titleVisibility: .visible) {
+                if let def = selectedDef {
+                    ForEach(def.repSchemes, id: \.self) { reps in
+                        Button(reps.map(String.init).joined(separator: "/")) {
+                            onPick(def, reps)
+                            dismiss()
+                        }
+                    }
+                    Button("Add New Set…") {
+                        addSetTarget = def
+                        selectedDef = nil
+                    }
+                    Button("Cancel", role: .cancel) { selectedDef = nil }
                 }
             }
             .alert("Add a Set to \(addSetTarget?.name ?? "")",
