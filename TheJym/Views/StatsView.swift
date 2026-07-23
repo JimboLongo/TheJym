@@ -15,6 +15,8 @@ struct StatsView: View {
     @Query private var settingsList: [AppSettings]
     @Query(sort: \WorkoutSession.date) private var sessions: [WorkoutSession]
     @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
+    @Query private var restActivities: [RestDayActivity]
+    @Query private var phases: [Phase]
 
     @State private var newWeightText = ""
 
@@ -22,7 +24,11 @@ struct StatsView: View {
 
     private var stats: TrainingStats {
         StatsEngine.compute(startDate: settings?.trainingStartDate ?? .now,
-                            sessionDates: sessions.map(\.date))
+                            sessionDates: sessions.map(\.date),
+                            restActivityDates: restActivities.map(\.date),
+                            phaseSchedules: phases.map {
+                                StatsEngine.PhaseSchedule(startDate: $0.startDate, splitPattern: $0.splitPattern)
+                            })
     }
 
     var body: some View {

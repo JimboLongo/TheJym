@@ -18,7 +18,7 @@ struct ComparisonTarget: Identifiable {
     let kind: Kind
     let date: Date
     let totalWeightMoved: Double
-    let setsSummary: String        // "6/6/5/4/4/3 @ 135/135/135/145/145/145"
+    let setsSummary: String        // "6/6/5/4/4/3 reps @ 135/135/135/145/145/145 lbs"
 }
 
 enum PaceEngine {
@@ -64,7 +64,7 @@ enum PaceEngine {
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
-                                setsSummary: "\(reps) @ \(weights)")
+                                setsSummary: "\(reps) reps @ \(weights) lbs")
     }
 
     // MARK: Reps-to-beat math

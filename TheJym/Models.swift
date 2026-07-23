@@ -126,11 +126,58 @@ final class Phase {
     /// Non-rest day letters in order of appearance, e.g. "PPLRPPLR" -> ["P","P","L","P","P","L"] positions.
     var patternLetters: [String] { splitPattern.map { String($0) } }
 
-    /// Distinct training-day letters (no "R"), preserving order: "PPLR" -> ["P","L"]
-    var distinctTrainingLetters: [String] {
-        var seen: [String] = []
-        for l in patternLetters where l != "R" && !seen.contains(l) { seen.append(l) }
-        return seen
+    /// Distinct training-day letters within one repeat of the split, in order,
+    /// disambiguating a reused letter (e.g. "PPLR" is Pull, Push, Legs — a
+    /// classic split reuses "P" for two different training days, not one day
+    /// twice): "PPLR" -> ["Pull","Push","L"], "PPLRPPLR" -> the same, since it's
+    /// just that pattern repeated.
+    var distinctTrainingLetters: [String] { Phase.distinctTrainingLetters(for: splitPattern) }
+
+    static func distinctTrainingLetters(for pattern: String) -> [String] {
+        let base = pattern.prefix(basePatternLength(of: pattern))
+        var counts: [Character: Int] = [:]
+        var result: [String] = []
+        for ch in base where ch.isLetter && ch != "R" {
+            counts[ch, default: 0] += 1
+            let n = counts[ch]!
+            switch (ch, n) {
+            case ("P", 1): result.append("Pull")
+            case ("P", 2): result.append("Push")
+            default: result.append(n == 1 ? String(ch) : "\(ch)\(n)")
+            }
+        }
+        return result
+    }
+
+    /// Length of the smallest repeating unit of `pattern`, e.g. "PPLRPPLR" -> 4
+    /// (it's just "PPLR" run twice).
+    private static func basePatternLength(of pattern: String) -> Int {
+        let chars = Array(pattern)
+        let n = chars.count
+        guard n > 0 else { return 0 }
+        for p in 1...n where n % p == 0 {
+            if (0..<n).allSatisfy({ chars[$0] == chars[$0 % p] }) { return p }
+        }
+        return n
+    }
+
+    /// Disambiguated training-day label for each position in the full split
+    /// pattern, cycling through `distinctTrainingLetters` in order, e.g.
+    /// "PPLRPPLR" -> ["Pull","Push","L","R","Pull","Push","L","R"].
+    private var labeledPattern: [String] {
+        let labels = distinctTrainingLetters
+        guard !labels.isEmpty else { return patternLetters }
+        var result: [String] = []
+        var i = 0
+        for ch in splitPattern {
+            if ch == "R" {
+                result.append("R")
+            } else {
+                result.append(labels[i % labels.count])
+                i += 1
+            }
+        }
+        return result
     }
 
     func plan(for letter: String) -> [PlannedExercise] {
@@ -159,9 +206,9 @@ final class Phase {
 
     /// The day letter you're "supposed" to do next according to the pattern.
     var nextDayLetter: String {
-        let trainingLetters = patternLetters.filter { $0 != "R" }
-        guard !trainingLetters.isEmpty else { return "P" }
-        return trainingLetters[nextTrainingDayIndex]
+        let trainingLabels = labeledPattern.filter { $0 != "R" }
+        guard !trainingLabels.isEmpty else { return "P" }
+        return trainingLabels[nextTrainingDayIndex]
     }
 
     var isComplete: Bool {
@@ -261,6 +308,22 @@ final class SetLog {
         self.index = index
         self.weight = weight
         self.reps = reps
+    }
+}
+
+// MARK: - Rest-day activity
+
+/// A lightweight, non-lift activity logged on a day off (a walk, a hike,
+/// stretching, whatever). Never touches Phase/WorkoutSession — it doesn't
+/// advance the split — but counts as a "logged day" for stats/streaks.
+@Model
+final class RestDayActivity {
+    var date: Date
+    var name: String
+
+    init(date: Date = .now, name: String) {
+        self.date = date
+        self.name = name
     }
 }
 

@@ -93,10 +93,28 @@ struct WorkoutLogView: View {
 
     // MARK: Setup
 
+    /// This exercise's logs within the current phase, same plan key, oldest -> newest.
+    private func history(for pe: PlannedExercise) -> [ExerciseLog] {
+        phase.sessions
+            .flatMap(\.exerciseLogs)
+            .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty && $0.session?.isDeload != true }
+            .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
+    }
+
     private func buildDrafts() {
         guard drafts.isEmpty else { return }
+        let aiOn = settings?.aiAssistantEnabled == true
+        let agg = settings?.aiAggressiveness ?? .moderate
+
         for pe in phase.plan(for: dayLetter) {
-            var weights = pe.suggestedWeights
+            let logs = history(for: pe)
+            // AI on: what the AI Assistant thinks is the right goal from history.
+            // AI off: exactly what was lifted last time.
+            var weights = aiOn
+                ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
+                                                        isLowerBody: pe.isLowerBody, aggressiveness: agg)
+                   ?? pe.suggestedWeights)
+                : (logs.last?.sortedSets.map(\.weight) ?? pe.suggestedWeights)
             if isDeloadCycle, !weights.isEmpty {
                 weights = ProgressionEngine.deloadWeights(from: weights)
             }
@@ -149,14 +167,11 @@ struct WorkoutLogView: View {
         let agg = settings?.aiAggressiveness ?? .moderate
         aiSuggestions = []
         for pe in phase.plan(for: dayLetter) {
-            let history = phase.sessions
-                .flatMap(\.exerciseLogs)
-                .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty && $0.session?.isDeload != true }
-                .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
+            let logs = history(for: pe)
             guard let suggestion = ProgressionEngine.suggestNextWeights(
-                targetReps: pe.targetReps, history: history,
+                targetReps: pe.targetReps, history: logs,
                 isLowerBody: pe.isLowerBody, aggressiveness: agg),
-                let latest = history.last else { continue }
+                let latest = logs.last else { continue }
 
             let currentStr = latest.sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
             let suggestedStr = suggestion.map { Formatters.trim($0) }.joined(separator: "/")

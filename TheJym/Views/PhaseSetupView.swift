@@ -32,12 +32,7 @@ struct PhaseSetupView: View {
     }
 
     private var trainingLetters: [String] {
-        var seen: [String] = []
-        for c in pattern.uppercased() where c != "R" && c.isLetter {
-            let s = String(c)
-            if !seen.contains(s) { seen.append(s) }
-        }
-        return seen
+        Phase.distinctTrainingLetters(for: pattern.uppercased())
     }
 
     var body: some View {
