@@ -30,6 +30,7 @@ struct PhaseBuilderView: View {
     @State private var showingNewDayAlert = false
     @State private var pendingPreset: SplitPreset?
     @State private var editingDayID: UUID?
+    @State private var showingPresetPicker = false
 
     struct SplitPreset {
         let name: String
@@ -126,10 +127,8 @@ struct PhaseBuilderView: View {
                 }
 
                 Section {
-                    Menu {
-                        ForEach(Self.presets, id: \.name) { preset in
-                            Button(preset.name) { choosePreset(preset) }
-                        }
+                    Button {
+                        showingPresetPicker = true
                     } label: {
                         HStack {
                             Text("Start from a Preset")
@@ -137,6 +136,7 @@ struct PhaseBuilderView: View {
                         }
                         .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 } footer: {
                     Text("Fills in the day list below — you can still add, rename, reorder, or delete days after.")
                 }
@@ -148,17 +148,16 @@ struct PhaseBuilderView: View {
                                 Text("Rest").foregroundStyle(.secondary)
                             } else {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
+                                    HStack(spacing: 8) {
                                         TextField("Day name", text: $day.name)
-                                            .font(.headline)
+                                            .font(.subheadline.weight(.semibold))
                                             .fixedSize()
-                                        Spacer()
                                         Button {
                                             editingDayID = day.id
                                         } label: {
                                             Text("\(day.exercises.count) exercise\(day.exercises.count == 1 ? "" : "s")")
                                                 .font(.subheadline.weight(.semibold))
-                                                .padding(.horizontal, 12)
+                                                .frame(maxWidth: .infinity)
                                                 .padding(.vertical, 6)
                                                 .background(Color.accentColor.opacity(0.15), in: Capsule())
                                         }
@@ -222,6 +221,12 @@ struct PhaseBuilderView: View {
                     dayDrafts.append(DayDraft(name: trimmed, isRest: false))
                 }
                 Button("Cancel", role: .cancel) { newDayName = "" }
+            }
+            .confirmationDialog("Start from a Preset", isPresented: $showingPresetPicker, titleVisibility: .visible) {
+                ForEach(Self.presets, id: \.name) { preset in
+                    Button(preset.name) { choosePreset(preset) }
+                }
+                Button("Cancel", role: .cancel) { }
             }
             .confirmationDialog(
                 "Replace your current days with \(pendingPreset?.name ?? "")?",
