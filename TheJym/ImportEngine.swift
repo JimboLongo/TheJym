@@ -87,7 +87,7 @@ enum ImportEngine {
                     idx = logs.count - 1
                     logIndexByName[row.exerciseName] = idx
                     setCounts[idx] = 0
-                    ExerciseDef.ensureExists(name: row.exerciseName, knownNames: &knownExerciseNames, context: context)
+                    ExerciseDef.ensureAnyVariantExists(name: row.exerciseName, knownNames: &knownExerciseNames, context: context)
                 }
                 let setIndex = setCounts[idx] ?? 0
                 let set = SetLog(index: setIndex, weight: row.weight, reps: row.reps)

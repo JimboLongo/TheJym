@@ -6,6 +6,10 @@
 //  equipment, jot notes, and pull up each one's full logged history
 //  (most recent first) — independent of any Phase.
 //
+//  The same name can have multiple rep-scheme variants (e.g. "Back Squat"
+//  8/8/8 vs 6/8/10) — each is tracked as its own ExerciseDef with its own
+//  history. Names with a single variant skip the extra tap.
+//
 
 import SwiftUI
 import SwiftData
@@ -17,6 +21,10 @@ struct ExercisesView: View {
     @Query private var allLogs: [ExerciseLog]
 
     @State private var showingAdd = false
+
+    private var groups: [(name: String, variants: [ExerciseDef])] {
+        ExerciseDef.grouped(exerciseDefs)
+    }
 
     var body: some View {
         NavigationStack {
@@ -31,26 +39,31 @@ struct ExercisesView: View {
                             .buttonStyle(.borderedProminent)
                     }
                 }
-                ForEach(exerciseDefs, id: \.persistentModelID) { def in
-                    NavigationLink {
-                        ExerciseDetailView(def: def, bars: bars, allLogs: allLogs)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
+                ForEach(groups, id: \.name) { group in
+                    if group.variants.count == 1, let only = group.variants.first {
+                        NavigationLink {
+                            ExerciseDetailView(def: only, bars: bars, allLogs: allLogs, matchByVariantOnly: false)
+                        } label: {
+                            exerciseRow(only)
+                        }
+                    } else {
+                        NavigationLink {
+                            ExerciseVariantsView(name: group.name, variants: group.variants,
+                                                 bars: bars, allLogs: allLogs)
+                        } label: {
                             HStack {
-                                Text(def.name).font(.headline)
+                                Text(group.name).font(.headline)
                                 Spacer()
-                                if let eq = def.equipment {
-                                    Text(eq.name).font(.caption).foregroundStyle(.secondary)
-                                }
+                                Text("\(group.variants.count) variants")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
-                            Text(def.targetReps.map(String.init).joined(separator: "/"))
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
                         }
                     }
                 }
                 .onDelete { idx in
-                    for i in idx { context.delete(exerciseDefs[i]) }
+                    for i in idx {
+                        for def in groups[i].variants { context.delete(def) }
+                    }
                     try? context.save()
                 }
             }
@@ -65,11 +78,61 @@ struct ExercisesView: View {
             }
         }
     }
+
+    private func exerciseRow(_ def: ExerciseDef) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(def.name).font(.headline)
+                Spacer()
+                if let eq = def.equipment {
+                    Text(eq.name).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Text(def.targetReps.map(String.init).joined(separator: "/"))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Shown when a name has more than one rep-scheme variant — e.g. tapping
+/// "Back Squat" here lists "8/8/8" and "6/8/10" as separate entries.
+struct ExerciseVariantsView: View {
+    @Environment(\.modelContext) private var context
+    let name: String
+    let variants: [ExerciseDef]
+    let bars: [Bar]
+    let allLogs: [ExerciseLog]
+
+    var body: some View {
+        List {
+            ForEach(variants, id: \.persistentModelID) { def in
+                NavigationLink {
+                    ExerciseDetailView(def: def, bars: bars, allLogs: allLogs, matchByVariantOnly: true)
+                } label: {
+                    HStack {
+                        Text(def.targetReps.map(String.init).joined(separator: "/"))
+                            .font(.system(.body, design: .monospaced))
+                        Spacer()
+                        if let eq = def.equipment {
+                            Text(eq.name).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .onDelete { idx in
+                for i in idx { context.delete(variants[i]) }
+                try? context.save()
+            }
+        }
+        .navigationTitle(name)
+    }
 }
 
 struct ExerciseEditView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Query(sort: \ExerciseDef.name) private var allDefs: [ExerciseDef]
 
     /// nil = creating a new exercise; otherwise editing this one in place.
     let def: ExerciseDef?
@@ -85,6 +148,13 @@ struct ExerciseEditView: View {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     }
 
+    /// Only relevant when creating new — editing in place can't collide with itself.
+    private var isDuplicate: Bool {
+        guard def == nil else { return false }
+        let key = "\(name.trimmingCharacters(in: .whitespaces))|\(reps.map(String.init).joined(separator: "/"))"
+        return allDefs.contains { $0.variantKey == key }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -94,6 +164,10 @@ struct ExerciseEditView: View {
                         .keyboardType(.numbersAndPunctuation)
                         .font(.system(.body, design: .monospaced))
                     Toggle("Lower Body", isOn: $isLowerBody)
+                    if isDuplicate {
+                        Label("This exact name + rep scheme already exists.", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
                 Section("Equipment") {
                     Picker("Equipment", selection: $equipmentID) {
@@ -116,7 +190,7 @@ struct ExerciseEditView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || reps.isEmpty)
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || reps.isEmpty || isDuplicate)
                 }
             }
             .onAppear {
@@ -132,7 +206,7 @@ struct ExerciseEditView: View {
 
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmedName.isEmpty, !reps.isEmpty else { return }
+        guard !trimmedName.isEmpty, !reps.isEmpty, !isDuplicate else { return }
         let equipment = bars.first { $0.persistentModelID == equipmentID }
         if let def {
             def.name = trimmedName
@@ -153,12 +227,18 @@ struct ExerciseDetailView: View {
     let def: ExerciseDef
     let bars: [Bar]
     let allLogs: [ExerciseLog]
+    /// true when sibling variants exist for this name — narrows history to
+    /// exactly this rep scheme rather than every log under the name.
+    let matchByVariantOnly: Bool
 
     @State private var showingEdit = false
 
     private var history: [ExerciseLog] {
         allLogs
-            .filter { $0.exerciseName == def.name && !$0.sets.isEmpty }
+            .filter {
+                guard $0.exerciseName == def.name, !$0.sets.isEmpty else { return false }
+                return matchByVariantOnly ? $0.targetReps == def.targetReps : true
+            }
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
     }
 

@@ -33,6 +33,8 @@ struct ContentView: View {
                 .tabItem { Label("Train", systemImage: "dumbbell.fill") }
             HistoryView()
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+            PhasesView()
+                .tabItem { Label("Phases", systemImage: "calendar") }
             StatsView()
                 .tabItem { Label("Stats", systemImage: "chart.bar.fill") }
             ExercisesView()

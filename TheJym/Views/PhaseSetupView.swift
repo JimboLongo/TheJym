@@ -36,6 +36,18 @@ struct PhaseSetupView: View {
         Phase.distinctTrainingLetters(for: pattern.uppercased())
     }
 
+    private var groupedExerciseDefs: [(name: String, variants: [ExerciseDef])] {
+        ExerciseDef.grouped(exerciseDefs)
+    }
+
+    private func addDraft(letter: String, from def: ExerciseDef) {
+        draftPlan[letter, default: []].append(
+            DraftExercise(name: def.name,
+                          repsText: def.targetReps.map(String.init).joined(separator: "/"),
+                          weightsText: "",
+                          isLowerBody: def.isLowerBody))
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -65,13 +77,17 @@ struct PhaseSetupView: View {
                             draftPlan[letter]?.remove(atOffsets: idx)
                         }
                         Menu("Add Exercise") {
-                            ForEach(exerciseDefs, id: \.persistentModelID) { def in
-                                Button(def.name) {
-                                    draftPlan[letter, default: []].append(
-                                        DraftExercise(name: def.name,
-                                                      repsText: def.targetReps.map(String.init).joined(separator: "/"),
-                                                      weightsText: "",
-                                                      isLowerBody: def.isLowerBody))
+                            ForEach(groupedExerciseDefs, id: \.name) { group in
+                                if group.variants.count == 1, let only = group.variants.first {
+                                    Button(only.name) { addDraft(letter: letter, from: only) }
+                                } else {
+                                    Menu(group.name) {
+                                        ForEach(group.variants, id: \.persistentModelID) { def in
+                                            Button(def.targetReps.map(String.init).joined(separator: "/")) {
+                                                addDraft(letter: letter, from: def)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             Button("Custom…") {
@@ -136,7 +152,7 @@ struct PhaseSetupView: View {
                           totalCycles: cycles, deloadCycle: deload)
         context.insert(phase)
 
-        var knownNames = Set(exerciseDefs.map(\.name))
+        var knownVariantKeys = Set(exerciseDefs.map(\.variantKey))
         for letter in trainingLetters {
             for (i, d) in (draftPlan[letter] ?? []).enumerated() {
                 let reps = d.repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -150,8 +166,8 @@ struct PhaseSetupView: View {
                 pe.phase = phase
                 context.insert(pe)
 
-                ExerciseDef.ensureExists(name: d.name, targetReps: reps, isLowerBody: d.isLowerBody,
-                                        knownNames: &knownNames, context: context)
+                ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps, isLowerBody: d.isLowerBody,
+                                                knownVariantKeys: &knownVariantKeys, context: context)
             }
         }
         try? context.save()

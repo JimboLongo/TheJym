@@ -115,7 +115,7 @@ struct AddHistoricalWorkoutView: View {
                 set.exerciseLog = log
                 context.insert(set)
             }
-            ExerciseDef.ensureExists(name: entry.name, knownNames: &knownNames, context: context)
+            ExerciseDef.ensureAnyVariantExists(name: entry.name, knownNames: &knownNames, context: context)
         }
         try? context.save()
         dismiss()

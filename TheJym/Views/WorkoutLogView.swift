@@ -73,7 +73,8 @@ struct WorkoutLogView: View {
             ForEach(Array(drafts.indices), id: \.self) { i in
                 Section {
                     ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
-                                        exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
+                                        exerciseDef: exerciseDefs.first { $0.name == drafts[i].name && $0.targetReps == drafts[i].targetReps }
+                                            ?? exerciseDefs.first { $0.name == drafts[i].name },
                                         plateSizes: plateSizes)
                 }
             }
