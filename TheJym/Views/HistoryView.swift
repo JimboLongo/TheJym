@@ -26,6 +26,7 @@ struct HistoryView: View {
     @State private var showingImporter = false
     @State private var showingImportHelp = false
     @State private var importResultMessage: String?
+    @State private var searchText = ""
 
     /// One row per logged exercise (not per session) — Sets/Weights/Reps are
     /// per-exercise, so that's the natural row unit for a flat table.
@@ -41,13 +42,17 @@ struct HistoryView: View {
         }
     }
 
+    private var filteredRows: [Row] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return rows }
+        return rows.filter { $0.log.exerciseName.localizedCaseInsensitiveContains(trimmed) }
+    }
+
     private enum Col {
         static let day: CGFloat = 76
         static let phase: CGFloat = 48
-        static let exercise: CGFloat = 150
-        static let sets: CGFloat = 74
-        static let weights: CGFloat = 120
-        static let reps: CGFloat = 90
+        static let exercise: CGFloat = 170
+        static let lifts: CGFloat = 170
         static let source: CGFloat = 70
         static let delete: CGFloat = 32
     }
@@ -59,20 +64,33 @@ struct HistoryView: View {
                     ContentUnavailableView("No workouts yet",
                                            systemImage: "clock.arrow.circlepath",
                                            description: Text("Your logged sessions will show up here."))
+                } else if filteredRows.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
                 } else {
-                    ScrollView([.horizontal, .vertical]) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            headerRow
-                            Divider()
-                            ForEach(rows) { row in
-                                rowView(row)
-                                Divider()
+                    GeometryReader { geo in
+                        ScrollView(.horizontal) {
+                            ScrollView(.vertical) {
+                                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                                    Section {
+                                        ForEach(filteredRows) { row in
+                                            rowView(row)
+                                            Divider()
+                                        }
+                                    } header: {
+                                        VStack(spacing: 0) {
+                                            headerRow
+                                            Divider()
+                                        }
+                                    }
+                                }
                             }
+                            .frame(height: geo.size.height)
                         }
                     }
                 }
             }
             .navigationTitle("History")
+            .searchable(text: $searchText, prompt: "Filter by exercise")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -109,9 +127,7 @@ struct HistoryView: View {
             Text("Day").frame(width: Col.day, alignment: .leading)
             Text("Phase").frame(width: Col.phase, alignment: .leading)
             Text("Exercise").frame(width: Col.exercise, alignment: .leading)
-            Text("Sets").frame(width: Col.sets, alignment: .leading)
-            Text("Weights").frame(width: Col.weights, alignment: .leading)
-            Text("Reps").frame(width: Col.reps, alignment: .leading)
+            Text("Lifts").frame(width: Col.lifts, alignment: .leading)
             Text("Source").frame(width: Col.source, alignment: .leading)
             Color.clear.frame(width: Col.delete)
         }
@@ -136,10 +152,16 @@ struct HistoryView: View {
                 HStack(spacing: 0) {
                     Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
                     Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
-                    Text(log.exerciseName).frame(width: Col.exercise, alignment: .leading).lineLimit(1)
-                    Text(sets.isEmpty ? "—" : sets).frame(width: Col.sets, alignment: .leading)
-                    Text(weights).frame(width: Col.weights, alignment: .leading)
-                    Text(reps).frame(width: Col.reps, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(log.exerciseName).lineLimit(1)
+                        Text(sets.isEmpty ? "—" : sets).foregroundStyle(.secondary)
+                    }
+                    .frame(width: Col.exercise, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(weights)
+                        Text("(\(reps))").foregroundStyle(.secondary)
+                    }
+                    .frame(width: Col.lifts, alignment: .leading)
                     Text(source).frame(width: Col.source, alignment: .leading)
                 }
                 .contentShape(Rectangle())
