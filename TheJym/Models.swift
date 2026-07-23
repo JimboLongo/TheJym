@@ -40,6 +40,7 @@ final class AppSettings {
     var deloadWeeksEnabled: Bool
     var useGeminiForPhasePlanning: Bool
     var geminiAPIKey: String
+    var availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25]   // plates you own, for the plate calculator
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }
@@ -51,45 +52,55 @@ final class AppSettings {
          aiAggressiveness: AIAggressiveness = .moderate,
          deloadWeeksEnabled: Bool = false,
          useGeminiForPhasePlanning: Bool = false,
-         geminiAPIKey: String = "") {
+         geminiAPIKey: String = "",
+         availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25]) {
         self.trainingStartDate = trainingStartDate
         self.aiAssistantEnabled = aiAssistantEnabled
         self.aiAggressivenessRaw = aiAggressiveness.rawValue
         self.deloadWeeksEnabled = deloadWeeksEnabled
         self.useGeminiForPhasePlanning = useGeminiForPhasePlanning
         self.geminiAPIKey = geminiAPIKey
+        self.availablePlateSizes = availablePlateSizes
     }
 }
 
-// MARK: - Bars (for the plate calculator)
+// MARK: - Equipment (bars + dumbbell sets, for the plate calculator)
 
 @Model
 final class Bar {
     var name: String
-    var weight: Double
-    init(name: String, weight: Double) {
+    var weight: Double              // bar weight; unused (0) for a dumbbell set
+    var isDumbbell: Bool = false
+    var dumbbellWeights: [Double] = []   // the individual dumbbell weights you own, when isDumbbell
+
+    init(name: String, weight: Double, isDumbbell: Bool = false, dumbbellWeights: [Double] = []) {
         self.name = name
         self.weight = weight
+        self.isDumbbell = isDumbbell
+        self.dumbbellWeights = dumbbellWeights
     }
 }
 
 // MARK: - Exercise library
 
+/// A persistent, user-managed exercise definition: name, default rep scheme,
+/// tagged equipment, and notes. Lives independently of any Phase — Phase Setup
+/// picks from these, and the exercise's history spans every phase it's used in.
 @Model
 final class ExerciseDef {
     @Attribute(.unique) var name: String
-    var muscleGroup: String        // e.g. "Chest", "Back", "Quads"
-    var dayLetter: String          // which split day it belongs to: "P", "L", etc.
+    var targetReps: [Int]          // default rep scheme, e.g. [5,5,5,3,3,3]
     var isLowerBody: Bool          // used by progression engine for jump sizes
-    var defaultTargetReps: [Int]   // suggested sets/reps, e.g. [5,5,5,3,3,3]
+    var notes: String = ""
+    var equipment: Bar?
 
-    init(name: String, muscleGroup: String, dayLetter: String,
-         isLowerBody: Bool = false, defaultTargetReps: [Int] = [8, 8, 8]) {
+    init(name: String, targetReps: [Int] = [8, 8, 8], isLowerBody: Bool = false,
+         notes: String = "", equipment: Bar? = nil) {
         self.name = name
-        self.muscleGroup = muscleGroup
-        self.dayLetter = dayLetter
+        self.targetReps = targetReps
         self.isLowerBody = isLowerBody
-        self.defaultTargetReps = defaultTargetReps
+        self.notes = notes
+        self.equipment = equipment
     }
 }
 
@@ -226,20 +237,15 @@ final class PlannedExercise {
     var targetReps: [Int]          // e.g. [5,5,5,3,3,3] — user can override
     var suggestedWeights: [Double] // per-set suggestion (AI or manual); empty = none yet
     var isLowerBody: Bool
-    var notes: String = ""         // form cues, setup tips, etc.
-    var equipment: Bar?            // bar/equipment used, for the inline plate calculator
 
     init(dayLetter: String, order: Int, exerciseName: String,
-         targetReps: [Int], suggestedWeights: [Double] = [], isLowerBody: Bool = false,
-         notes: String = "", equipment: Bar? = nil) {
+         targetReps: [Int], suggestedWeights: [Double] = [], isLowerBody: Bool = false) {
         self.dayLetter = dayLetter
         self.order = order
         self.exerciseName = exerciseName
         self.targetReps = targetReps
         self.suggestedWeights = suggestedWeights
         self.isLowerBody = isLowerBody
-        self.notes = notes
-        self.equipment = equipment
     }
 
     /// Stable key for "same plan" comparisons: name + target rep scheme.

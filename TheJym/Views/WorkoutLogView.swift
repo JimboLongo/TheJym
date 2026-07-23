@@ -16,7 +16,7 @@ struct WorkoutLogView: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var settingsList: [AppSettings]
     @Query private var allExerciseLogs: [ExerciseLog]
-    @Query(sort: \Bar.name) private var bars: [Bar]
+    @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
 
     let phase: Phase
     let dayLetter: String
@@ -61,7 +61,7 @@ struct WorkoutLogView: View {
     }
 
     var body: some View {
-        let plannedExercises = phase.plan(for: dayLetter)
+        let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
         List {
             if isDeloadCycle {
                 Section {
@@ -73,7 +73,8 @@ struct WorkoutLogView: View {
             ForEach(Array(drafts.indices), id: \.self) { i in
                 Section {
                     ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
-                                        plannedExercise: plannedExercises[safe: i], bars: bars)
+                                        exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
+                                        plateSizes: plateSizes)
                 }
             }
             Section {
@@ -201,11 +202,10 @@ struct WorkoutLogView: View {
 // MARK: - One exercise's logging card + pace panel
 
 struct ExerciseDraftSection: View {
-    @Environment(\.modelContext) private var context
     @Binding var draft: WorkoutLogView.ExerciseDraft
     let allLogs: [ExerciseLog]
-    let plannedExercise: PlannedExercise?
-    let bars: [Bar]
+    let exerciseDef: ExerciseDef?
+    let plateSizes: [Double]
 
     @State private var showingDetails = false
     @State private var plateTargetText = ""
@@ -232,19 +232,17 @@ struct ExerciseDraftSection: View {
                 Text("Goal \(draft.targetReps.map(String.init).joined(separator: "/"))")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                if plannedExercise != nil {
-                    Button {
-                        withAnimation { showingDetails.toggle() }
-                    } label: {
-                        Image(systemName: showingDetails ? "chevron.up.circle.fill" : "info.circle")
-                    }
-                    .buttonStyle(.plain)
-                    .imageScale(.large)
+                Button {
+                    withAnimation { showingDetails.toggle() }
+                } label: {
+                    Image(systemName: showingDetails ? "chevron.up.circle.fill" : "info.circle")
                 }
+                .buttonStyle(.plain)
+                .imageScale(.large)
             }
 
-            if showingDetails, let pe = plannedExercise {
-                notesAndPlateCalc(pe)
+            if showingDetails {
+                notesAndPlateCalc(exerciseDef)
             }
 
             // Set rows
@@ -292,70 +290,81 @@ struct ExerciseDraftSection: View {
     }
 
     @ViewBuilder
-    private func notesAndPlateCalc(_ pe: PlannedExercise) -> some View {
+    private func notesAndPlateCalc(_ def: ExerciseDef?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
-                TextField("Form cues, setup tips, etc.", text: Binding(
-                    get: { pe.notes },
-                    set: { pe.notes = $0; try? context.save() }
-                ), axis: .vertical)
-                    .font(.subheadline)
-                    .lineLimit(1...4)
-            }
-
-            Picker("Equipment", selection: Binding(
-                get: { pe.equipment?.persistentModelID },
-                set: { id in
-                    pe.equipment = bars.first { $0.persistentModelID == id }
-                    try? context.save()
-                })) {
-                Text("None").tag(Optional<PersistentIdentifier>.none)
-                ForEach(bars, id: \.persistentModelID) { bar in
-                    Text("\(bar.name) (\(Formatters.trim(bar.weight)) lbs)").tag(Optional(bar.persistentModelID))
+            if let def, !def.notes.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
+                    Text(def.notes).font(.subheadline)
                 }
             }
-            .font(.subheadline)
 
-            if let bar = pe.equipment {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Plate Calculator").font(.caption.bold()).foregroundStyle(.secondary)
-                    HStack {
-                        Text("Target")
-                        TextField("lbs", text: $plateTargetText)
-                            .keyboardType(.decimalPad)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 90)
-                    }
-                    .font(.subheadline)
+            if let bar = def?.equipment {
+                if bar.isDumbbell {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Dumbbell Match").font(.caption.bold()).foregroundStyle(.secondary)
+                        HStack {
+                            Text("Target")
+                            TextField("lbs", text: $plateTargetText)
+                                .keyboardType(.decimalPad)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 90)
+                        }
+                        .font(.subheadline)
 
-                    if let target = Double(plateTargetText) {
-                        if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight) {
-                            if plates.isEmpty && leftover == 0 {
-                                Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
+                        if let target = Double(plateTargetText) {
+                            if let closest = bar.dumbbellWeights.min(by: { abs($0 - target) < abs($1 - target) }) {
+                                Text(closest == target
+                                     ? "You have that exact dumbbell: \(Formatters.trim(closest)) lb"
+                                     : "Closest you have: \(Formatters.trim(closest)) lb")
+                                    .font(.caption)
+                                    .foregroundStyle(closest == target ? .green : .orange)
+                            } else {
+                                Text("No dumbbell weights set for \(bar.name) — add some in Equipment.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            ForEach(plates) { p in
-                                HStack {
-                                    Text("\(Formatters.trim(p.plate)) lb plate")
-                                        .font(.system(.caption, design: .monospaced))
-                                    Spacer()
-                                    Text("× \(p.countPerSide) per side")
-                                        .font(.system(.caption, design: .monospaced)).bold()
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Plate Calculator").font(.caption.bold()).foregroundStyle(.secondary)
+                        HStack {
+                            Text("Target")
+                            TextField("lbs", text: $plateTargetText)
+                                .keyboardType(.decimalPad)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 90)
+                        }
+                        .font(.subheadline)
+
+                        if let target = Double(plateTargetText) {
+                            if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight, available: plateSizes) {
+                                if plates.isEmpty && leftover == 0 {
+                                    Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
+                                        .font(.caption).foregroundStyle(.secondary)
                                 }
+                                ForEach(plates) { p in
+                                    HStack {
+                                        Text("\(Formatters.trim(p.plate)) lb plate")
+                                            .font(.system(.caption, design: .monospaced))
+                                        Spacer()
+                                        Text("× \(p.countPerSide) per side")
+                                            .font(.system(.caption, design: .monospaced)).bold()
+                                    }
+                                }
+                                if leftover > 0 {
+                                    Text("Can't hit exactly — \(Formatters.trim(leftover)) lbs/side short.")
+                                        .font(.caption2).foregroundStyle(.orange)
+                                }
+                            } else {
+                                Text("Target is lighter than the \(Formatters.trim(bar.weight)) lb bar.")
+                                    .font(.caption).foregroundStyle(.red)
                             }
-                            if leftover > 0 {
-                                Text("Can't hit exactly — \(Formatters.trim(leftover)) lbs/side short.")
-                                    .font(.caption2).foregroundStyle(.orange)
-                            }
-                        } else {
-                            Text("Target is lighter than the \(Formatters.trim(bar.weight)) lb bar.")
-                                .font(.caption).foregroundStyle(.red)
                         }
                     }
                 }
             } else {
-                Text("Tag equipment above to use the plate calculator.")
+                Text("Tag equipment for this exercise in the Exercises tab to use the plate calculator.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
