@@ -31,12 +31,12 @@ struct ContentView: View {
         TabView {
             TodayView()
                 .tabItem { Label("Train", systemImage: "dumbbell.fill") }
-            HistoryView()
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-            PhasesView()
-                .tabItem { Label("Phases", systemImage: "calendar") }
             StatsView()
                 .tabItem { Label("Stats", systemImage: "chart.bar.fill") }
+            PhasesView()
+                .tabItem { Label("Phases", systemImage: "calendar") }
+            HistoryView()
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
             ExercisesView()
                 .tabItem { Label("Exercises", systemImage: "figure.strengthtraining.traditional") }
             EquipmentView()

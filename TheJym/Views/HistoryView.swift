@@ -44,7 +44,8 @@ struct HistoryView: View {
                                 Text(Formatters.date.string(from: session.date))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            Text("\(session.exerciseLogs.count) exercises · \(Formatters.trim(session.totalWeightMoved)) lbs moved")
+                            Text("\(session.exerciseLogs.count) exercises · \(Formatters.trim(session.totalWeightMoved)) lbs moved"
+                                 + (session.phase.map { " · Phase \($0.number)" } ?? ""))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }

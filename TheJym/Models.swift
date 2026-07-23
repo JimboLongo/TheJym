@@ -160,7 +160,9 @@ final class Phase {
     @Relationship(deleteRule: .cascade, inverse: \PhaseDay.phase)
     var days: [PhaseDay] = []
 
-    @Relationship(deleteRule: .cascade, inverse: \WorkoutSession.phase)
+    /// Nullify, not cascade — deleting a Phase should never delete the
+    /// workouts logged under it. They stay in History with a blank phase.
+    @Relationship(deleteRule: .nullify, inverse: \WorkoutSession.phase)
     var sessions: [WorkoutSession] = []
 
     init(number: Int, totalCycles: Int,
@@ -231,6 +233,11 @@ final class PhaseDay {
 
     @Relationship(deleteRule: .cascade, inverse: \PlannedExercise.day)
     var plannedExercises: [PlannedExercise] = []
+
+    /// Nullify — deleting a day (whether by editing a Phase or deleting the
+    /// whole Phase) should never delete the workouts logged for it.
+    @Relationship(deleteRule: .nullify, inverse: \WorkoutSession.day)
+    var loggedSessions: [WorkoutSession] = []
 
     init(order: Int, name: String, isRest: Bool = false) {
         self.order = order

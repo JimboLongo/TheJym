@@ -28,6 +28,32 @@ struct PhaseBuilderView: View {
     @State private var dayDrafts: [DayDraft] = []
     @State private var newDayName = ""
     @State private var showingNewDayAlert = false
+    @State private var pendingPreset: SplitPreset?
+
+    struct SplitPreset {
+        let name: String
+        let days: [(name: String, isRest: Bool)]
+    }
+
+    static let presets: [SplitPreset] = [
+        SplitPreset(name: "Push / Pull / Legs", days: [
+            ("Push", false), ("Pull", false), ("Legs", false), ("Rest", true),
+        ]),
+        SplitPreset(name: "Push / Pull / Legs (6-Day)", days: [
+            ("Push A", false), ("Pull A", false), ("Legs A", false),
+            ("Push B", false), ("Pull B", false), ("Legs B", false), ("Rest", true),
+        ]),
+        SplitPreset(name: "Upper / Lower", days: [
+            ("Upper", false), ("Lower", false), ("Rest", true),
+        ]),
+        SplitPreset(name: "Full Body", days: [
+            ("Full Body", false), ("Rest", true),
+        ]),
+        SplitPreset(name: "Bro Split", days: [
+            ("Chest", false), ("Back", false), ("Legs", false),
+            ("Shoulders", false), ("Arms", false), ("Rest", true),
+        ]),
+    ]
 
     struct DraftExercise: Identifiable {
         let id = UUID()
@@ -63,6 +89,16 @@ struct PhaseBuilderView: View {
                     }
                 } footer: {
                     Text("How many times the day list below repeats.")
+                }
+
+                Section {
+                    Menu("Start from a Preset") {
+                        ForEach(Self.presets, id: \.name) { preset in
+                            Button(preset.name) { choosePreset(preset) }
+                        }
+                    }
+                } footer: {
+                    Text("Fills in the day list below — you can still add, rename, reorder, or delete days after.")
                 }
 
                 Section {
@@ -111,8 +147,31 @@ struct PhaseBuilderView: View {
                 }
                 Button("Cancel", role: .cancel) { newDayName = "" }
             }
+            .confirmationDialog(
+                "Replace your current days with \(pendingPreset?.name ?? "")?",
+                isPresented: Binding(get: { pendingPreset != nil }, set: { if !$0 { pendingPreset = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Replace", role: .destructive) {
+                    if let preset = pendingPreset { applyPreset(preset) }
+                    pendingPreset = nil
+                }
+                Button("Cancel", role: .cancel) { pendingPreset = nil }
+            }
             .onAppear(perform: seed)
         }
+    }
+
+    private func choosePreset(_ preset: SplitPreset) {
+        if dayDrafts.isEmpty {
+            applyPreset(preset)
+        } else {
+            pendingPreset = preset
+        }
+    }
+
+    private func applyPreset(_ preset: SplitPreset) {
+        dayDrafts = preset.days.map { DayDraft(name: $0.name, isRest: $0.isRest) }
     }
 
     private func seed() {

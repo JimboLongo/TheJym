@@ -66,14 +66,14 @@ struct PhasesView: View {
                 isPresented: Binding(get: { phasePendingDelete != nil }, set: { if !$0 { phasePendingDelete = nil } }),
                 titleVisibility: .visible
             ) {
-                Button("Delete Phase & Its Logged Workouts", role: .destructive) {
+                Button("Delete Phase", role: .destructive) {
                     if let phase = phasePendingDelete { context.delete(phase) }
                     try? context.save()
                     phasePendingDelete = nil
                 }
                 Button("Cancel", role: .cancel) { phasePendingDelete = nil }
             } message: {
-                Text("This also deletes every workout session logged under this phase — that can't be undone.")
+                Text("Its workout history stays in History and Exercises — just without a phase attached. This can't be undone.")
             }
         }
     }
@@ -81,6 +81,8 @@ struct PhasesView: View {
 
 struct PhaseDetailView: View {
     let phase: Phase
+
+    @State private var showingEdit = false
 
     var body: some View {
         List {
@@ -101,6 +103,14 @@ struct PhaseDetailView: View {
             }
         }
         .navigationTitle("Phase \(phase.number)")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Edit") { showingEdit = true }
+            }
+        }
+        .sheet(isPresented: $showingEdit) {
+            PhaseEditView(phase: phase)
+        }
     }
 }
 
