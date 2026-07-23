@@ -11,14 +11,18 @@ import SwiftUI
 import SwiftData
 
 struct PhasesView: View {
+    @Environment(\.modelContext) private var context
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
+
+    @State private var showingAdd = false
+    @State private var phasePendingDelete: Phase?
 
     var body: some View {
         NavigationStack {
             List {
                 if phases.isEmpty {
                     ContentUnavailableView("No Phases Yet", systemImage: "calendar.badge.clock",
-                                           description: Text("Set up a Phase from the Train tab to see it here."))
+                                           description: Text("Add a Phase to see it here."))
                 }
                 ForEach(phases, id: \.persistentModelID) { phase in
                     NavigationLink {
@@ -33,7 +37,7 @@ struct PhasesView: View {
                                         .background(.green.opacity(0.2), in: Capsule())
                                 }
                                 Spacer()
-                                Text(phase.splitPattern)
+                                Text(phase.summary)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                             }
@@ -41,9 +45,36 @@ struct PhasesView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    .swipeActions {
+                        Button(role: .destructive) { phasePendingDelete = phase } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
             }
             .navigationTitle("Phases")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingAdd = true } label: { Image(systemName: "plus") }
+                }
+            }
+            .sheet(isPresented: $showingAdd) {
+                PhaseBuilderView(previousPhase: nil)
+            }
+            .confirmationDialog(
+                "Delete Phase \(phasePendingDelete?.number ?? 0)?",
+                isPresented: Binding(get: { phasePendingDelete != nil }, set: { if !$0 { phasePendingDelete = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Phase & Its Logged Workouts", role: .destructive) {
+                    if let phase = phasePendingDelete { context.delete(phase) }
+                    try? context.save()
+                    phasePendingDelete = nil
+                }
+                Button("Cancel", role: .cancel) { phasePendingDelete = nil }
+            } message: {
+                Text("This also deletes every workout session logged under this phase — that can't be undone.")
+            }
         }
     }
 }
@@ -54,15 +85,15 @@ struct PhaseDetailView: View {
     var body: some View {
         List {
             ForEach(1...max(phase.totalCycles, 1), id: \.self) { cycle in
-                ForEach(phase.distinctTrainingLetters, id: \.self) { letter in
-                    Section("\(letter) \(cycle)") {
-                        let plan = phase.plan(for: letter)
+                ForEach(phase.trainingDays, id: \.persistentModelID) { day in
+                    Section("\(day.name) \(cycle)") {
+                        let plan = phase.plan(for: day)
                         if plan.isEmpty {
-                            Text("No exercises planned for \(letter).")
+                            Text("No exercises planned for \(day.name).")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
                             ForEach(plan, id: \.persistentModelID) { pe in
-                                PhaseExerciseRow(phase: phase, dayLetter: letter, plannedExercise: pe)
+                                PhaseExerciseRow(day: day, plannedExercise: pe)
                             }
                         }
                     }
@@ -76,17 +107,18 @@ struct PhaseDetailView: View {
 /// One exercise under a "Pull 1"-style cycle/day section. Tapping it expands
 /// to show every cycle it's actually been logged, most recent last, with dates —
 /// the same expanded content regardless of which cycle you tapped from, since
-/// the plan (exercise + reps) is the same every cycle.
+/// the plan (exercise + reps) is the same every cycle. History is matched by
+/// the specific PhaseDay object, not its name, so "Pull A" and "Pull B" never
+/// bleed into each other even if they happened to share a name.
 struct PhaseExerciseRow: View {
-    let phase: Phase
-    let dayLetter: String
+    let day: PhaseDay
     let plannedExercise: PlannedExercise
 
     @State private var expanded = false
 
     private var history: [(cycle: Int, date: Date, log: ExerciseLog)] {
-        phase.sessions
-            .filter { $0.dayLetter == dayLetter }
+        (day.phase?.sessions ?? [])
+            .filter { $0.day?.persistentModelID == day.persistentModelID }
             .compactMap { session in
                 guard let log = session.exerciseLogs.first(where: { $0.exerciseName == plannedExercise.exerciseName }),
                       !log.sets.isEmpty else { return nil }

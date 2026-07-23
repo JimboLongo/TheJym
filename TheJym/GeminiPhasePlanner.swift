@@ -15,7 +15,7 @@ struct GeminiPhasePlanner {
     let apiKey: String
 
     struct AISlot: Codable {
-        var dayLetter: String
+        var dayName: String
         var exerciseName: String
         var targetReps: [Int]
         var startingWeights: [Double]
@@ -25,8 +25,8 @@ struct GeminiPhasePlanner {
     func planNextPhase(previousPhase: Phase) async throws -> [AISlot] {
         // Build a compact history summary for the prompt.
         var lines: [String] = []
-        for letter in previousPhase.distinctTrainingLetters {
-            for planned in previousPhase.plan(for: letter) {
+        for day in previousPhase.trainingDays {
+            for planned in previousPhase.plan(for: day) {
                 let logs = previousPhase.sessions
                     .flatMap { $0.exerciseLogs }
                     .filter { $0.planKey == planned.planKey }
@@ -36,7 +36,7 @@ struct GeminiPhasePlanner {
                     let wts = log.sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
                     return "\(reps)@\(wts)"
                 }.joined(separator: "; ")
-                lines.append("Day \(letter) | \(planned.exerciseName) | target \(planned.targetReps.map(String.init).joined(separator: "/")) | logs: \(history)")
+                lines.append("Day \(day.name) | \(planned.exerciseName) | target \(planned.targetReps.map(String.init).joined(separator: "/")) | logs: \(history)")
             }
         }
 
@@ -46,12 +46,12 @@ struct GeminiPhasePlanner {
         ones, and set sensible starting weights (round to 2.5 lb). Sets/reps arrays must \
         match in length with startingWeights.
 
-        Completed phase (split pattern \(previousPhase.splitPattern), \(previousPhase.totalCycles) cycles):
+        Completed phase (days: \(previousPhase.summary), \(previousPhase.totalCycles) cycles):
         \(lines.joined(separator: "\n"))
 
         Respond ONLY with a JSON array, no markdown, of objects with keys:
-        dayLetter (string), exerciseName (string), targetReps (int array), \
-        startingWeights (number array), rationale (string, one sentence).
+        dayName (string, exactly matching one of the day names above), exerciseName (string), \
+        targetReps (int array), startingWeights (number array), rationale (string, one sentence).
         """
 
         var request = URLRequest(url: URL(string:

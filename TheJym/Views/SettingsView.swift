@@ -94,9 +94,9 @@ struct NextPhasePlannerView: View {
                                  : "Planned on-device from your Phase \(previousPhase.number) logs. Review, then edit anything on the next screen.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        ForEach(plan.keys.sorted(), id: \.self) { letter in
-                            Section("Day \(letter)") {
-                                ForEach(plan[letter] ?? [], id: \.exerciseName) { slot in
+                        ForEach(plan.keys.sorted(), id: \.self) { dayName in
+                            Section(dayName) {
+                                ForEach(plan[dayName] ?? [], id: \.exerciseName) { slot in
                                     VStack(alignment: .leading, spacing: 2) {
                                         HStack {
                                             Text(slot.exerciseName).font(.headline)
@@ -132,7 +132,7 @@ struct NextPhasePlannerView: View {
             }
             .task { await buildPlan() }
             .sheet(isPresented: $showSetup, onDismiss: { dismiss() }) {
-                PhaseSetupView(previousPhase: previousPhase, seededPlan: plan)
+                PhaseBuilderView(previousPhase: previousPhase, seededPlan: plan)
             }
         }
     }
@@ -150,7 +150,7 @@ struct NextPhasePlannerView: View {
                 for s in slots {
                     let lower = previousPhase.plannedExercises
                         .first { $0.exerciseName == s.exerciseName }?.isLowerBody ?? false
-                    grouped[s.dayLetter, default: []].append(
+                    grouped[s.dayName, default: []].append(
                         .init(exerciseName: s.exerciseName,
                               targetReps: s.targetReps,
                               startingWeights: s.startingWeights,

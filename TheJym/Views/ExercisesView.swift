@@ -137,6 +137,11 @@ struct ExerciseEditView: View {
     /// nil = creating a new exercise; otherwise editing this one in place.
     let def: ExerciseDef?
     let bars: [Bar]
+    /// Pre-fills the name field for a new exercise (e.g. "add a new set" for
+    /// an existing name) — ignored when `def` is non-nil.
+    var prefilledName: String? = nil
+    /// Called with the created/edited definition right before dismissing.
+    var onSave: ((ExerciseDef) -> Void)? = nil
 
     @State private var name = ""
     @State private var repsText = "8/8/8"
@@ -194,12 +199,15 @@ struct ExerciseEditView: View {
                 }
             }
             .onAppear {
-                guard let def else { return }
-                name = def.name
-                repsText = def.targetReps.map(String.init).joined(separator: "/")
-                isLowerBody = def.isLowerBody
-                notes = def.notes
-                equipmentID = def.equipment?.persistentModelID
+                if let def {
+                    name = def.name
+                    repsText = def.targetReps.map(String.init).joined(separator: "/")
+                    isLowerBody = def.isLowerBody
+                    notes = def.notes
+                    equipmentID = def.equipment?.persistentModelID
+                } else if let prefilledName {
+                    name = prefilledName
+                }
             }
         }
     }
@@ -208,17 +216,22 @@ struct ExerciseEditView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         guard !trimmedName.isEmpty, !reps.isEmpty, !isDuplicate else { return }
         let equipment = bars.first { $0.persistentModelID == equipmentID }
+        let saved: ExerciseDef
         if let def {
             def.name = trimmedName
             def.targetReps = reps
             def.isLowerBody = isLowerBody
             def.notes = notes
             def.equipment = equipment
+            saved = def
         } else {
-            context.insert(ExerciseDef(name: trimmedName, targetReps: reps, isLowerBody: isLowerBody,
-                                       notes: notes, equipment: equipment))
+            let newDef = ExerciseDef(name: trimmedName, targetReps: reps, isLowerBody: isLowerBody,
+                                     notes: notes, equipment: equipment)
+            context.insert(newDef)
+            saved = newDef
         }
         try? context.save()
+        onSave?(saved)
         dismiss()
     }
 }

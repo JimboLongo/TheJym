@@ -32,8 +32,8 @@ struct HistoryView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
                                 Text(session.cycleNumber > 0
-                                     ? "Day \(session.dayLetter) · Cycle \(session.cycleNumber)"
-                                     : session.dayLetter)
+                                     ? "\(session.dayLabel) · Cycle \(session.cycleNumber)"
+                                     : session.dayLabel)
                                     .font(.headline)
                                 if session.isDeload {
                                     Text("DELOAD").font(.caption2.bold())

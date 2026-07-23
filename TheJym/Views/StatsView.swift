@@ -27,7 +27,7 @@ struct StatsView: View {
                             sessionDates: sessions.map(\.date),
                             restActivityDates: restActivities.map(\.date),
                             phaseSchedules: phases.map {
-                                StatsEngine.PhaseSchedule(startDate: $0.startDate, splitPattern: $0.splitPattern)
+                                StatsEngine.PhaseSchedule(startDate: $0.startDate, phase: $0)
                             })
     }
 

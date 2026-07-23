@@ -19,7 +19,7 @@ struct WorkoutLogView: View {
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
 
     let phase: Phase
-    let dayLetter: String
+    let day: PhaseDay
 
     @State private var drafts: [ExerciseDraft] = []
     @State private var showFinishSheet = false
@@ -89,7 +89,7 @@ struct WorkoutLogView: View {
                 .disabled(drafts.allSatisfy { $0.sets.allSatisfy { !$0.isLogged } })
             }
         }
-        .navigationTitle("Day \(dayLetter) · Cycle \(phase.currentCycle)")
+        .navigationTitle("\(day.name) · Cycle \(phase.currentCycle)")
         .onAppear(perform: buildDrafts)
         .sheet(isPresented: $showFinishSheet, onDismiss: { dismiss() }) {
             AISuggestionSheet(rows: $aiSuggestions) { applySuggestions() }
@@ -111,7 +111,7 @@ struct WorkoutLogView: View {
         let aiOn = settings?.aiAssistantEnabled == true
         let agg = settings?.aiAggressiveness ?? .moderate
 
-        for pe in phase.plan(for: dayLetter) {
+        for pe in phase.plan(for: day) {
             let logs = history(for: pe)
             // AI on: what the AI Assistant thinks is the right goal from history.
             // AI off: exactly what was lifted last time.
@@ -137,7 +137,7 @@ struct WorkoutLogView: View {
     // MARK: Saving + AI
 
     private func finishWorkout() {
-        let session = WorkoutSession(dayLetter: dayLetter,
+        let session = WorkoutSession(day: day, dayLabel: day.name,
                                      cycleNumber: phase.currentCycle,
                                      isDeload: isDeloadCycle)
         session.phase = phase
@@ -171,7 +171,7 @@ struct WorkoutLogView: View {
     private func buildAISuggestions() {
         let agg = settings?.aiAggressiveness ?? .moderate
         aiSuggestions = []
-        for pe in phase.plan(for: dayLetter) {
+        for pe in phase.plan(for: day) {
             let logs = history(for: pe)
             guard let suggestion = ProgressionEngine.suggestNextWeights(
                 targetReps: pe.targetReps, history: logs,
@@ -191,7 +191,7 @@ struct WorkoutLogView: View {
 
     private func applySuggestions() {
         for row in aiSuggestions {
-            guard let pe = phase.plan(for: dayLetter).first(where: { $0.exerciseName == row.name }) else { continue }
+            guard let pe = phase.plan(for: day).first(where: { $0.exerciseName == row.name }) else { continue }
             let weights = row.overrideText.split(separator: "/")
                 .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
             if !weights.isEmpty { pe.suggestedWeights = weights }

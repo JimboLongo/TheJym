@@ -14,7 +14,7 @@ struct TheJymApp: App {
         }
         .modelContainer(for: [
             AppSettings.self, Bar.self, ExerciseDef.self,
-            Phase.self, PlannedExercise.self,
+            Phase.self, PhaseDay.self, PlannedExercise.self,
             WorkoutSession.self, ExerciseLog.self, SetLog.self,
             BodyWeightEntry.self, RestDayActivity.self
         ])

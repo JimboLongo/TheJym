@@ -102,7 +102,7 @@ struct AddHistoricalWorkoutView: View {
         }
         guard !entries.isEmpty else { return }
 
-        let session = WorkoutSession(date: date, dayLetter: "Manual", cycleNumber: 0)
+        let session = WorkoutSession(date: date, dayLabel: "Manual", cycleNumber: 0)
         context.insert(session)
 
         var knownNames = Set(exerciseDefs.map(\.name))

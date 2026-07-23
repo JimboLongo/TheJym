@@ -67,7 +67,7 @@ enum ImportEngine {
         var setsImported = 0
 
         for (day, dayRows) in byDay.sorted(by: { $0.key < $1.key }) {
-            let session = WorkoutSession(date: day, dayLetter: "Imported", cycleNumber: 0)
+            let session = WorkoutSession(date: day, dayLabel: "Imported", cycleNumber: 0)
             context.insert(session)
             sessionsCreated += 1
 

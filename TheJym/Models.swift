@@ -143,102 +143,57 @@ final class ExerciseDef {
 
 // MARK: - Phase / Split
 
-/// A Phase = a split pattern (e.g. "PPLRPPLR") run for N cycles with a fixed
-/// set of exercises per day letter. After N cycles, a new Phase begins.
+/// A Phase = a custom one-cycle day template (e.g. "Pull A, Push A, Legs A,
+/// Rest, Pull B, Push B, Legs B, Rest") run for N cycles. Each day is either
+/// the fixed "Rest" or a freely-named training day with its own independent
+/// exercise list — two days can share a similar name (Pull A vs Pull B)
+/// without sharing exercises, since each is its own PhaseDay.
 @Model
 final class Phase {
     var number: Int                // Phase 1, Phase 2, ...
-    var splitPattern: String       // "PPLRPPLR" — "R" is always Rest
     var totalCycles: Int           // e.g. 8
     var startDate: Date
     var isActive: Bool
     /// Cycle index (1-based) that is a deload cycle, or 0 for none.
     var deloadCycle: Int
 
-    @Relationship(deleteRule: .cascade, inverse: \PlannedExercise.phase)
-    var plannedExercises: [PlannedExercise] = []
+    @Relationship(deleteRule: .cascade, inverse: \PhaseDay.phase)
+    var days: [PhaseDay] = []
 
     @Relationship(deleteRule: .cascade, inverse: \WorkoutSession.phase)
     var sessions: [WorkoutSession] = []
 
-    init(number: Int, splitPattern: String, totalCycles: Int,
+    init(number: Int, totalCycles: Int,
          startDate: Date = .now, isActive: Bool = true, deloadCycle: Int = 0) {
         self.number = number
-        self.splitPattern = splitPattern.uppercased()
         self.totalCycles = totalCycles
         self.startDate = startDate
         self.isActive = isActive
         self.deloadCycle = deloadCycle
     }
 
-    /// Non-rest day letters in order of appearance, e.g. "PPLRPPLR" -> ["P","P","L","P","P","L"] positions.
-    var patternLetters: [String] { splitPattern.map { String($0) } }
+    /// The one-cycle day template, in order.
+    var orderedDays: [PhaseDay] { days.sorted { $0.order < $1.order } }
 
-    /// Distinct training-day letters within one repeat of the split, in order,
-    /// disambiguating a reused letter (e.g. "PPLR" is Pull, Push, Legs — a
-    /// classic split reuses "P" for two different training days, not one day
-    /// twice): "PPLR" -> ["Pull","Push","L"], "PPLRPPLR" -> the same, since it's
-    /// just that pattern repeated.
-    var distinctTrainingLetters: [String] { Phase.distinctTrainingLetters(for: splitPattern) }
+    /// Non-rest days, in order — each independent, even if two share a name.
+    var trainingDays: [PhaseDay] { orderedDays.filter { !$0.isRest } }
 
-    static func distinctTrainingLetters(for pattern: String) -> [String] {
-        let base = pattern.prefix(basePatternLength(of: pattern))
-        var counts: [Character: Int] = [:]
-        var result: [String] = []
-        for ch in base where ch.isLetter && ch != "R" {
-            counts[ch, default: 0] += 1
-            let n = counts[ch]!
-            switch (ch, n) {
-            case ("P", 1): result.append("Pull")
-            case ("P", 2): result.append("Push")
-            default: result.append(n == 1 ? String(ch) : "\(ch)\(n)")
-            }
-        }
-        return result
-    }
+    /// A short label for badges/headers, e.g. "Pull A · Push A · Legs A · Rest".
+    var summary: String { orderedDays.map(\.name).joined(separator: " · ") }
 
-    /// Length of the smallest repeating unit of `pattern`, e.g. "PPLRPPLR" -> 4
-    /// (it's just "PPLR" run twice).
-    private static func basePatternLength(of pattern: String) -> Int {
-        let chars = Array(pattern)
-        let n = chars.count
-        guard n > 0 else { return 0 }
-        for p in 1...n where n % p == 0 {
-            if (0..<n).allSatisfy({ chars[$0] == chars[$0 % p] }) { return p }
-        }
-        return n
-    }
+    /// Every planned exercise across every day — used by AI phase planning to
+    /// look up an exercise's isLowerBody flag by name.
+    var plannedExercises: [PlannedExercise] { days.flatMap(\.plannedExercises) }
 
-    /// Disambiguated training-day label for each position in the full split
-    /// pattern, cycling through `distinctTrainingLetters` in order, e.g.
-    /// "PPLRPPLR" -> ["Pull","Push","L","R","Pull","Push","L","R"].
-    private var labeledPattern: [String] {
-        let labels = distinctTrainingLetters
-        guard !labels.isEmpty else { return patternLetters }
-        var result: [String] = []
-        var i = 0
-        for ch in splitPattern {
-            if ch == "R" {
-                result.append("R")
-            } else {
-                result.append(labels[i % labels.count])
-                i += 1
-            }
-        }
-        return result
-    }
-
-    func plan(for letter: String) -> [PlannedExercise] {
-        plannedExercises
-            .filter { $0.dayLetter == letter }
-            .sorted { $0.order < $1.order }
+    func plan(for day: PhaseDay) -> [PlannedExercise] {
+        day.plannedExercises.sorted { $0.order < $1.order }
     }
 
     /// How many completed (non-rest) sessions logged; used to figure out where we are.
     var completedSessionCount: Int { sessions.count }
 
-    /// The number of training days in one full pass of the pattern.
-    var trainingDaysPerCycle: Int { patternLetters.filter { $0 != "R" }.count }
+    /// The number of training days in one full pass of the cycle.
+    var trainingDaysPerCycle: Int { trainingDays.count }
 
     /// Current cycle number (1-based) based on sessions logged.
     var currentCycle: Int {
@@ -246,17 +201,17 @@ final class Phase {
         return min(totalCycles, completedSessionCount / trainingDaysPerCycle + 1)
     }
 
-    /// Index into the pattern's *training* days for the next session (0-based).
+    /// Index into the cycle's *training* days for the next session (0-based).
     var nextTrainingDayIndex: Int {
         guard trainingDaysPerCycle > 0 else { return 0 }
         return completedSessionCount % trainingDaysPerCycle
     }
 
-    /// The day letter you're "supposed" to do next according to the pattern.
-    var nextDayLetter: String {
-        let trainingLabels = labeledPattern.filter { $0 != "R" }
-        guard !trainingLabels.isEmpty else { return "P" }
-        return trainingLabels[nextTrainingDayIndex]
+    /// The day you're "supposed" to do next according to the cycle.
+    var nextDay: PhaseDay? {
+        let t = trainingDays
+        guard !t.isEmpty else { return nil }
+        return t[nextTrainingDayIndex]
     }
 
     var isComplete: Bool {
@@ -264,20 +219,38 @@ final class Phase {
     }
 }
 
-/// One exercise slot inside a Phase's plan for a given day letter.
+/// One day within a Phase's one-cycle template — either the fixed "Rest" or
+/// a freely-named training day ("Pull A", "Upper 1", ...) with its own
+/// independent exercise list.
+@Model
+final class PhaseDay {
+    var phase: Phase?
+    var order: Int              // position within the cycle, 0-based
+    var name: String            // "Pull A", "Upper 1", or "Rest"
+    var isRest: Bool
+
+    @Relationship(deleteRule: .cascade, inverse: \PlannedExercise.day)
+    var plannedExercises: [PlannedExercise] = []
+
+    init(order: Int, name: String, isRest: Bool = false) {
+        self.order = order
+        self.name = name
+        self.isRest = isRest
+    }
+}
+
+/// One exercise slot inside a specific PhaseDay's plan.
 @Model
 final class PlannedExercise {
-    var phase: Phase?
-    var dayLetter: String
+    var day: PhaseDay?
     var order: Int
     var exerciseName: String
     var targetReps: [Int]          // e.g. [5,5,5,3,3,3] — user can override
     var suggestedWeights: [Double] // per-set suggestion (AI or manual); empty = none yet
     var isLowerBody: Bool
 
-    init(dayLetter: String, order: Int, exerciseName: String,
+    init(order: Int, exerciseName: String,
          targetReps: [Int], suggestedWeights: [Double] = [], isLowerBody: Bool = false) {
-        self.dayLetter = dayLetter
         self.order = order
         self.exerciseName = exerciseName
         self.targetReps = targetReps
@@ -295,16 +268,18 @@ final class PlannedExercise {
 final class WorkoutSession {
     var phase: Phase?
     var date: Date
-    var dayLetter: String
+    var day: PhaseDay?        // nil for manually back-filled/imported entries
+    var dayLabel: String      // display name at log time — survives the day being renamed/deleted
     var cycleNumber: Int
     var isDeload: Bool
 
     @Relationship(deleteRule: .cascade, inverse: \ExerciseLog.session)
     var exerciseLogs: [ExerciseLog] = []
 
-    init(date: Date = .now, dayLetter: String, cycleNumber: Int, isDeload: Bool = false) {
+    init(date: Date = .now, day: PhaseDay? = nil, dayLabel: String, cycleNumber: Int, isDeload: Bool = false) {
         self.date = date
-        self.dayLetter = dayLetter
+        self.day = day
+        self.dayLabel = dayLabel
         self.cycleNumber = cycleNumber
         self.isDeload = isDeload
     }

@@ -19,14 +19,14 @@ struct TrainingStats {
 }
 
 enum StatsEngine {
-    /// A phase's split pattern pinned to the calendar day it started, purely so
-    /// stats can tell whether a given past date was a scheduled Rest day.
+    /// A phase's one-cycle day template pinned to the calendar day it started,
+    /// purely so stats can tell whether a given past date was a scheduled Rest day.
     struct PhaseSchedule {
         let startDate: Date
-        let pattern: [Character]
-        init(startDate: Date, splitPattern: String) {
+        let restFlags: [Bool]   // per position in one cycle: is this a Rest day?
+        init(startDate: Date, phase: Phase) {
             self.startDate = startDate
-            self.pattern = Array(splitPattern.uppercased())
+            self.restFlags = phase.orderedDays.map(\.isRest)
         }
     }
 
@@ -36,10 +36,10 @@ enum StatsEngine {
         let covering = schedules
             .filter { cal.startOfDay(for: $0.startDate) <= day }
             .max { $0.startDate < $1.startDate }
-        guard let phase = covering, !phase.pattern.isEmpty else { return nil }
+        guard let phase = covering, !phase.restFlags.isEmpty else { return nil }
         let offset = cal.dateComponents([.day], from: cal.startOfDay(for: phase.startDate), to: day).day ?? 0
         guard offset >= 0 else { return nil }
-        return phase.pattern[offset % phase.pattern.count] == "R"
+        return phase.restFlags[offset % phase.restFlags.count]
     }
 
     static func compute(startDate: Date,

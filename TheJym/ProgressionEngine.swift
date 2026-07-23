@@ -133,9 +133,9 @@ enum ProgressionEngine {
     static func planNextPhase(previousPhase: Phase) -> [String: [PlannedSlot]] {
         var result: [String: [PlannedSlot]] = [:]
 
-        for letter in previousPhase.distinctTrainingLetters {
+        for day in previousPhase.trainingDays {
             var slots: [PlannedSlot] = []
-            for planned in previousPhase.plan(for: letter) {
+            for planned in previousPhase.plan(for: day) {
                 let logs = previousPhase.sessions
                     .flatMap { $0.exerciseLogs }
                     .filter { $0.planKey == planned.planKey && !$0.sets.isEmpty }
@@ -172,7 +172,7 @@ enum ProgressionEngine {
                                              rationale: "Stalled last phase — changing rep scheme to vary the stimulus."))
                 }
             }
-            result[letter] = slots
+            result[day.name] = slots
         }
         return result
     }

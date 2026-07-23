@@ -44,7 +44,7 @@ struct TodayView: View {
             }
             .navigationTitle("Train")
             .sheet(isPresented: $showingPhaseSetup) {
-                PhaseSetupView(previousPhase: nil)
+                PhaseBuilderView(previousPhase: nil)
             }
             .sheet(isPresented: $showingNextPhasePlanner) {
                 if let phase = activePhase {
@@ -60,7 +60,7 @@ struct TodayView: View {
             ContentUnavailableView {
                 Label("No Active Phase", systemImage: "calendar.badge.plus")
             } description: {
-                Text("Set up your split (e.g. PPLRPPLR), pick your exercises, and choose how many cycles the phase runs.")
+                Text("Build your split day by day (e.g. Pull A, Push A, Legs A, Rest), pick your exercises, and choose how many cycles the phase runs.")
             } actions: {
                 Button("Set Up Phase 1") { showingPhaseSetup = true }
                     .buttonStyle(.borderedProminent)
@@ -75,8 +75,8 @@ struct TodayView: View {
                 HStack {
                     Text("Phase \(phase.number)").font(.title2.bold())
                     Spacer()
-                    Text(phase.splitPattern)
-                        .font(.system(.subheadline, design: .monospaced))
+                    Text(phase.summary)
+                        .font(.system(.caption, design: .monospaced))
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(.thinMaterial, in: Capsule())
                 }
@@ -97,34 +97,36 @@ struct TodayView: View {
             .padding(.vertical, 4)
         }
 
-        Section("Up Next: Day \(phase.nextDayLetter)") {
-            let plan = phase.plan(for: phase.nextDayLetter)
-            if plan.isEmpty {
-                Text("No exercises planned for day \(phase.nextDayLetter). Edit the phase to add some.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(plan, id: \.persistentModelID) { pe in
-                    HStack {
-                        Text(pe.exerciseName)
-                        Spacer()
-                        Text(pe.targetReps.map(String.init).joined(separator: "/"))
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
+        if let nextDay = phase.nextDay {
+            Section("Up Next: \(nextDay.name)") {
+                let plan = phase.plan(for: nextDay)
+                if plan.isEmpty {
+                    Text("No exercises planned for \(nextDay.name). Edit the phase to add some.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(plan, id: \.persistentModelID) { pe in
+                        HStack {
+                            Text(pe.exerciseName)
+                            Spacer()
+                            Text(pe.targetReps.map(String.init).joined(separator: "/"))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                }
-                NavigationLink {
-                    WorkoutLogView(phase: phase, dayLetter: phase.nextDayLetter)
-                } label: {
-                    Label("Start Day \(phase.nextDayLetter) Workout", systemImage: "play.fill")
-                        .font(.headline)
+                    NavigationLink {
+                        WorkoutLogView(phase: phase, day: nextDay)
+                    } label: {
+                        Label("Start \(nextDay.name) Workout", systemImage: "play.fill")
+                            .font(.headline)
+                    }
                 }
             }
         }
 
         Section("Or pick a different day") {
-            ForEach(phase.distinctTrainingLetters, id: \.self) { letter in
-                NavigationLink("Day \(letter)") {
-                    WorkoutLogView(phase: phase, dayLetter: letter)
+            ForEach(phase.trainingDays, id: \.persistentModelID) { day in
+                NavigationLink(day.name) {
+                    WorkoutLogView(phase: phase, day: day)
                 }
             }
         }
