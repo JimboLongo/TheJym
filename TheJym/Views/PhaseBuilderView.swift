@@ -121,10 +121,16 @@ struct PhaseBuilderView: View {
                 }
 
                 Section {
-                    Menu("Start from a Preset") {
+                    Menu {
                         ForEach(Self.presets, id: \.name) { preset in
                             Button(preset.name) { choosePreset(preset) }
                         }
+                    } label: {
+                        HStack {
+                            Text("Start from a Preset")
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
                     }
                 } footer: {
                     Text("Fills in the day list below — you can still add, rename, reorder, or delete days after.")
@@ -133,9 +139,6 @@ struct PhaseBuilderView: View {
                 Section {
                     ForEach($dayDrafts) { $day in
                         HStack(spacing: 10) {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundStyle(.tertiary)
-                                .font(.caption)
                             if day.isRest {
                                 Text("Rest").foregroundStyle(.secondary)
                             } else {

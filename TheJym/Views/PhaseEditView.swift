@@ -33,9 +33,6 @@ struct PhaseEditView: View {
                 Section {
                     ForEach(phase.orderedDays, id: \.persistentModelID) { day in
                         HStack(spacing: 10) {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundStyle(.tertiary)
-                                .font(.caption)
                             if day.isRest {
                                 Text("Rest").foregroundStyle(.secondary)
                             } else {
