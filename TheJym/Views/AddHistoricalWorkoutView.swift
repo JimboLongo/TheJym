@@ -12,6 +12,7 @@ import SwiftData
 struct AddHistoricalWorkoutView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Query private var exerciseDefs: [ExerciseDef]
 
     @State private var date = Date()
     @State private var exercises: [ExerciseDraft] = [ExerciseDraft()]
@@ -104,6 +105,7 @@ struct AddHistoricalWorkoutView: View {
         let session = WorkoutSession(date: date, dayLetter: "Manual", cycleNumber: 0)
         context.insert(session)
 
+        var knownNames = Set(exerciseDefs.map(\.name))
         for (order, entry) in entries.enumerated() {
             let log = ExerciseLog(exerciseName: entry.name, targetReps: [], order: order)
             log.session = session
@@ -113,6 +115,7 @@ struct AddHistoricalWorkoutView: View {
                 set.exerciseLog = log
                 context.insert(set)
             }
+            ExerciseDef.ensureExists(name: entry.name, knownNames: &knownNames, context: context)
         }
         try? context.save()
         dismiss()

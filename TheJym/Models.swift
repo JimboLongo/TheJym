@@ -102,6 +102,16 @@ final class ExerciseDef {
         self.notes = notes
         self.equipment = equipment
     }
+
+    /// Inserts a bare-bones definition for `name` if it isn't already in the
+    /// library — keeps names typed in Phase Setup, historical entry, and CSV
+    /// import all in sync with the Exercises tab.
+    static func ensureExists(name: String, targetReps: [Int] = [8, 8, 8], isLowerBody: Bool = false,
+                             knownNames: inout Set<String>, context: ModelContext) {
+        guard !knownNames.contains(name) else { return }
+        context.insert(ExerciseDef(name: name, targetReps: targetReps, isLowerBody: isLowerBody))
+        knownNames.insert(name)
+    }
 }
 
 // MARK: - Phase / Split

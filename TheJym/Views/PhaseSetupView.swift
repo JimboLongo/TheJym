@@ -150,11 +150,8 @@ struct PhaseSetupView: View {
                 pe.phase = phase
                 context.insert(pe)
 
-                // Keep the Exercises library in sync with anything typed here for the first time.
-                if !knownNames.contains(d.name) {
-                    context.insert(ExerciseDef(name: d.name, targetReps: reps, isLowerBody: d.isLowerBody))
-                    knownNames.insert(d.name)
-                }
+                ExerciseDef.ensureExists(name: d.name, targetReps: reps, isLowerBody: d.isLowerBody,
+                                        knownNames: &knownNames, context: context)
             }
         }
         try? context.save()
