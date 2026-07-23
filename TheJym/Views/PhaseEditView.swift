@@ -32,22 +32,27 @@ struct PhaseEditView: View {
 
                 Section {
                     ForEach(phase.orderedDays, id: \.persistentModelID) { day in
-                        if day.isRest {
-                            Text("Rest").foregroundStyle(.secondary)
-                        } else {
-                            HStack {
-                                TextField("Day name", text: Binding(
-                                    get: { day.name },
-                                    set: { day.name = $0 }))
-                                    .font(.headline)
-                                Spacer()
-                                NavigationLink {
-                                    PhaseDayEditView(day: day, exerciseDefs: exerciseDefs, bars: bars)
-                                } label: {
-                                    Text("\(day.plannedExercises.count) exercise\(day.plannedExercises.count == 1 ? "" : "s")")
-                                        .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundStyle(.tertiary)
+                                .font(.caption)
+                            if day.isRest {
+                                Text("Rest").foregroundStyle(.secondary)
+                            } else {
+                                HStack {
+                                    TextField("Day name", text: Binding(
+                                        get: { day.name },
+                                        set: { day.name = $0 }))
+                                        .font(.headline)
+                                    Spacer()
+                                    NavigationLink {
+                                        PhaseDayEditView(day: day, exerciseDefs: exerciseDefs, bars: bars)
+                                    } label: {
+                                        Text("\(day.plannedExercises.count) exercise\(day.plannedExercises.count == 1 ? "" : "s")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    .fixedSize()
                                 }
-                                .fixedSize()
                             }
                         }
                     }
@@ -59,15 +64,15 @@ struct PhaseEditView: View {
                 } header: {
                     Text("One Cycle")
                 } footer: {
-                    Text("Rename, reorder, add, or delete days freely — deleting a day doesn't delete workouts you've already logged for it, they stay in History without a day attached.")
+                    Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder days, or swipe to delete one. Deleting a day doesn't delete workouts you've already logged for it, they stay in History without a day attached.")
                 }
             }
+            .environment(\.editMode, .constant(.active))
             .navigationTitle("Edit Phase \(phase.number)")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { try? context.save(); dismiss() }
                 }
-                ToolbarItem(placement: .navigation) { EditButton() }
             }
             .alert("New Training Day", isPresented: $showingNewDayAlert) {
                 TextField("e.g. Pull A, Upper 1", text: $newDayName)
@@ -113,9 +118,7 @@ struct PhaseDayEditView: View {
     let exerciseDefs: [ExerciseDef]
     let bars: [Bar]
 
-    @State private var showingNewExerciseSheet = false
-    @State private var addSetTarget: ExerciseDef?
-    @State private var newSetReps = ""
+    @State private var showingAddExercise = false
 
     private var sortedExercises: [PlannedExercise] {
         day.plannedExercises.sorted { $0.order < $1.order }
@@ -131,46 +134,14 @@ struct PhaseDayEditView: View {
                     let sorted = sortedExercises
                     for i in idx { context.delete(sorted[i]) }
                 }
-                Menu("Add Exercise") {
-                    ForEach(exerciseDefs, id: \.persistentModelID) { def in
-                        if def.repSchemes.isEmpty {
-                            Button("\(def.name)…") { addSetTarget = def }
-                        } else {
-                            Menu(def.name) {
-                                ForEach(def.repSchemes, id: \.self) { reps in
-                                    Button(reps.map(String.init).joined(separator: "/")) {
-                                        addExercise(def, reps: reps)
-                                    }
-                                }
-                                Divider()
-                                Button("Add New Set…") { addSetTarget = def }
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("New Exercise…") { showingNewExerciseSheet = true }
-                }
+                Button("Add Exercise") { showingAddExercise = true }
             }
         }
         .navigationTitle(day.name)
-        .sheet(isPresented: $showingNewExerciseSheet) {
-            ExerciseEditView(def: nil, bars: bars) { newDef in
-                addExercise(newDef, reps: newDef.repSchemes.first ?? [8, 8, 8])
-            }
-        }
-        .alert("Add a Set to \(addSetTarget?.name ?? "")",
-               isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
-            TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
-            Button("Add") {
-                let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                newSetReps = ""
-                guard !reps.isEmpty, let def = addSetTarget else { addSetTarget = nil; return }
-                def.addRepScheme(reps)
-                try? context.save()
+        .sheet(isPresented: $showingAddExercise) {
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps in
                 addExercise(def, reps: reps)
-                addSetTarget = nil
             }
-            Button("Cancel", role: .cancel) { newSetReps = ""; addSetTarget = nil }
         }
     }
 
@@ -186,34 +157,21 @@ struct PlannedExerciseRow: View {
     @Bindable var pe: PlannedExercise
 
     @State private var repsText = ""
-    @State private var weightsText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField("Exercise name", text: $pe.exerciseName)
                 .font(.headline)
-            HStack {
-                TextField("Reps e.g. 5/5/5/3/3/3", text: $repsText)
-                    .font(.system(.caption, design: .monospaced))
-                    .keyboardType(.numbersAndPunctuation)
-                    .onChange(of: repsText) { _, new in
-                        pe.targetReps = new.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                    }
-                Toggle("Lower", isOn: $pe.isLowerBody)
-                    .toggleStyle(.button)
-                    .font(.caption2)
-            }
-            TextField("Start weights (optional) e.g. 135/135/135/145/145/145", text: $weightsText)
+            TextField("Reps e.g. 5/5/5/3/3/3", text: $repsText)
                 .font(.system(.caption, design: .monospaced))
                 .keyboardType(.numbersAndPunctuation)
-                .onChange(of: weightsText) { _, new in
-                    pe.suggestedWeights = new.split(separator: "/").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                .onChange(of: repsText) { _, new in
+                    pe.targetReps = new.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
                 }
         }
         .padding(.vertical, 2)
         .onAppear {
             repsText = pe.targetReps.map(String.init).joined(separator: "/")
-            weightsText = pe.suggestedWeights.map { Formatters.trim($0) }.joined(separator: "/")
         }
     }
 }

@@ -15,6 +15,7 @@ struct HistoryView: View {
 
     @State private var showingAddPast = false
     @State private var showingImporter = false
+    @State private var showingImportHelp = false
     @State private var importResultMessage: String?
 
     var body: some View {
@@ -61,6 +62,7 @@ struct HistoryView: View {
                     Menu {
                         Button("Add Past Workout", systemImage: "square.and.pencil") { showingAddPast = true }
                         Button("Import from CSV…", systemImage: "square.and.arrow.down") { showingImporter = true }
+                        Button("CSV Format Guide…", systemImage: "questionmark.circle") { showingImportHelp = true }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -68,6 +70,9 @@ struct HistoryView: View {
             }
             .sheet(isPresented: $showingAddPast) {
                 AddHistoricalWorkoutView()
+            }
+            .sheet(isPresented: $showingImportHelp) {
+                CSVFormatHelpView()
             }
             .fileImporter(isPresented: $showingImporter,
                          allowedContentTypes: [.commaSeparatedText, .plainText, .text]) { result in
@@ -96,13 +101,54 @@ struct HistoryView: View {
             }
             let (rows, skipped) = ImportEngine.parseRows(csv: text)
             guard !rows.isEmpty else {
-                importResultMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Weight, and Reps columns."
+                importResultMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Sets, Weights, and Reps columns — see the CSV Format Guide for the exact layout."
                 return
             }
             let outcome = ImportEngine.importIntoStore(rows, context: context)
             var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s")."
             if skipped > 0 { msg += " Skipped \(skipped) row\(skipped == 1 ? "" : "s") that didn't parse." }
             importResultMessage = msg
+        }
+    }
+}
+
+/// Explains the expected CSV layout for bulk import.
+struct CSVFormatHelpView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Columns (any order): **Date**, **Exercise**, **Sets**, **Weights**, **Reps**.")
+                    Text("One row = one exercise logged on one day. Sets, Weights, and Reps are slash-separated, one value per set, in the same order.")
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Example") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Date,Exercise,Sets,Weights,Reps")
+                        Text("2026-01-05,Back Squat,5/5/5/3/3,135/135/135/145/145,6/5/5/5/3")
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                }
+
+                Section {
+                    Label("Sets is the target rep scheme (e.g. 5/5/5/3/3) — it becomes a saved Set for that exercise in the Exercises tab.",
+                          systemImage: "list.bullet.rectangle")
+                    Label("Weights and Reps are what you actually lifted, and must have the same number of slash-separated values as each other.",
+                          systemImage: "checkmark.circle")
+                    Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
+                          systemImage: "questionmark.circle")
+                } header: {
+                    Text("Notes")
+                }
+            }
+            .navigationTitle("CSV Format")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
         }
     }
 }
