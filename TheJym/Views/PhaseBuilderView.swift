@@ -37,15 +37,19 @@ struct PhaseBuilderView: View {
     }
 
     static let presets: [SplitPreset] = [
-        SplitPreset(name: "Push / Pull / Legs", days: [
+        SplitPreset(name: "Push / Pull / Legs / Rest", days: [
             ("Push", false), ("Pull", false), ("Legs", false), ("Rest", true),
         ]),
-        SplitPreset(name: "Push / Pull / Legs (6-Day)", days: [
-            ("Push A", false), ("Pull A", false), ("Legs A", false),
+        SplitPreset(name: "Push / Pull / Legs / Rest (2x)", days: [
+            ("Push A", false), ("Pull A", false), ("Legs A", false), ("Rest", true),
             ("Push B", false), ("Pull B", false), ("Legs B", false), ("Rest", true),
         ]),
-        SplitPreset(name: "Upper / Lower", days: [
+        SplitPreset(name: "Upper / Lower / Rest", days: [
             ("Upper", false), ("Lower", false), ("Rest", true),
+        ]),
+        SplitPreset(name: "Upper / Lower / Rest (2x)", days: [
+            ("Upper A", false), ("Lower A", false), ("Rest", true),
+            ("Upper B", false), ("Lower B", false), ("Rest", true),
         ]),
         SplitPreset(name: "Full Body", days: [
             ("Full Body", false), ("Rest", true),
