@@ -14,6 +14,7 @@ struct PhaseSetupView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
     @Query private var settingsList: [AppSettings]
+    @Query(sort: \Bar.name) private var bars: [Bar]
 
     /// If non-nil, seed the plan from an AI-planned or previous phase.
     var previousPhase: Phase?
@@ -29,6 +30,8 @@ struct PhaseSetupView: View {
         var repsText: String        // "5/5/5/3/3/3"
         var weightsText: String     // optional "135/135/135/145/145/145"
         var isLowerBody: Bool
+        var notes: String = ""
+        var equipmentID: PersistentIdentifier? = nil
     }
 
     private var trainingLetters: [String] {
@@ -58,7 +61,7 @@ struct PhaseSetupView: View {
                     Section("Day \(letter) Exercises") {
                         let items = draftPlan[letter] ?? []
                         ForEach(items) { ex in
-                            DraftExerciseRow(letter: letter, item: binding(for: letter, id: ex.id))
+                            DraftExerciseRow(letter: letter, item: binding(for: letter, id: ex.id), bars: bars)
                         }
                         .onDelete { idx in
                             draftPlan[letter]?.remove(atOffsets: idx)
@@ -148,7 +151,9 @@ struct PhaseSetupView: View {
                                          exerciseName: d.name,
                                          targetReps: reps,
                                          suggestedWeights: weights,
-                                         isLowerBody: d.isLowerBody)
+                                         isLowerBody: d.isLowerBody,
+                                         notes: d.notes,
+                                         equipment: bars.first { $0.persistentModelID == d.equipmentID })
                 pe.phase = phase
                 context.insert(pe)
             }
@@ -161,6 +166,7 @@ struct PhaseSetupView: View {
 struct DraftExerciseRow: View {
     let letter: String
     @Binding var item: PhaseSetupView.DraftExercise
+    let bars: [Bar]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -177,6 +183,16 @@ struct DraftExerciseRow: View {
             TextField("Start weights (optional) e.g. 135/135/135/145/145/145", text: $item.weightsText)
                 .font(.system(.caption, design: .monospaced))
                 .keyboardType(.numbersAndPunctuation)
+            Picker("Equipment", selection: $item.equipmentID) {
+                Text("None").tag(Optional<PersistentIdentifier>.none)
+                ForEach(bars, id: \.persistentModelID) { bar in
+                    Text("\(bar.name) (\(Formatters.trim(bar.weight)) lbs)").tag(Optional(bar.persistentModelID))
+                }
+            }
+            .font(.caption)
+            TextField("Notes (optional) — form cues, setup tips, etc.", text: $item.notes, axis: .vertical)
+                .font(.caption)
+                .lineLimit(1...3)
         }
         .padding(.vertical, 2)
     }

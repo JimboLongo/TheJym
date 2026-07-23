@@ -226,15 +226,20 @@ final class PlannedExercise {
     var targetReps: [Int]          // e.g. [5,5,5,3,3,3] — user can override
     var suggestedWeights: [Double] // per-set suggestion (AI or manual); empty = none yet
     var isLowerBody: Bool
+    var notes: String = ""         // form cues, setup tips, etc.
+    var equipment: Bar?            // bar/equipment used, for the inline plate calculator
 
     init(dayLetter: String, order: Int, exerciseName: String,
-         targetReps: [Int], suggestedWeights: [Double] = [], isLowerBody: Bool = false) {
+         targetReps: [Int], suggestedWeights: [Double] = [], isLowerBody: Bool = false,
+         notes: String = "", equipment: Bar? = nil) {
         self.dayLetter = dayLetter
         self.order = order
         self.exerciseName = exerciseName
         self.targetReps = targetReps
         self.suggestedWeights = suggestedWeights
         self.isLowerBody = isLowerBody
+        self.notes = notes
+        self.equipment = equipment
     }
 
     /// Stable key for "same plan" comparisons: name + target rep scheme.

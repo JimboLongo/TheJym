@@ -16,6 +16,7 @@ struct WorkoutLogView: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var settingsList: [AppSettings]
     @Query private var allExerciseLogs: [ExerciseLog]
+    @Query(sort: \Bar.name) private var bars: [Bar]
 
     let phase: Phase
     let dayLetter: String
@@ -60,6 +61,7 @@ struct WorkoutLogView: View {
     }
 
     var body: some View {
+        let plannedExercises = phase.plan(for: dayLetter)
         List {
             if isDeloadCycle {
                 Section {
@@ -68,9 +70,10 @@ struct WorkoutLogView: View {
                         .font(.callout).foregroundStyle(.orange)
                 }
             }
-            ForEach($drafts) { $draft in
+            ForEach(Array(drafts.indices), id: \.self) { i in
                 Section {
-                    ExerciseDraftSection(draft: $draft, allLogs: allExerciseLogs)
+                    ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
+                                        plannedExercise: plannedExercises[safe: i], bars: bars)
                 }
             }
             Section {
@@ -198,8 +201,14 @@ struct WorkoutLogView: View {
 // MARK: - One exercise's logging card + pace panel
 
 struct ExerciseDraftSection: View {
+    @Environment(\.modelContext) private var context
     @Binding var draft: WorkoutLogView.ExerciseDraft
     let allLogs: [ExerciseLog]
+    let plannedExercise: PlannedExercise?
+    let bars: [Bar]
+
+    @State private var showingDetails = false
+    @State private var plateTargetText = ""
 
     private var currentWeights: [Double] {
         draft.sets.compactMap(\.weight)
@@ -223,6 +232,19 @@ struct ExerciseDraftSection: View {
                 Text("Goal \(draft.targetReps.map(String.init).joined(separator: "/"))")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
+                if plannedExercise != nil {
+                    Button {
+                        withAnimation { showingDetails.toggle() }
+                    } label: {
+                        Image(systemName: showingDetails ? "chevron.up.circle.fill" : "info.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .imageScale(.large)
+                }
+            }
+
+            if showingDetails, let pe = plannedExercise {
+                notesAndPlateCalc(pe)
             }
 
             // Set rows
@@ -267,6 +289,78 @@ struct ExerciseDraftSection: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func notesAndPlateCalc(_ pe: PlannedExercise) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
+                TextField("Form cues, setup tips, etc.", text: Binding(
+                    get: { pe.notes },
+                    set: { pe.notes = $0; try? context.save() }
+                ), axis: .vertical)
+                    .font(.subheadline)
+                    .lineLimit(1...4)
+            }
+
+            Picker("Equipment", selection: Binding(
+                get: { pe.equipment?.persistentModelID },
+                set: { id in
+                    pe.equipment = bars.first { $0.persistentModelID == id }
+                    try? context.save()
+                })) {
+                Text("None").tag(Optional<PersistentIdentifier>.none)
+                ForEach(bars, id: \.persistentModelID) { bar in
+                    Text("\(bar.name) (\(Formatters.trim(bar.weight)) lbs)").tag(Optional(bar.persistentModelID))
+                }
+            }
+            .font(.subheadline)
+
+            if let bar = pe.equipment {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Plate Calculator").font(.caption.bold()).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Target")
+                        TextField("lbs", text: $plateTargetText)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                    }
+                    .font(.subheadline)
+
+                    if let target = Double(plateTargetText) {
+                        if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight) {
+                            if plates.isEmpty && leftover == 0 {
+                                Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            ForEach(plates) { p in
+                                HStack {
+                                    Text("\(Formatters.trim(p.plate)) lb plate")
+                                        .font(.system(.caption, design: .monospaced))
+                                    Spacer()
+                                    Text("× \(p.countPerSide) per side")
+                                        .font(.system(.caption, design: .monospaced)).bold()
+                                }
+                            }
+                            if leftover > 0 {
+                                Text("Can't hit exactly — \(Formatters.trim(leftover)) lbs/side short.")
+                                    .font(.caption2).foregroundStyle(.orange)
+                            }
+                        } else {
+                            Text("Target is lighter than the \(Formatters.trim(bar.weight)) lb bar.")
+                                .font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                }
+            } else {
+                Text("Tag equipment above to use the plate calculator.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
