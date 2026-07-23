@@ -55,8 +55,15 @@ struct PhaseEditView: View {
                                 }
                             }
                         }
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                context.delete(day)
+                                renumber()
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                     }
-                    .onDelete(perform: deleteDays)
                     .onMove(perform: moveDays)
 
                     Button("Add Training Day…") { showingNewDayAlert = true }
@@ -91,12 +98,6 @@ struct PhaseEditView: View {
         let day = PhaseDay(order: phase.days.count, name: name, isRest: isRest)
         day.phase = phase
         context.insert(day)
-    }
-
-    private func deleteDays(at offsets: IndexSet) {
-        let ordered = phase.orderedDays
-        for i in offsets { context.delete(ordered[i]) }
-        renumber()
     }
 
     private func moveDays(from source: IndexSet, to destination: Int) {

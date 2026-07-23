@@ -172,8 +172,16 @@ struct PhaseBuilderView: View {
                                 }
                             }
                         }
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                if let idx = dayDrafts.firstIndex(where: { $0.id == day.id }) {
+                                    dayDrafts.remove(at: idx)
+                                }
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                     }
-                    .onDelete { idx in dayDrafts.remove(atOffsets: idx) }
                     .onMove { from, to in dayDrafts.move(fromOffsets: from, toOffset: to) }
 
                     Button("Add Training Day…") { showingNewDayAlert = true }
