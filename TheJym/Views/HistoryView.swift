@@ -61,8 +61,8 @@ struct HistoryView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button("Add Past Workout", systemImage: "square.and.pencil") { showingAddPast = true }
-                        Button("Import from CSV…", systemImage: "square.and.arrow.down") { showingImporter = true }
-                        Button("CSV Format Guide…", systemImage: "questionmark.circle") { showingImportHelp = true }
+                        Button("Import from CSV or Excel…", systemImage: "square.and.arrow.down") { showingImporter = true }
+                        Button("Import Format Guide…", systemImage: "questionmark.circle") { showingImportHelp = true }
                     } label: {
                         Image(systemName: "plus")
                     }
@@ -75,7 +75,8 @@ struct HistoryView: View {
                 CSVFormatHelpView()
             }
             .fileImporter(isPresented: $showingImporter,
-                         allowedContentTypes: [.commaSeparatedText, .plainText, .text]) { result in
+                         allowedContentTypes: [.commaSeparatedText, .plainText, .text,
+                                               UTType(filenameExtension: "xlsx") ?? .data]) { result in
                 handleImport(result)
             }
             .alert("Import Complete", isPresented: Binding(
@@ -95,13 +96,28 @@ struct HistoryView: View {
         case .success(let url):
             let didAccess = url.startAccessingSecurityScopedResource()
             defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-                importResultMessage = "Couldn't read that file as text."
-                return
+
+            let parsed: (rows: [ImportEngine.ImportedEntry], skipped: Int)?
+            if url.pathExtension.lowercased() == "xlsx" {
+                guard let data = try? Data(contentsOf: url) else {
+                    importResultMessage = "Couldn't read that file."
+                    return
+                }
+                parsed = ImportEngine.parseRows(xlsxData: data)
+                if parsed == nil {
+                    importResultMessage = "Couldn't read that Excel file — make sure it's a standard .xlsx workbook."
+                    return
+                }
+            } else {
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    importResultMessage = "Couldn't read that file as text."
+                    return
+                }
+                parsed = ImportEngine.parseRows(csv: text)
             }
-            let (rows, skipped) = ImportEngine.parseRows(csv: text)
-            guard !rows.isEmpty else {
-                importResultMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Sets, Weights, and Reps columns — see the CSV Format Guide for the exact layout."
+
+            guard let (rows, skipped) = parsed, !rows.isEmpty else {
+                importResultMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Sets, Weights, and Reps columns — see the Import Format Guide for the exact layout."
                 return
             }
             let outcome = ImportEngine.importIntoStore(rows, context: context)
@@ -112,7 +128,7 @@ struct HistoryView: View {
     }
 }
 
-/// Explains the expected CSV layout for bulk import.
+/// Explains the expected column layout for bulk import (CSV or .xlsx).
 struct CSVFormatHelpView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -120,6 +136,7 @@ struct CSVFormatHelpView: View {
         NavigationStack {
             List {
                 Section {
+                    Text("Works with a .csv file or an Excel/Sheets .xlsx workbook (first sheet).")
                     Text("Columns (any order): **Date**, **Exercise**, **Sets**, **Weights**, **Reps**.")
                     Text("One row = one exercise logged on one day. Sets, Weights, and Reps are slash-separated, one value per set, in the same order.")
                         .foregroundStyle(.secondary)
@@ -147,7 +164,7 @@ struct CSVFormatHelpView: View {
                     Text("Notes")
                 }
             }
-            .navigationTitle("CSV Format")
+            .navigationTitle("Import Format")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }

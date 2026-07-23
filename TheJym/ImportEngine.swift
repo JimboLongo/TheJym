@@ -2,10 +2,10 @@
 //  ImportEngine.swift
 //  TheJym
 //
-//  Bulk-import historical workouts from a CSV (e.g. a Google Sheet
-//  exported/shared as .csv). One row = one exercise logged on one day, with
-//  Date, Exercise, Sets, Weights, and Reps columns (any order, header
-//  matched case-insensitively):
+//  Bulk-import historical workouts from a CSV or Excel (.xlsx) file (e.g. a
+//  Google Sheet exported/shared as either). One row = one exercise logged on
+//  one day, with Date, Exercise, Sets, Weights, and Reps columns (any order,
+//  header matched case-insensitively):
 //
 //    Date       | Exercise    | Sets      | Weights           | Reps
 //    2026-01-05 | Back Squat  | 5/5/5/3/3 | 135/135/135/145/145 | 6/5/5/5/3
@@ -39,7 +39,27 @@ enum ImportEngine {
     static func parseRows(csv: String) -> (rows: [ImportedEntry], skipped: Int) {
         let lines = csv.split(whereSeparator: { $0 == "\n" || $0 == "\r\n" }).map(String.init)
         guard let headerLine = lines.first else { return ([], 0) }
-        let header = splitCSVLine(headerLine).map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        let header = splitCSVLine(headerLine)
+        let dataRows = lines.dropFirst()
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map(splitCSVLine)
+        return parseFields(header: header, rows: Array(dataRows))
+    }
+
+    /// Parses an .xlsx workbook's first sheet the same way. Returns nil only
+    /// if the file itself couldn't be read as a valid .xlsx at all.
+    static func parseRows(xlsxData: Data) -> (rows: [ImportedEntry], skipped: Int)? {
+        guard let grid = XLSXReader.readFirstSheetAsRows(data: xlsxData), let header = grid.first else { return nil }
+        let dataRows = grid.dropFirst().filter { row in
+            !row.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+        }
+        return parseFields(header: header, rows: Array(dataRows))
+    }
+
+    /// Shared row-processing logic once a CSV/xlsx source has been reduced to
+    /// a plain header row + data rows of string fields.
+    private static func parseFields(header rawHeader: [String], rows: [[String]]) -> (rows: [ImportedEntry], skipped: Int) {
+        let header = rawHeader.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
         guard let dateIdx = header.firstIndex(where: { $0.hasPrefix("date") }),
               let exerciseIdx = header.firstIndex(where: { $0.hasPrefix("exercise") }),
               let setsIdx = header.firstIndex(where: { $0.hasPrefix("set") }),
@@ -49,9 +69,7 @@ enum ImportEngine {
 
         var out: [ImportedEntry] = []
         var skipped = 0
-        for line in lines.dropFirst() {
-            guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-            let fields = splitCSVLine(line)
+        for fields in rows {
             guard fields.count > max(dateIdx, exerciseIdx, setsIdx, weightsIdx, repsIdx) else { skipped += 1; continue }
             let name = fields[exerciseIdx].trimmingCharacters(in: .whitespaces)
             let dateStr = fields[dateIdx].trimmingCharacters(in: .whitespaces)
@@ -166,6 +184,9 @@ enum ImportEngine {
         for f in dateFormatters {
             if let d = f.date(from: s) { return d }
         }
+        // .xlsx stores dates as bare day-count serials (no formatting info
+        // survives once we've read just the cell value).
+        if let serial = Int(s) { return excelSerialDate(serial) }
         return nil
     }
 
