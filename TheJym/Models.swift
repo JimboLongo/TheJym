@@ -381,4 +381,10 @@ enum Formatters {
         f.dateStyle = .medium
         return f
     }()
+    /// Compact numeric date for tight table columns, e.g. "1/5/2026".
+    static let shortDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "M/d/yyyy"
+        return f
+    }()
 }

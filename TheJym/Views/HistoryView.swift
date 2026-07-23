@@ -27,42 +27,49 @@ struct HistoryView: View {
     @State private var showingImportHelp = false
     @State private var importResultMessage: String?
 
+    /// One row per logged exercise (not per session) — Sets/Weights/Reps are
+    /// per-exercise, so that's the natural row unit for a flat table.
+    private struct Row: Identifiable {
+        let log: ExerciseLog
+        let session: WorkoutSession
+        var id: PersistentIdentifier { log.persistentModelID }
+    }
+
+    private var rows: [Row] {
+        sessions.flatMap { session in
+            session.exerciseLogs.sorted { $0.order < $1.order }.map { Row(log: $0, session: session) }
+        }
+    }
+
+    private enum Col {
+        static let day: CGFloat = 76
+        static let phase: CGFloat = 48
+        static let exercise: CGFloat = 150
+        static let sets: CGFloat = 74
+        static let weights: CGFloat = 120
+        static let reps: CGFloat = 90
+        static let source: CGFloat = 70
+        static let delete: CGFloat = 32
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                if sessions.isEmpty {
+            Group {
+                if rows.isEmpty {
                     ContentUnavailableView("No workouts yet",
                                            systemImage: "clock.arrow.circlepath",
                                            description: Text("Your logged sessions will show up here."))
-                }
-                ForEach(sessions, id: \.persistentModelID) { session in
-                    NavigationLink {
-                        SessionDetailView(session: session)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text(session.cycleNumber > 0
-                                     ? "\(session.dayLabel) · Cycle \(session.cycleNumber)"
-                                     : session.dayLabel)
-                                    .font(.headline)
-                                if session.isDeload {
-                                    Text("DELOAD").font(.caption2.bold())
-                                        .padding(.horizontal, 6).padding(.vertical, 2)
-                                        .background(.orange.opacity(0.2), in: Capsule())
-                                }
-                                Spacer()
-                                Text(Formatters.date.string(from: session.date))
-                                    .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ScrollView([.horizontal, .vertical]) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            headerRow
+                            Divider()
+                            ForEach(rows) { row in
+                                rowView(row)
+                                Divider()
                             }
-                            Text("\(session.exerciseLogs.count) exercises · \(Formatters.trim(session.totalWeightMoved)) lbs moved"
-                                 + (session.phase.map { " · Phase \($0.number)" } ?? ""))
-                                .font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                }
-                .onDelete { idx in
-                    for i in idx { context.delete(sessions[i]) }
-                    try? context.save()
                 }
             }
             .navigationTitle("History")
@@ -95,6 +102,70 @@ struct HistoryView: View {
                 Text(importResultMessage ?? "")
             }
         }
+    }
+
+    private var headerRow: some View {
+        HStack(spacing: 0) {
+            Text("Day").frame(width: Col.day, alignment: .leading)
+            Text("Phase").frame(width: Col.phase, alignment: .leading)
+            Text("Exercise").frame(width: Col.exercise, alignment: .leading)
+            Text("Sets").frame(width: Col.sets, alignment: .leading)
+            Text("Weights").frame(width: Col.weights, alignment: .leading)
+            Text("Reps").frame(width: Col.reps, alignment: .leading)
+            Text("Source").frame(width: Col.source, alignment: .leading)
+            Color.clear.frame(width: Col.delete)
+        }
+        .font(.caption.bold())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+    }
+
+    private func rowView(_ row: Row) -> some View {
+        let log = row.log
+        let sets = log.targetReps.map(String.init).joined(separator: "/")
+        let sortedSets = log.sortedSets
+        let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
+        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
+        let source = row.session.dayLabel == "Imported" ? "Imported" : "Logged"
+
+        return HStack(spacing: 0) {
+            NavigationLink {
+                SessionDetailView(session: row.session)
+            } label: {
+                HStack(spacing: 0) {
+                    Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
+                    Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
+                    Text(log.exerciseName).frame(width: Col.exercise, alignment: .leading).lineLimit(1)
+                    Text(sets.isEmpty ? "—" : sets).frame(width: Col.sets, alignment: .leading)
+                    Text(weights).frame(width: Col.weights, alignment: .leading)
+                    Text(reps).frame(width: Col.reps, alignment: .leading)
+                    Text(source).frame(width: Col.source, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                delete(row)
+            } label: {
+                Image(systemName: "trash").foregroundStyle(.red)
+            }
+            .frame(width: Col.delete)
+            .buttonStyle(.plain)
+        }
+        .font(.system(.caption, design: .monospaced))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func delete(_ row: Row) {
+        if row.session.exerciseLogs.count <= 1 {
+            context.delete(row.session)
+        } else {
+            context.delete(row.log)
+        }
+        try? context.save()
     }
 
     private func handleImport(_ result: Result<URL, Error>) {
