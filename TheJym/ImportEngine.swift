@@ -55,9 +55,9 @@ enum ImportEngine {
             guard fields.count > max(dateIdx, exerciseIdx, setsIdx, weightsIdx, repsIdx) else { skipped += 1; continue }
             let name = fields[exerciseIdx].trimmingCharacters(in: .whitespaces)
             let dateStr = fields[dateIdx].trimmingCharacters(in: .whitespaces)
-            let setsStr = fields[setsIdx].trimmingCharacters(in: .whitespaces)
-            let weightsStr = fields[weightsIdx].trimmingCharacters(in: .whitespaces)
-            let repsStr = fields[repsIdx].trimmingCharacters(in: .whitespaces)
+            let setsStr = recoverSlashValue(fields[setsIdx])
+            let weightsStr = recoverSlashValue(fields[weightsIdx])
+            let repsStr = recoverSlashValue(fields[repsIdx])
 
             guard !name.isEmpty, let date = parseDate(dateStr) else { skipped += 1; continue }
 
@@ -167,5 +167,53 @@ enum ImportEngine {
             if let d = f.date(from: s) { return d }
         }
         return nil
+    }
+
+    // MARK: - Sets/Weights/Reps recovery
+    //
+    // Spreadsheets love "fixing" a slash value like "12/12/12" by treating it
+    // as a date. Recover the intended value from whatever shape that mangling
+    // took: a leading apostrophe some sheets add to force literal text
+    // ('12/12/12), a fully-expanded date (12/12/2012), or a raw date serial
+    // number some exporters dump instead (41255) — all become "12/12/12".
+
+    private static func recoverSlashValue(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("'") { s.removeFirst() }
+
+        // A bare integer might be a spreadsheet date serial rather than an
+        // actual rep/weight value — real reps/weights never get this large.
+        // Serials are timezone-agnostic day counts, so extract in UTC.
+        if let serial = Int(s), let date = excelSerialDate(serial) {
+            return monthDaySlashYear(date, calendar: utcCalendar)
+        }
+        // parseDate's formatters use the local timezone, so extract components
+        // the same way to avoid shifting the day for users east/west of UTC.
+        if let date = parseDate(s) {
+            return monthDaySlashYear(date, calendar: .current)
+        }
+        return s
+    }
+
+    private static let utcCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal
+    }()
+
+    /// Excel/Sheets store dates as days since Dec 30, 1899. Only treats
+    /// plausible date-range numbers this way — real rep/weight values never
+    /// reach this range.
+    private static func excelSerialDate(_ serial: Int) -> Date? {
+        guard serial > 20_000, serial < 60_000 else { return nil }
+        guard let epoch = utcCalendar.date(from: DateComponents(year: 1899, month: 12, day: 30)) else { return nil }
+        return utcCalendar.date(byAdding: .day, value: serial, to: epoch)
+    }
+
+    /// "12/12/12" style: month/day/last-2-digits-of-year.
+    private static func monthDaySlashYear(_ date: Date, calendar: Calendar) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        let shortYear = (c.year ?? 0) % 100
+        return "\(c.month ?? 0)/\(c.day ?? 0)/\(shortYear)"
     }
 }

@@ -141,6 +141,8 @@ struct CSVFormatHelpView: View {
                           systemImage: "checkmark.circle")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
                           systemImage: "questionmark.circle")
+                    Label("If a spreadsheet \"fixes\" a value like 12/12/12 into a date (12/12/2012, a leading '12/12/12, or a raw date serial like 41255), it's recovered automatically back to 12/12/12 — no need to clean it up first.",
+                          systemImage: "wand.and.stars")
                 } header: {
                     Text("Notes")
                 }
