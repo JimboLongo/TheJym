@@ -9,6 +9,15 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
+extension UTType {
+    /// Office Open XML Spreadsheet (.xlsx) — the canonical system UTI, with a
+    /// filename-extension lookup and generic-data fallback for robustness.
+    static let xlsxSpreadsheet: UTType =
+        UTType("org.openxmlformats.spreadsheetml.sheet")
+        ?? UTType(filenameExtension: "xlsx")
+        ?? .data
+}
+
 struct HistoryView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
@@ -75,8 +84,7 @@ struct HistoryView: View {
                 CSVFormatHelpView()
             }
             .fileImporter(isPresented: $showingImporter,
-                         allowedContentTypes: [.commaSeparatedText, .plainText, .text,
-                                               UTType(filenameExtension: "xlsx") ?? .data]) { result in
+                         allowedContentTypes: [.commaSeparatedText, .plainText, .text, .xlsxSpreadsheet]) { result in
                 handleImport(result)
             }
             .alert("Import Complete", isPresented: Binding(
