@@ -91,26 +91,23 @@ struct HistoryView: View {
                 } else if filteredRows.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else {
-                    GeometryReader { geo in
-                        ScrollView(.horizontal) {
-                            ScrollView(.vertical) {
-                                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                                    Section {
-                                        ForEach(filteredRows) { row in
-                                            rowView(row)
-                                            Divider()
-                                        }
-                                    } header: {
-                                        VStack(spacing: 0) {
-                                            headerRow
-                                            Divider()
+                    List {
+                        Section {
+                            ForEach(filteredRows) { row in
+                                rowView(row)
+                                    .swipeActions {
+                                        Button(role: .destructive) {
+                                            delete(row)
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
                                         }
                                     }
-                                }
                             }
-                            .frame(height: geo.size.height)
+                        } header: {
+                            headerRow
                         }
                     }
+                    .listStyle(.plain)
                 }
             }
             .navigationTitle("History")
@@ -153,16 +150,17 @@ struct HistoryView: View {
 
     private var headerRow: some View {
         HStack(spacing: 0) {
-            Text("Day").frame(width: Col.day, alignment: .leading)
-            Text("Phase").frame(width: Col.phase, alignment: .leading)
-            Text("Exercise").frame(width: exerciseColWidth, alignment: .leading)
-            Text("Lifts").frame(width: liftsColWidth, alignment: .leading)
-            Text("Source").frame(width: Col.source, alignment: .leading)
             Color.clear.frame(width: Col.action)
-            Color.clear.frame(width: Col.action)
+            HStack(spacing: 0) {
+                Text("Day").frame(width: Col.day, alignment: .leading)
+                Text("Phase").frame(width: Col.phase, alignment: .leading)
+                Text("Exercise").frame(width: exerciseColWidth, alignment: .leading)
+                Text("Lifts").frame(width: liftsColWidth, alignment: .leading)
+                Text("Source").frame(width: Col.source, alignment: .leading)
+            }
+            .padding(.horizontal, 12)
         }
         .font(.caption.bold())
-        .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(.bar)
     }
@@ -176,28 +174,6 @@ struct HistoryView: View {
         let source = row.session.dayLabel == "Imported" ? "Imported" : "Logged"
 
         return HStack(spacing: 0) {
-            NavigationLink {
-                SessionDetailView(session: row.session)
-            } label: {
-                HStack(spacing: 0) {
-                    Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
-                    Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(log.exerciseName)
-                        Text(sets.isEmpty ? "—" : sets).foregroundStyle(.secondary)
-                    }
-                    .frame(width: exerciseColWidth, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(weights)
-                        Text("(\(reps))").foregroundStyle(.secondary)
-                    }
-                    .frame(width: liftsColWidth, alignment: .leading)
-                    Text(source).frame(width: Col.source, alignment: .leading)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
             Button {
                 editingLog = log
                 showingEdit = true
@@ -207,16 +183,32 @@ struct HistoryView: View {
             .frame(width: Col.action)
             .buttonStyle(.plain)
 
-            Button {
-                delete(row)
-            } label: {
-                Image(systemName: "trash").foregroundStyle(.red)
+            ScrollView(.horizontal, showsIndicators: false) {
+                NavigationLink {
+                    SessionDetailView(session: row.session)
+                } label: {
+                    HStack(spacing: 0) {
+                        Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
+                        Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(log.exerciseName)
+                            Text(sets.isEmpty ? "—" : sets).foregroundStyle(.secondary)
+                        }
+                        .frame(width: exerciseColWidth, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(weights)
+                            Text("(\(reps))").foregroundStyle(.secondary)
+                        }
+                        .frame(width: liftsColWidth, alignment: .leading)
+                        Text(source).frame(width: Col.source, alignment: .leading)
+                    }
+                    .padding(.horizontal, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-            .frame(width: Col.action)
-            .buttonStyle(.plain)
         }
         .font(.system(.caption, design: .monospaced))
-        .padding(.horizontal, 12)
         .padding(.vertical, 6)
     }
 
