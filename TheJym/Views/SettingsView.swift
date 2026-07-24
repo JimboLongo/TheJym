@@ -148,13 +148,10 @@ struct NextPhasePlannerView: View {
                     .planNextPhase(previousPhase: previousPhase)
                 var grouped: [String: [ProgressionEngine.PlannedSlot]] = [:]
                 for s in slots {
-                    let lower = previousPhase.plannedExercises
-                        .first { $0.exerciseName == s.exerciseName }?.isLowerBody ?? false
                     grouped[s.dayName, default: []].append(
                         .init(exerciseName: s.exerciseName,
                               targetReps: s.targetReps,
                               startingWeights: s.startingWeights,
-                              isLowerBody: lower,
                               rationale: s.rationale))
                 }
                 if !grouped.isEmpty {

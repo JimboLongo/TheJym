@@ -45,7 +45,6 @@ struct WorkoutLogView: View {
         let id = UUID()
         var name: String
         var targetReps: [Int]
-        var isLowerBody: Bool
         var sets: [SetDraft]
         var loggedTotal: Double {
             sets.reduce(0) { $0 + (Double($1.reps ?? 0) * ($1.weight ?? 0)) }
@@ -116,7 +115,7 @@ struct WorkoutLogView: View {
             // AI off: exactly what was lifted last time.
             var weights = aiOn
                 ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
-                                                        isLowerBody: pe.isLowerBody, aggressiveness: agg)
+                                                        aggressiveness: agg)
                    ?? pe.suggestedWeights)
                 : (logs.last?.sortedSets.map(\.weight) ?? pe.suggestedWeights)
             if isDeloadCycle, !weights.isEmpty {
@@ -128,7 +127,6 @@ struct WorkoutLogView: View {
             }
             drafts.append(ExerciseDraft(name: pe.exerciseName,
                                         targetReps: pe.targetReps,
-                                        isLowerBody: pe.isLowerBody,
                                         sets: sets))
         }
     }
@@ -174,7 +172,7 @@ struct WorkoutLogView: View {
             let logs = history(for: pe)
             guard let suggestion = ProgressionEngine.suggestNextWeights(
                 targetReps: pe.targetReps, history: logs,
-                isLowerBody: pe.isLowerBody, aggressiveness: agg),
+                aggressiveness: agg),
                 let latest = logs.last else { continue }
 
             let currentStr = latest.sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")

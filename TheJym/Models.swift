@@ -83,24 +83,22 @@ final class Bar {
 
 // MARK: - Exercise library
 
-/// A persistent, user-managed exercise definition. Equipment, notes, and
-/// isLowerBody belong to the exercise itself, regardless of rep scheme.
-/// `repSchemes` is the list of saved "sets" under it (e.g. "Back Squat" might
-/// have both 8/8/8 and 6/8/10 saved) — each has its own logged history, but
-/// they all share the same equipment/notes. Lives independently of any
-/// Phase — Phase Setup picks from these, and history spans every phase used in.
+/// A persistent, user-managed exercise definition. Equipment and notes
+/// belong to the exercise itself, regardless of rep scheme. `repSchemes` is
+/// the list of saved "sets" under it (e.g. "Back Squat" might have both
+/// 8/8/8 and 6/8/10 saved) — each has its own logged history, but they all
+/// share the same equipment/notes. Lives independently of any Phase — Phase
+/// Setup picks from these, and history spans every phase used in.
 @Model
 final class ExerciseDef {
     @Attribute(.unique) var name: String
-    var isLowerBody: Bool          // used by progression engine for jump sizes
     var notes: String = ""
     var equipment: Bar?
     var repSchemes: [[Int]] = []   // saved sets, e.g. [[5,5,5,3,3,3], [8,8,8]]
 
-    init(name: String, isLowerBody: Bool = false, notes: String = "",
+    init(name: String, notes: String = "",
          equipment: Bar? = nil, repSchemes: [[Int]] = []) {
         self.name = name
-        self.isLowerBody = isLowerBody
         self.notes = notes
         self.equipment = equipment
         self.repSchemes = repSchemes
@@ -116,13 +114,12 @@ final class ExerciseDef {
     /// its saved sets — creating the exercise and/or adding the set as
     /// needed. Used by Phase Setup, where the rep scheme is meaningful (a
     /// real target, not just a log of what happened).
-    static func ensureVariantExists(name: String, targetReps: [Int], isLowerBody: Bool = false,
+    static func ensureVariantExists(name: String, targetReps: [Int],
                                     knownDefs: inout [String: ExerciseDef], context: ModelContext) {
         if let def = knownDefs[name] {
             def.addRepScheme(targetReps)
         } else {
-            let def = ExerciseDef(name: name, isLowerBody: isLowerBody,
-                                  repSchemes: targetReps.isEmpty ? [] : [targetReps])
+            let def = ExerciseDef(name: name, repSchemes: targetReps.isEmpty ? [] : [targetReps])
             context.insert(def)
             knownDefs[name] = def
         }
@@ -181,8 +178,7 @@ final class Phase {
     /// A short label for badges/headers, e.g. "Pull A · Push A · Legs A · Rest".
     var summary: String { orderedDays.map(\.name).joined(separator: " · ") }
 
-    /// Every planned exercise across every day — used by AI phase planning to
-    /// look up an exercise's isLowerBody flag by name.
+    /// Every planned exercise across every day — used by AI phase planning.
     var plannedExercises: [PlannedExercise] { days.flatMap(\.plannedExercises) }
 
     func plan(for day: PhaseDay) -> [PlannedExercise] {
@@ -252,15 +248,13 @@ final class PlannedExercise {
     var exerciseName: String
     var targetReps: [Int]          // e.g. [5,5,5,3,3,3] — user can override
     var suggestedWeights: [Double] // per-set suggestion (AI or manual); empty = none yet
-    var isLowerBody: Bool
 
     init(order: Int, exerciseName: String,
-         targetReps: [Int], suggestedWeights: [Double] = [], isLowerBody: Bool = false) {
+         targetReps: [Int], suggestedWeights: [Double] = []) {
         self.order = order
         self.exerciseName = exerciseName
         self.targetReps = targetReps
         self.suggestedWeights = suggestedWeights
-        self.isLowerBody = isLowerBody
     }
 
     /// Stable key for "same plan" comparisons: name + target rep scheme.

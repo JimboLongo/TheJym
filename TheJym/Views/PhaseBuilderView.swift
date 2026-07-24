@@ -66,7 +66,6 @@ struct PhaseBuilderView: View {
         var name: String
         var repsText: String        // "5/5/5/3/3/3"
         var weightsText: String     // optional "135/135/135/145/145/145"
-        var isLowerBody: Bool
     }
 
     struct DayDraft: Identifiable {
@@ -170,7 +169,7 @@ struct PhaseBuilderView: View {
                                                 if checked {
                                                     day.exercises = source.exercises.map {
                                                         DraftExercise(name: $0.name, repsText: $0.repsText,
-                                                                      weightsText: $0.weightsText, isLowerBody: $0.isLowerBody)
+                                                                      weightsText: $0.weightsText)
                                                     }
                                                     day.copiedFromID = source.id
                                                 } else {
@@ -281,8 +280,7 @@ struct PhaseBuilderView: View {
                 let exercises = slots.map {
                     DraftExercise(name: $0.exerciseName,
                                   repsText: $0.targetReps.map(String.init).joined(separator: "/"),
-                                  weightsText: $0.startingWeights.map { Formatters.trim($0) }.joined(separator: "/"),
-                                  isLowerBody: $0.isLowerBody)
+                                  weightsText: $0.startingWeights.map { Formatters.trim($0) }.joined(separator: "/"))
                 }
                 dayDrafts.append(DayDraft(name: day.name, isRest: false, exercises: exercises))
             }
@@ -312,11 +310,11 @@ struct PhaseBuilderView: View {
                 let weights = d.weightsText.split(separator: "/").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
                 guard !reps.isEmpty else { continue }
                 let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: reps,
-                                         suggestedWeights: weights, isLowerBody: d.isLowerBody)
+                                         suggestedWeights: weights)
                 pe.day = day
                 context.insert(pe)
 
-                ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps, isLowerBody: d.isLowerBody,
+                ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps,
                                                 knownDefs: &knownDefs, context: context)
             }
         }
@@ -361,8 +359,7 @@ struct DayEditorView: View {
         day.exercises.append(
             PhaseBuilderView.DraftExercise(name: def.name,
                                            repsText: reps.map(String.init).joined(separator: "/"),
-                                           weightsText: "",
-                                           isLowerBody: def.isLowerBody))
+                                           weightsText: ""))
     }
 }
 
@@ -475,40 +472,40 @@ struct DraftExerciseRow: View {
 // MARK: - Built-in exercise library (used to seed the Exercises tab on first launch)
 
 enum ExerciseLibrary {
-    struct Entry { let name: String; let defaultReps: String; let lower: Bool }
+    struct Entry { let name: String; let defaultReps: String }
     struct Group { let group: String; let exercises: [Entry] }
 
     static let grouped: [Group] = [
         Group(group: "Chest / Push", exercises: [
-            Entry(name: "Bench Press", defaultReps: "5/5/5/3/3/3", lower: false),
-            Entry(name: "Incline DB Press", defaultReps: "8/8/8/8", lower: false),
-            Entry(name: "Overhead Press", defaultReps: "5/5/5/5", lower: false),
-            Entry(name: "Dips", defaultReps: "10/10/10", lower: false),
-            Entry(name: "Cable Fly", defaultReps: "12/12/12", lower: false),
-            Entry(name: "Lateral Raise", defaultReps: "15/15/15", lower: false),
-            Entry(name: "Triceps Pushdown", defaultReps: "12/12/12", lower: false),
-            Entry(name: "Skullcrusher (EZ Bar)", defaultReps: "10/10/10", lower: false),
+            Entry(name: "Bench Press", defaultReps: "5/5/5/3/3/3"),
+            Entry(name: "Incline DB Press", defaultReps: "8/8/8/8"),
+            Entry(name: "Overhead Press", defaultReps: "5/5/5/5"),
+            Entry(name: "Dips", defaultReps: "10/10/10"),
+            Entry(name: "Cable Fly", defaultReps: "12/12/12"),
+            Entry(name: "Lateral Raise", defaultReps: "15/15/15"),
+            Entry(name: "Triceps Pushdown", defaultReps: "12/12/12"),
+            Entry(name: "Skullcrusher (EZ Bar)", defaultReps: "10/10/10"),
         ]),
         Group(group: "Back / Pull", exercises: [
-            Entry(name: "Deadlift", defaultReps: "5/5/3/3", lower: true),
-            Entry(name: "Barbell Row", defaultReps: "8/8/8/8", lower: false),
-            Entry(name: "Seal Row", defaultReps: "8/8/8/8", lower: false),
-            Entry(name: "Pull-Up", defaultReps: "8/8/8", lower: false),
-            Entry(name: "Lat Pulldown", defaultReps: "10/10/10", lower: false),
-            Entry(name: "Face Pull", defaultReps: "15/15/15", lower: false),
-            Entry(name: "Band Pull-Apart", defaultReps: "20/20/20", lower: false),
-            Entry(name: "EZ Bar Curl", defaultReps: "10/10/10", lower: false),
-            Entry(name: "Hammer Curl", defaultReps: "12/12/12", lower: false),
+            Entry(name: "Deadlift", defaultReps: "5/5/3/3"),
+            Entry(name: "Barbell Row", defaultReps: "8/8/8/8"),
+            Entry(name: "Seal Row", defaultReps: "8/8/8/8"),
+            Entry(name: "Pull-Up", defaultReps: "8/8/8"),
+            Entry(name: "Lat Pulldown", defaultReps: "10/10/10"),
+            Entry(name: "Face Pull", defaultReps: "15/15/15"),
+            Entry(name: "Band Pull-Apart", defaultReps: "20/20/20"),
+            Entry(name: "EZ Bar Curl", defaultReps: "10/10/10"),
+            Entry(name: "Hammer Curl", defaultReps: "12/12/12"),
         ]),
         Group(group: "Legs", exercises: [
-            Entry(name: "Back Squat", defaultReps: "5/5/5/3/3", lower: true),
-            Entry(name: "Front Squat", defaultReps: "6/6/6", lower: true),
-            Entry(name: "Romanian Deadlift", defaultReps: "8/8/8", lower: true),
-            Entry(name: "Leg Press", defaultReps: "10/10/10/10", lower: true),
-            Entry(name: "Bulgarian Split Squat", defaultReps: "10/10/10", lower: true),
-            Entry(name: "Leg Curl", defaultReps: "12/12/12", lower: true),
-            Entry(name: "Leg Extension", defaultReps: "12/12/12", lower: true),
-            Entry(name: "Calf Raise", defaultReps: "15/15/15/15", lower: true),
+            Entry(name: "Back Squat", defaultReps: "5/5/5/3/3"),
+            Entry(name: "Front Squat", defaultReps: "6/6/6"),
+            Entry(name: "Romanian Deadlift", defaultReps: "8/8/8"),
+            Entry(name: "Leg Press", defaultReps: "10/10/10/10"),
+            Entry(name: "Bulgarian Split Squat", defaultReps: "10/10/10"),
+            Entry(name: "Leg Curl", defaultReps: "12/12/12"),
+            Entry(name: "Leg Extension", defaultReps: "12/12/12"),
+            Entry(name: "Calf Raise", defaultReps: "15/15/15/15"),
         ]),
     ]
 }

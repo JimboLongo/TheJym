@@ -160,7 +160,7 @@ struct PhaseDayEditView: View {
 
     private func addExercise(_ def: ExerciseDef, reps: [Int]) {
         let pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
-                                 targetReps: reps, isLowerBody: def.isLowerBody)
+                                 targetReps: reps)
         pe.day = day
         context.insert(pe)
     }

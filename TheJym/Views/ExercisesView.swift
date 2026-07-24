@@ -134,7 +134,6 @@ struct ExerciseEditView: View {
 
     @State private var name = ""
     @State private var repsText = "8/8/8"
-    @State private var isLowerBody = false
     @State private var notes = ""
     @State private var equipmentID: PersistentIdentifier?
 
@@ -159,7 +158,6 @@ struct ExerciseEditView: View {
                             .keyboardType(.numbersAndPunctuation)
                             .font(.system(.body, design: .monospaced))
                     }
-                    Toggle("Lower Body", isOn: $isLowerBody)
                     if isDuplicateName {
                         Label("An exercise with this name already exists.", systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.orange)
@@ -193,7 +191,6 @@ struct ExerciseEditView: View {
             .onAppear {
                 guard let def else { return }
                 name = def.name
-                isLowerBody = def.isLowerBody
                 notes = def.notes
                 equipmentID = def.equipment?.persistentModelID
             }
@@ -207,13 +204,12 @@ struct ExerciseEditView: View {
         let saved: ExerciseDef
         if let def {
             def.name = trimmedName
-            def.isLowerBody = isLowerBody
             def.notes = notes
             def.equipment = equipment
             saved = def
         } else {
             guard !reps.isEmpty else { return }
-            let newDef = ExerciseDef(name: trimmedName, isLowerBody: isLowerBody,
+            let newDef = ExerciseDef(name: trimmedName,
                                      notes: notes, equipment: equipment, repSchemes: [reps])
             context.insert(newDef)
             saved = newDef

@@ -21,7 +21,6 @@ enum ProgressionEngine {
     /// oldest -> newest. The most recent entry is "today's" workout.
     static func suggestNextWeights(targetReps: [Int],
                                    history: [ExerciseLog],
-                                   isLowerBody: Bool,
                                    aggressiveness: AIAggressiveness) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
         let latestWeights = latest.sortedSets.map(\.weight)
@@ -68,9 +67,9 @@ enum ProgressionEngine {
             if exceeded(log) { streak += 1 } else { break }
         }
 
-        let smallJump: Double = isLowerBody ? 5 : 2.5
-        let bigJump: Double = isLowerBody ? 10 : 5
-        let hugeJump: Double = isLowerBody ? 15 : 10
+        let smallJump: Double = 2.5
+        let bigJump: Double = 5
+        let hugeJump: Double = 10
 
         var increment: Double = 0
         switch aggressiveness {
@@ -121,7 +120,6 @@ enum ProgressionEngine {
         var exerciseName: String
         var targetReps: [Int]
         var startingWeights: [Double]
-        var isLowerBody: Bool
         var rationale: String
     }
 
@@ -146,7 +144,6 @@ enum ProgressionEngine {
                     slots.append(PlannedSlot(exerciseName: planned.exerciseName,
                                              targetReps: planned.targetReps,
                                              startingWeights: planned.suggestedWeights,
-                                             isLowerBody: planned.isLowerBody,
                                              rationale: "Carried over (no logs last phase)."))
                     continue
                 }
@@ -159,7 +156,6 @@ enum ProgressionEngine {
                     slots.append(PlannedSlot(exerciseName: planned.exerciseName,
                                              targetReps: planned.targetReps,
                                              startingWeights: lastWeights,
-                                             isLowerBody: planned.isLowerBody,
                                              rationale: "Progressing well (+\(Formatters.trim(lastAvg - firstAvg)) lb avg) — keep riding it."))
                 } else {
                     let newReps = flippedScheme(planned.targetReps)
@@ -168,7 +164,6 @@ enum ProgressionEngine {
                     slots.append(PlannedSlot(exerciseName: planned.exerciseName,
                                              targetReps: newReps,
                                              startingWeights: newWeights,
-                                             isLowerBody: planned.isLowerBody,
                                              rationale: "Stalled last phase — changing rep scheme to vary the stimulus."))
                 }
             }
