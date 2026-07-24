@@ -34,15 +34,18 @@ enum ImportEngine {
         var setsImported: Int
     }
 
-    /// Parses CSV text into rows, matching the header case-insensitively.
-    /// Returns the parsed rows plus a count of data rows that didn't parse.
+    /// Parses CSV (or tab-delimited — pasting straight out of a spreadsheet
+    /// often carries tabs, not commas) text into rows, matching the header
+    /// case-insensitively. Returns the parsed rows plus a count of data rows
+    /// that didn't parse.
     static func parseRows(csv: String) -> (rows: [ImportedEntry], skipped: Int) {
         let lines = csv.split(whereSeparator: { $0 == "\n" || $0 == "\r\n" }).map(String.init)
         guard let headerLine = lines.first else { return ([], 0) }
-        let header = splitCSVLine(headerLine)
+        let delimiter: Character = headerLine.contains("\t") ? "\t" : ","
+        let header = splitDelimitedLine(headerLine, delimiter: delimiter)
         let dataRows = lines.dropFirst()
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .map(splitCSVLine)
+            .map { splitDelimitedLine($0, delimiter: delimiter) }
         return parseFields(header: header, rows: Array(dataRows))
     }
 
@@ -131,9 +134,11 @@ enum ImportEngine {
         return ImportResult(sessionsCreated: sessionsCreated, setsImported: setsImported)
     }
 
-    // MARK: - CSV line splitting (quote-aware, handles embedded commas + "" escapes)
+    // MARK: - Delimited line splitting (quote-aware, handles embedded
+    // delimiters + "" escapes; delimiter is comma for real CSV, tab for
+    // spreadsheet-paste-style text)
 
-    private static func splitCSVLine(_ line: String) -> [String] {
+    private static func splitDelimitedLine(_ line: String, delimiter: Character) -> [String] {
         var fields: [String] = []
         var current = ""
         var inQuotes = false
@@ -154,7 +159,7 @@ enum ImportEngine {
                 }
             } else if c == "\"" {
                 inQuotes = true
-            } else if c == "," {
+            } else if c == delimiter {
                 fields.append(current)
                 current = ""
             } else {
