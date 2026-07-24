@@ -70,15 +70,9 @@ struct ExercisesView: View {
             }
             .navigationTitle("Exercises")
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItemGroup(placement: .navigationBarLeading) {
                     if !exerciseDefs.isEmpty { EditButton() }
-                }
-                ToolbarItemGroup(placement: .primaryAction) {
                     if isEditing {
-                        Button("Delete (\(selectedIDs.count))", role: .destructive) {
-                            showingBulkDeleteConfirm = true
-                        }
-                        .disabled(selectedIDs.isEmpty)
                         Button(selectedIDs.count == exerciseDefs.count ? "Deselect All" : "Select All") {
                             if selectedIDs.count == exerciseDefs.count {
                                 selectedIDs = []
@@ -86,9 +80,16 @@ struct ExercisesView: View {
                                 selectedIDs = Set(exerciseDefs.map(\.persistentModelID))
                             }
                         }
-                    } else {
-                        Button { showingAdd = true } label: { Image(systemName: "plus") }
                     }
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if isEditing {
+                        Button("Delete (\(selectedIDs.count))", role: .destructive) {
+                            showingBulkDeleteConfirm = true
+                        }
+                        .disabled(selectedIDs.isEmpty)
+                    }
+                    Button { showingAdd = true } label: { Image(systemName: "plus") }
                 }
             }
             .confirmationDialog("Delete \(selectedIDs.count) exercise\(selectedIDs.count == 1 ? "" : "s")? This also deletes their saved sets. Logged history stays intact.",
