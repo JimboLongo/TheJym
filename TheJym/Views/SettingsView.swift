@@ -66,12 +66,20 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    if let url = exportCSVURL {
+                        ShareLink(item: url) {
+                            Label("Export History to CSV…", systemImage: "square.and.arrow.up")
+                        }
+                    } else {
+                        Label("Export History to CSV…", systemImage: "square.and.arrow.up")
+                            .foregroundStyle(.secondary)
+                    }
                     Button("Delete All History", role: .destructive) {
                         showingDeleteHistoryConfirm = true
                     }
                     .disabled(sessions.isEmpty)
                 } footer: {
-                    Text("Permanently deletes every logged workout. Phases, exercises, and equipment are untouched.")
+                    Text("Export saves every logged workout as a .csv file (same format the importer expects, so it doubles as a backup). Delete All History permanently deletes every logged workout — Phases, exercises, and equipment are untouched.")
                 }
             }
             .navigationTitle("Settings")
@@ -86,6 +94,38 @@ struct SettingsView: View {
     private func deleteAllHistory() {
         for session in sessions { context.delete(session) }
         try? context.save()
+    }
+
+    /// Every logged workout as a CSV file (Date, Exercise, Sets, Weights,
+    /// Reps — same columns ImportEngine reads), written to a temp file so it
+    /// can be handed to ShareLink. Regenerated each time this is read;
+    /// cheap enough at personal-history scale.
+    private var exportCSVURL: URL? {
+        guard !sessions.isEmpty else { return nil }
+        var lines = ["Date,Exercise,Sets,Weights,Reps"]
+        for session in sessions.sorted(by: { $0.date < $1.date }) {
+            let dateStr = Formatters.exportDate.string(from: session.date)
+            for log in session.exerciseLogs.sorted(by: { $0.order < $1.order }) {
+                let sortedSets = log.sortedSets
+                guard !sortedSets.isEmpty else { continue }
+                let sets = log.targetReps.map(String.init).joined(separator: "/")
+                let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
+                let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
+                lines.append([dateStr, log.exerciseName, sets, weights, reps].map(csvField).joined(separator: ","))
+            }
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("TheJym-History.csv")
+        do {
+            try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    private func csvField(_ s: String) -> String {
+        guard s.contains(",") || s.contains("\"") || s.contains("\n") else { return s }
+        return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 }
 

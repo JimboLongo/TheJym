@@ -381,4 +381,12 @@ enum Formatters {
         f.dateFormat = "M/d/yy"
         return f
     }()
+    /// Unambiguous ISO date for CSV export — the first format ImportEngine
+    /// tries, so an exported file round-trips cleanly back through import.
+    static let exportDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 }
