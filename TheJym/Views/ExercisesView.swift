@@ -3,9 +3,9 @@
 //  TheJym
 //
 //  A persistent, user-managed exercise library, one row per exercise name.
-//  Tapping an exercise shows its equipment and notes (which apply regardless
-//  of rep scheme) plus its list of saved sets below; tapping a set shows the
-//  logged history for that exact exercise/set combo.
+//  Tapping an exercise pops up its saved sets (tap one to see logged history
+//  for that exact exercise/set combo), plus options to add a new set or edit
+//  its equipment/notes — no separate detail page to drill into first.
 //
 
 import SwiftUI
@@ -18,6 +18,16 @@ struct ExercisesView: View {
     @Query private var allLogs: [ExerciseLog]
 
     @State private var showingAdd = false
+    @State private var selectedDef: ExerciseDef?
+    @State private var editTarget: ExerciseDef?
+    @State private var addSetTarget: ExerciseDef?
+    @State private var newSetReps = ""
+    @State private var historyTarget: SetHistoryTarget?
+
+    struct SetHistoryTarget: Hashable {
+        let defID: PersistentIdentifier
+        let reps: [Int]
+    }
 
     var body: some View {
         NavigationStack {
@@ -33,8 +43,8 @@ struct ExercisesView: View {
                     }
                 }
                 ForEach(exerciseDefs, id: \.persistentModelID) { def in
-                    NavigationLink {
-                        ExerciseDetailView(def: def, bars: bars, allLogs: allLogs)
+                    Button {
+                        selectedDef = def
                     } label: {
                         HStack {
                             Text(def.name).font(.headline)
@@ -43,7 +53,10 @@ struct ExercisesView: View {
                                 Text(eq.name).font(.caption).foregroundStyle(.secondary)
                             }
                         }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
                 }
                 .onDelete { idx in
                     for i in idx { context.delete(exerciseDefs[i]) }
@@ -58,6 +71,48 @@ struct ExercisesView: View {
             }
             .sheet(isPresented: $showingAdd) {
                 ExerciseEditView(def: nil, bars: bars)
+            }
+            .sheet(item: $editTarget) { def in
+                ExerciseEditView(def: def, bars: bars)
+            }
+            .confirmationDialog(selectedDef?.name ?? "", isPresented: Binding(
+                get: { selectedDef != nil },
+                set: { if !$0 { selectedDef = nil } }), titleVisibility: .visible) {
+                if let def = selectedDef {
+                    ForEach(def.repSchemes, id: \.self) { reps in
+                        Button(reps.map(String.init).joined(separator: "/")) {
+                            historyTarget = SetHistoryTarget(defID: def.persistentModelID, reps: reps)
+                            selectedDef = nil
+                        }
+                    }
+                    Button("Add Set…") {
+                        addSetTarget = def
+                        selectedDef = nil
+                    }
+                    Button("Edit Equipment & Notes…") {
+                        editTarget = def
+                        selectedDef = nil
+                    }
+                    Button("Cancel", role: .cancel) { selectedDef = nil }
+                }
+            }
+            .alert("Add a Set to \(addSetTarget?.name ?? "")",
+                   isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
+                TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
+                Button("Add") {
+                    let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                    newSetReps = ""
+                    guard !reps.isEmpty, let def = addSetTarget else { addSetTarget = nil; return }
+                    def.addRepScheme(reps)
+                    try? context.save()
+                    addSetTarget = nil
+                }
+                Button("Cancel", role: .cancel) { newSetReps = ""; addSetTarget = nil }
+            }
+            .navigationDestination(item: $historyTarget) { target in
+                if let def = exerciseDefs.first(where: { $0.persistentModelID == target.defID }) {
+                    ExerciseSetHistoryView(def: def, reps: target.reps, allLogs: allLogs)
+                }
             }
         }
     }
@@ -169,15 +224,19 @@ struct ExerciseEditView: View {
     }
 }
 
-struct ExerciseDetailView: View {
+/// History for one exact exercise/set combo, most recent first.
+struct ExerciseSetHistoryView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     let def: ExerciseDef
-    let bars: [Bar]
+    let reps: [Int]
     let allLogs: [ExerciseLog]
 
-    @State private var showingEdit = false
-    @State private var showingAddSet = false
-    @State private var newSetReps = ""
+    private var history: [ExerciseLog] {
+        allLogs
+            .filter { $0.exerciseName == def.name && $0.targetReps == reps && !$0.sets.isEmpty }
+            .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
+    }
 
     var body: some View {
         List {
@@ -191,63 +250,6 @@ struct ExerciseDetailView: View {
                     }
                 }
             }
-
-            Section("Saved Sets") {
-                if def.repSchemes.isEmpty {
-                    Text("No sets saved yet.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    ForEach(def.repSchemes, id: \.self) { reps in
-                        NavigationLink {
-                            ExerciseSetHistoryView(def: def, reps: reps, allLogs: allLogs)
-                        } label: {
-                            Text(reps.map(String.init).joined(separator: "/"))
-                                .font(.system(.body, design: .monospaced))
-                        }
-                    }
-                    .onDelete { idx in
-                        def.repSchemes.remove(atOffsets: idx)
-                        try? context.save()
-                    }
-                }
-                Button("Add Set…") { showingAddSet = true }
-            }
-        }
-        .navigationTitle(def.name)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Edit") { showingEdit = true }
-            }
-        }
-        .sheet(isPresented: $showingEdit) {
-            ExerciseEditView(def: def, bars: bars)
-        }
-        .alert("Add a Set", isPresented: $showingAddSet) {
-            TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
-            Button("Add") {
-                let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                newSetReps = ""
-                def.addRepScheme(reps)
-                try? context.save()
-            }
-            Button("Cancel", role: .cancel) { newSetReps = "" }
-        }
-    }
-}
-
-/// History for one exact exercise/set combo, most recent first.
-struct ExerciseSetHistoryView: View {
-    let def: ExerciseDef
-    let reps: [Int]
-    let allLogs: [ExerciseLog]
-
-    private var history: [ExerciseLog] {
-        allLogs
-            .filter { $0.exerciseName == def.name && $0.targetReps == reps && !$0.sets.isEmpty }
-            .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
-    }
-
-    var body: some View {
-        List {
             if history.isEmpty {
                 ContentUnavailableView("No History Yet", systemImage: "clock",
                                        description: Text("Log this set in a workout and it'll show up here."))
@@ -267,5 +269,18 @@ struct ExerciseSetHistoryView: View {
             }
         }
         .navigationTitle(reps.map(String.init).joined(separator: "/"))
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(role: .destructive) {
+                    if let idx = def.repSchemes.firstIndex(of: reps) {
+                        def.repSchemes.remove(at: idx)
+                        try? context.save()
+                    }
+                    dismiss()
+                } label: {
+                    Image(systemName: "trash")
+                }
+            }
+        }
     }
 }
