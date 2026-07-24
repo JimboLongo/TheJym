@@ -73,8 +73,12 @@ struct ExercisesView: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if !exerciseDefs.isEmpty { EditButton() }
                 }
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
                     if isEditing {
+                        Button("Delete (\(selectedIDs.count))", role: .destructive) {
+                            showingBulkDeleteConfirm = true
+                        }
+                        .disabled(selectedIDs.isEmpty)
                         Button(selectedIDs.count == exerciseDefs.count ? "Deselect All" : "Select All") {
                             if selectedIDs.count == exerciseDefs.count {
                                 selectedIDs = []
@@ -84,15 +88,6 @@ struct ExercisesView: View {
                         }
                     } else {
                         Button { showingAdd = true } label: { Image(systemName: "plus") }
-                    }
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    if isEditing {
-                        Spacer()
-                        Button("Delete (\(selectedIDs.count))", role: .destructive) {
-                            showingBulkDeleteConfirm = true
-                        }
-                        .disabled(selectedIDs.isEmpty)
                     }
                 }
             }
