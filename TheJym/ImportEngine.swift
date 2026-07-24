@@ -189,9 +189,19 @@ enum ImportEngine {
         for f in dateFormatters {
             if let d = f.date(from: s) { return d }
         }
-        // .xlsx stores dates as bare day-count serials (no formatting info
-        // survives once we've read just the cell value).
-        if let serial = Int(s) { return excelSerialDate(serial) }
+        // .xlsx stores dates as day-count serials (no formatting info
+        // survives once we've read just the cell value) — usually a bare
+        // integer, but some exporters write it as a float like "45700.0".
+        if let serial = serialInt(from: s) { return excelSerialDate(serial) }
+        return nil
+    }
+
+    /// Parses a spreadsheet numeric cell value as a whole-number serial,
+    /// accepting both a bare integer ("45700") and the float form some
+    /// exporters use ("45700.0").
+    private static func serialInt(from s: String) -> Int? {
+        if let i = Int(s) { return i }
+        if let d = Double(s) { return Int(d.rounded()) }
         return nil
     }
 
@@ -215,10 +225,10 @@ enum ImportEngine {
         if let recovered = monthDaySlashYearFromComponents(s) {
             return recovered
         }
-        // A bare integer might be a spreadsheet date serial rather than an
+        // A bare number might be a spreadsheet date serial rather than an
         // actual rep/weight value — real reps/weights never get this large.
         // Serials are timezone-agnostic day counts, so extract in UTC.
-        if let serial = Int(s), let date = excelSerialDate(serial) {
+        if let serial = serialInt(from: s), let date = excelSerialDate(serial) {
             return monthDaySlashYear(date, calendar: utcCalendar)
         }
         // parseDate's formatters use the local timezone, so extract components
