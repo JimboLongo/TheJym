@@ -23,6 +23,9 @@ struct ExercisesView: View {
     @State private var addSetTarget: ExerciseDef?
     @State private var newSetReps = ""
     @State private var historyTarget: SetHistoryTarget?
+    @State private var editMode: EditMode = .inactive
+    @State private var selectedIDs: Set<PersistentIdentifier> = []
+    @State private var showingBulkDeleteConfirm = false
 
     struct SetHistoryTarget: Hashable {
         let defID: PersistentIdentifier
@@ -31,7 +34,7 @@ struct ExercisesView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            List(selection: $selectedIDs) {
                 if exerciseDefs.isEmpty {
                     ContentUnavailableView {
                         Label("No Exercises Yet", systemImage: "figure.strengthtraining.traditional")
@@ -63,11 +66,39 @@ struct ExercisesView: View {
                     try? context.save()
                 }
             }
+            .environment(\.editMode, $editMode)
             .navigationTitle("Exercises")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button { showingAdd = true } label: { Image(systemName: "plus") }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if !exerciseDefs.isEmpty { EditButton() }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    if editMode == .active {
+                        Button(selectedIDs.count == exerciseDefs.count ? "Deselect All" : "Select All") {
+                            if selectedIDs.count == exerciseDefs.count {
+                                selectedIDs = []
+                            } else {
+                                selectedIDs = Set(exerciseDefs.map(\.persistentModelID))
+                            }
+                        }
+                    } else {
+                        Button { showingAdd = true } label: { Image(systemName: "plus") }
+                    }
+                }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    if editMode == .active {
+                        Spacer()
+                        Button("Delete (\(selectedIDs.count))", role: .destructive) {
+                            showingBulkDeleteConfirm = true
+                        }
+                        .disabled(selectedIDs.isEmpty)
+                    }
+                }
+            }
+            .confirmationDialog("Delete \(selectedIDs.count) exercise\(selectedIDs.count == 1 ? "" : "s")? This also deletes their saved sets. Logged history stays intact.",
+                                isPresented: $showingBulkDeleteConfirm, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) { deleteSelected() }
+                Button("Cancel", role: .cancel) { }
             }
             .sheet(isPresented: $showingAdd) {
                 ExerciseEditView(def: nil, bars: bars)
@@ -116,11 +147,20 @@ struct ExercisesView: View {
             }
         }
     }
+
+    private func deleteSelected() {
+        for def in exerciseDefs where selectedIDs.contains(def.persistentModelID) {
+            context.delete(def)
+        }
+        try? context.save()
+        selectedIDs = []
+        editMode = .inactive
+    }
 }
 
 /// Add a brand-new exercise (name + starting set + equipment/notes), or edit
 /// an existing one's name/equipment/notes in place. Editing never touches
-/// saved sets — those are managed from ExerciseDetailView.
+/// saved sets — those are managed from the sets popup on the Exercises list.
 struct ExerciseEditView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
