@@ -12,6 +12,9 @@ import SwiftData
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @Query private var settingsList: [AppSettings]
+    @Query private var sessions: [WorkoutSession]
+
+    @State private var showingDeleteHistoryConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -61,9 +64,28 @@ struct SettingsView: View {
                         }
                     }
                 }
+
+                Section {
+                    Button("Delete All History", role: .destructive) {
+                        showingDeleteHistoryConfirm = true
+                    }
+                    .disabled(sessions.isEmpty)
+                } footer: {
+                    Text("Permanently deletes every logged workout. Phases, exercises, and equipment are untouched.")
+                }
             }
             .navigationTitle("Settings")
+            .confirmationDialog("Delete all \(sessions.count) logged workout\(sessions.count == 1 ? "" : "s")? This can't be undone.",
+                                isPresented: $showingDeleteHistoryConfirm, titleVisibility: .visible) {
+                Button("Delete All History", role: .destructive) { deleteAllHistory() }
+                Button("Cancel", role: .cancel) { }
+            }
         }
+    }
+
+    private func deleteAllHistory() {
+        for session in sessions { context.delete(session) }
+        try? context.save()
     }
 }
 
