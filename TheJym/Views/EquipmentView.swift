@@ -18,12 +18,19 @@ struct EquipmentView: View {
     @State private var newBarName = ""
     @State private var newBarWeightText = ""
     @State private var newPlateSizeText = ""
-    @State private var newDumbbellSetName = ""
-    @State private var newDumbbellWeightsText = ""
+    @State private var newDumbbellWeightText = ""
 
     private var bars: [Bar] { allBars.filter { !$0.isDumbbell } }
     private var dumbbellSets: [Bar] { allBars.filter(\.isDumbbell) }
+    private var dumbbellBar: Bar? { dumbbellSets.first }
     private var settings: AppSettings? { settingsList.first }
+
+    private func ensureDumbbellBar() -> Bar {
+        if let existing = dumbbellBar { return existing }
+        let bar = Bar(name: "Dumbbells", weight: 0, isDumbbell: true)
+        context.insert(bar)
+        return bar
+    }
 
     var body: some View {
         NavigationStack {
@@ -93,35 +100,37 @@ struct EquipmentView: View {
                     }
                 }
 
-                Section("Dumbbells") {
-                    ForEach(dumbbellSets, id: \.persistentModelID) { set in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(set.name).font(.headline)
-                            Text(set.dumbbellWeights.isEmpty
-                                 ? "No weights set"
-                                 : set.dumbbellWeights.sorted().map { Formatters.trim($0) }.joined(separator: ", ") + " lb")
-                                .font(.caption).foregroundStyle(.secondary)
+                Section("Dumbbell Weights You Have") {
+                    let weights = (dumbbellBar?.dumbbellWeights ?? []).sorted(by: >)
+                    if weights.isEmpty {
+                        Text("No dumbbell weights added yet.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(weights, id: \.self) { w in
+                        HStack {
+                            Text("\(Formatters.trim(w)) lb")
+                            Spacer()
+                            Button(role: .destructive) {
+                                dumbbellBar?.dumbbellWeights.removeAll { $0 == w }
+                                try? context.save()
+                            } label: {
+                                Image(systemName: "trash")
+                            }
                         }
                     }
-                    .onDelete { idx in
-                        for i in idx { context.delete(dumbbellSets[i]) }
-                        try? context.save()
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        TextField("Set name e.g. Dumbbells", text: $newDumbbellSetName)
-                        TextField("Weights you have, comma separated e.g. 5,10,15,20,25,30",
-                                  text: $newDumbbellWeightsText)
-                            .keyboardType(.numbersAndPunctuation)
-                        Button("Add Dumbbell Set") {
-                            let weights = newDumbbellWeightsText.split(separator: ",")
-                                .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-                            guard !newDumbbellSetName.isEmpty, !weights.isEmpty else { return }
-                            context.insert(Bar(name: newDumbbellSetName, weight: 0,
-                                               isDumbbell: true, dumbbellWeights: weights))
-                            try? context.save()
-                            newDumbbellSetName = ""; newDumbbellWeightsText = ""
+                    HStack {
+                        TextField("Add weight e.g. 25", text: $newDumbbellWeightText)
+                            .keyboardType(.decimalPad)
+                        Button("Add") {
+                            if let w = Double(newDumbbellWeightText) {
+                                let bar = ensureDumbbellBar()
+                                if !bar.dumbbellWeights.contains(w) {
+                                    bar.dumbbellWeights.append(w)
+                                }
+                                try? context.save()
+                                newDumbbellWeightText = ""
+                            }
                         }
-                        .disabled(newDumbbellSetName.isEmpty || newDumbbellWeightsText.isEmpty)
+                        .disabled(Double(newDumbbellWeightText) == nil)
                     }
                 }
             }
