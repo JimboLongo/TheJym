@@ -13,6 +13,7 @@ import SwiftData
 
 struct ExercisesView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.editMode) private var editMode
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \Bar.name) private var bars: [Bar]
     @Query private var allLogs: [ExerciseLog]
@@ -23,9 +24,10 @@ struct ExercisesView: View {
     @State private var addSetTarget: ExerciseDef?
     @State private var newSetReps = ""
     @State private var historyTarget: SetHistoryTarget?
-    @State private var editMode: EditMode = .inactive
     @State private var selectedIDs: Set<PersistentIdentifier> = []
     @State private var showingBulkDeleteConfirm = false
+
+    private var isEditing: Bool { editMode?.wrappedValue == .active }
 
     struct SetHistoryTarget: Hashable {
         let defID: PersistentIdentifier
@@ -66,14 +68,13 @@ struct ExercisesView: View {
                     try? context.save()
                 }
             }
-            .environment(\.editMode, $editMode)
             .navigationTitle("Exercises")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if !exerciseDefs.isEmpty { EditButton() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    if editMode == .active {
+                    if isEditing {
                         Button(selectedIDs.count == exerciseDefs.count ? "Deselect All" : "Select All") {
                             if selectedIDs.count == exerciseDefs.count {
                                 selectedIDs = []
@@ -86,7 +87,7 @@ struct ExercisesView: View {
                     }
                 }
                 ToolbarItemGroup(placement: .bottomBar) {
-                    if editMode == .active {
+                    if isEditing {
                         Spacer()
                         Button("Delete (\(selectedIDs.count))", role: .destructive) {
                             showingBulkDeleteConfirm = true
@@ -154,7 +155,7 @@ struct ExercisesView: View {
         }
         try? context.save()
         selectedIDs = []
-        editMode = .inactive
+        editMode?.wrappedValue = .inactive
     }
 }
 
