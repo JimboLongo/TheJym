@@ -10,15 +10,22 @@ import Foundation
 
 struct ComparisonTarget: Identifiable {
     enum Kind: String {
-        case lastLogged = "Last Time"
-        case bestAtTheseWeights = "Best @ These Weights"
-        case bestForExercise = "All-Time Best (This Plan)"
+        case lastLogged = "Previous Workout"
+        case bestAtTheseWeights = "Best at Weights"
+        case bestForExercise = "All-Time Best"
     }
     let id = UUID()
     let kind: Kind
     let date: Date
     let totalWeightMoved: Double
     let setsSummary: String        // "6/6/5/4/4/3 reps @ 135/135/135/145/145/145 lbs"
+    let repsVsGoal: [Int]          // per set: actual reps - that day's target reps
+
+    /// "+2/+1/0/-1" style summary of repsVsGoal, or "" if there's nothing to show.
+    var repsVsGoalSummary: String {
+        guard !repsVsGoal.isEmpty else { return "" }
+        return repsVsGoal.map { $0 == 0 ? "0" : ($0 > 0 ? "+\($0)" : "\($0)") }.joined(separator: "/")
+    }
 }
 
 enum PaceEngine {
@@ -59,12 +66,15 @@ enum PaceEngine {
     }
 
     private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog) -> ComparisonTarget {
-        let reps = log.sortedSets.map { String($0.reps) }.joined(separator: "/")
-        let weights = log.sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
+        let sortedSets = log.sortedSets
+        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
+        let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
+        let repsVsGoal = zip(sortedSets.map(\.reps), log.targetReps).map { $0 - $1 }
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
-                                setsSummary: "\(reps) reps @ \(weights) lbs")
+                                setsSummary: "\(reps) reps @ \(weights) lbs",
+                                repsVsGoal: repsVsGoal)
     }
 
     // MARK: Reps-to-beat math

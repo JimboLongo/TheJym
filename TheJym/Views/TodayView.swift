@@ -19,6 +19,7 @@ struct TodayView: View {
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
     @State private var newActivityText = ""
+    @State private var quickJumpDay: PhaseDay?
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
@@ -43,12 +44,34 @@ struct TodayView: View {
                 restDayActivitySection
             }
             .navigationTitle("Train")
+            .toolbar {
+                if let phase = activePhase, !phase.trainingDays.isEmpty {
+                    ToolbarItem(placement: .principal) {
+                        Menu {
+                            ForEach(phase.trainingDays, id: \.persistentModelID) { day in
+                                Button(day.name) { quickJumpDay = day }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("Train")
+                                Image(systemName: "chevron.down")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                }
+            }
             .sheet(isPresented: $showingPhaseSetup) {
                 PhaseBuilderView(previousPhase: nil)
             }
             .sheet(isPresented: $showingNextPhasePlanner) {
                 if let phase = activePhase {
                     NextPhasePlannerView(previousPhase: phase)
+                }
+            }
+            .navigationDestination(item: $quickJumpDay) { day in
+                if let phase = activePhase {
+                    WorkoutLogView(phase: phase, day: day)
                 }
             }
         }

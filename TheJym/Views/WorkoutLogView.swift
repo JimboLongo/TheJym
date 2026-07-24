@@ -3,9 +3,13 @@
 //  TheJym
 //
 //  Log a session. For each exercise, shows the three comparison workouts
-//  (last time / best at these weights / all-time best for this plan) with
-//  dates, totals, and the reps you need next set to stay on pace to beat each.
-//  On finish, the AI Assistant suggests next-cycle weights (overridable).
+//  (Previous Workout / Best at Weights / All-Time Best) with dates, totals,
+//  and the reps you need next set to stay on pace to beat each. Once every
+//  set in an exercise is logged, it auto-collapses to a compact summary
+//  (tap to reopen and edit). On finish, the AI Assistant suggests
+//  next-cycle weights (overridable). In-progress data survives leaving the
+//  view or closing the app — it's persisted to disk on every change and
+//  restored next time this exact phase/day/cycle is opened.
 //
 
 import SwiftUI
@@ -30,10 +34,10 @@ struct WorkoutLogView: View {
         settings?.deloadWeeksEnabled == true && phase.deloadCycle == phase.currentCycle
     }
 
-    // MARK: Draft state
+    // MARK: Draft state — Codable so in-progress work can be persisted to disk.
 
-    struct SetDraft: Identifiable {
-        let id = UUID()
+    struct SetDraft: Identifiable, Codable, Equatable {
+        var id = UUID()
         var weightText: String
         var repsText: String
         var weight: Double? { Double(weightText) }
@@ -41,11 +45,16 @@ struct WorkoutLogView: View {
         var isLogged: Bool { weight != nil && reps != nil }
     }
 
-    struct ExerciseDraft: Identifiable {
-        let id = UUID()
+    struct ExerciseDraft: Identifiable, Codable, Equatable {
+        var id = UUID()
         var name: String
         var targetReps: [Int]
         var sets: [SetDraft]
+        /// True if this exercise had no AI suggestion and no previous-workout
+        /// weight to prefill from — drives the smart-fill-across-sets behavior.
+        var hadNoBaseline: Bool = false
+        /// False once every set is logged and it's auto-collapsed to a summary.
+        var isExpanded: Bool = true
         var loggedTotal: Double {
             sets.reduce(0) { $0 + (Double($1.reps ?? 0) * ($1.weight ?? 0)) }
         }
@@ -61,6 +70,7 @@ struct WorkoutLogView: View {
 
     var body: some View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
+        let plateSides = settings?.plateLoadableSides ?? 2
         List {
             if isDeloadCycle {
                 Section {
@@ -73,7 +83,7 @@ struct WorkoutLogView: View {
                 Section {
                     ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
                                         exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                        plateSizes: plateSizes)
+                                        plateSizes: plateSizes, plateSides: plateSides)
                 }
             }
             Section {
@@ -89,6 +99,7 @@ struct WorkoutLogView: View {
         }
         .navigationTitle("\(day.name) · Cycle \(phase.currentCycle)")
         .onAppear(perform: buildDrafts)
+        .onChange(of: drafts) { _, _ in saveDraftToDisk() }
         .sheet(isPresented: $showFinishSheet, onDismiss: { dismiss() }) {
             AISuggestionSheet(rows: $aiSuggestions) { applySuggestions() }
         }
@@ -96,39 +107,77 @@ struct WorkoutLogView: View {
 
     // MARK: Setup
 
-    /// This exercise's logs within the current phase, same plan key, oldest -> newest.
+    /// This exercise's logs, same plan key, any phase (progression looks at
+    /// your whole training history, not just the current block).
     private func history(for pe: PlannedExercise) -> [ExerciseLog] {
-        phase.sessions
-            .flatMap(\.exerciseLogs)
+        allExerciseLogs
             .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty && $0.session?.isDeload != true }
             .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
     }
 
+    /// Finest weight jump achievable for this exercise's equipment — the
+    /// standard 2.5 lb for barbell/plate work, or a finer dumbbell increment
+    /// if the matching attachment is on hand.
+    private func roundingIncrement(for exerciseName: String) -> Double {
+        guard let def = exerciseDefs.first(where: { $0.name == exerciseName }),
+              def.equipment?.isDumbbell == true
+        else { return 2.5 }
+        return settings?.dumbbellRoundingIncrement ?? 5
+    }
+
     private func buildDrafts() {
         guard drafts.isEmpty else { return }
+        if let saved = loadDraftFromDisk(), !saved.isEmpty {
+            drafts = saved
+            return
+        }
+
         let aiOn = settings?.aiAssistantEnabled == true
         let agg = settings?.aiAggressiveness ?? .moderate
 
         for pe in phase.plan(for: day) {
             let logs = history(for: pe)
+            let increment = roundingIncrement(for: pe.exerciseName)
             // AI on: what the AI Assistant thinks is the right goal from history.
             // AI off: exactly what was lifted last time.
             var weights = aiOn
                 ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
-                                                        aggressiveness: agg)
+                                                        aggressiveness: agg, roundingIncrement: increment)
                    ?? pe.suggestedWeights)
                 : (logs.last?.sortedSets.map(\.weight) ?? pe.suggestedWeights)
             if isDeloadCycle, !weights.isEmpty {
                 weights = ProgressionEngine.deloadWeights(from: weights)
             }
+            let hadNoBaseline = weights.isEmpty
             let sets = pe.targetReps.enumerated().map { i, _ in
                 SetDraft(weightText: i < weights.count ? Formatters.trim(weights[i]) : "",
                          repsText: "")
             }
             drafts.append(ExerciseDraft(name: pe.exerciseName,
                                         targetReps: pe.targetReps,
-                                        sets: sets))
+                                        sets: sets,
+                                        hadNoBaseline: hadNoBaseline))
         }
+    }
+
+    // MARK: Draft persistence (survives tab switches / app close)
+
+    private var draftStorageKey: String {
+        "workoutDraft_\(phase.number)_\(day.name)_\(phase.currentCycle)"
+    }
+
+    private func saveDraftToDisk() {
+        guard let data = try? JSONEncoder().encode(drafts) else { return }
+        UserDefaults.standard.set(data, forKey: draftStorageKey)
+    }
+
+    private func loadDraftFromDisk() -> [ExerciseDraft]? {
+        guard let data = UserDefaults.standard.data(forKey: draftStorageKey) else { return nil }
+        return try? JSONDecoder().decode([ExerciseDraft].self, from: data)
+    }
+
+    private func clearSavedDraft() {
+        UserDefaults.standard.removeObject(forKey: draftStorageKey)
     }
 
     // MARK: Saving + AI
@@ -153,6 +202,7 @@ struct WorkoutLogView: View {
             }
         }
         try? context.save()
+        clearSavedDraft()
 
         // AI Assistant: suggest next-cycle weights if enabled and phase continues.
         if settings?.aiAssistantEnabled == true, !phase.isComplete, !isDeloadCycle {
@@ -170,9 +220,10 @@ struct WorkoutLogView: View {
         aiSuggestions = []
         for pe in phase.plan(for: day) {
             let logs = history(for: pe)
+            let increment = roundingIncrement(for: pe.exerciseName)
             guard let suggestion = ProgressionEngine.suggestNextWeights(
                 targetReps: pe.targetReps, history: logs,
-                aggressiveness: agg),
+                aggressiveness: agg, roundingIncrement: increment),
                 let latest = logs.last else { continue }
 
             let currentStr = latest.sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
@@ -204,13 +255,11 @@ struct ExerciseDraftSection: View {
     let allLogs: [ExerciseLog]
     let exerciseDef: ExerciseDef?
     let plateSizes: [Double]
+    let plateSides: Int
 
     @State private var showingDetails = false
     @State private var plateTargetText = ""
 
-    private var currentWeights: [Double] {
-        draft.sets.compactMap(\.weight)
-    }
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
                                targetReps: draft.targetReps,
@@ -224,49 +273,16 @@ struct ExerciseDraftSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(draft.name).font(.headline)
-                Spacer()
-                Text("Goal \(draft.targetReps.map(String.init).joined(separator: "/"))")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                Button {
-                    withAnimation { showingDetails.toggle() }
-                } label: {
-                    Image(systemName: showingDetails ? "chevron.up.circle.fill" : "info.circle")
+            header
+
+            if draft.isExpanded {
+                if showingDetails {
+                    notesAndPlateCalc(exerciseDef)
                 }
-                .buttonStyle(.plain)
-                .imageScale(.large)
+                setRows
+            } else {
+                currentWorkoutRow
             }
-
-            if showingDetails {
-                notesAndPlateCalc(exerciseDef)
-            }
-
-            // Set rows
-            ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
-                HStack(spacing: 10) {
-                    Text("Set \(i + 1)")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .frame(width: 44, alignment: .leading)
-                    TextField("lbs", text: $draft.sets[i].weightText)
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                    Text("×")
-                    TextField("reps (goal \(draft.targetReps[safe: i] ?? 0))",
-                              text: $draft.sets[i].repsText)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                }
-            }
-
-            HStack {
-                Text("Total moved:")
-                Text("\(Formatters.trim(draft.loggedTotal)) lbs")
-                    .font(.system(.body, design: .monospaced)).bold()
-            }
-            .font(.subheadline)
 
             // Pace panel
             if comparisons.isEmpty {
@@ -285,6 +301,99 @@ struct ExerciseDraftSection: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var header: some View {
+        HStack {
+            Text(draft.name).font(.headline)
+            Spacer()
+            Text("Goal \(draft.targetReps.map(String.init).joined(separator: "/"))")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+            if draft.isExpanded {
+                Button {
+                    withAnimation { showingDetails.toggle() }
+                } label: {
+                    Image(systemName: showingDetails ? "chevron.up.circle.fill" : "info.circle")
+                }
+                .buttonStyle(.plain)
+                .imageScale(.large)
+            } else {
+                Button {
+                    withAnimation { draft.isExpanded = true }
+                } label: {
+                    Label("Edit", systemImage: "pencil.circle")
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+            }
+        }
+    }
+
+    private var setRows: some View {
+        ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
+            HStack(spacing: 10) {
+                Text("Set \(i + 1)")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(width: 44, alignment: .leading)
+                TextField("lbs", text: $draft.sets[i].weightText)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                    .onChange(of: draft.sets[i].weightText) { _, _ in
+                        smartFillIfNeeded(from: i)
+                    }
+                Text("×")
+                TextField("reps (goal \(draft.targetReps[safe: i] ?? 0))",
+                          text: $draft.sets[i].repsText)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: draft.sets[i].repsText) { _, _ in
+                        if draft.sets.allSatisfy(\.isLogged) {
+                            withAnimation { draft.isExpanded = false }
+                        }
+                    }
+            }
+        }
+    }
+
+    /// If there's no history/AI weight to prefill from, entering a weight for
+    /// one set fills the other still-empty sets: same target reps get the
+    /// same weight, different rep targets get an Epley-estimated weight.
+    private func smartFillIfNeeded(from sourceIndex: Int) {
+        guard draft.hadNoBaseline, let sourceWeight = draft.sets[sourceIndex].weight else { return }
+        let sourceReps = draft.targetReps[safe: sourceIndex] ?? 0
+        for j in draft.sets.indices where j != sourceIndex && draft.sets[j].weightText.isEmpty {
+            let targetRepsJ = draft.targetReps[safe: j] ?? sourceReps
+            let estimated = targetRepsJ == sourceReps
+                ? sourceWeight
+                : ProgressionEngine.estimatedWeight(from: sourceWeight, atReps: sourceReps, forReps: targetRepsJ)
+            draft.sets[j].weightText = Formatters.trim(estimated)
+        }
+    }
+
+    /// Compact summary of today's entered weights/reps, shown once the
+    /// exercise auto-collapses (mirrors the historical pace-calc rows).
+    private var currentWorkoutRow: some View {
+        let weights = draft.sets.map { $0.weightText.isEmpty ? "—" : $0.weightText }.joined(separator: "/")
+        let reps = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }.joined(separator: "/")
+        let delta = draft.sets.enumerated().map { i, s -> String in
+            guard let r = s.reps else { return "—" }
+            let goal = draft.targetReps[safe: i] ?? r
+            let d = r - goal
+            return d == 0 ? "0" : (d > 0 ? "+\(d)" : "\(d)")
+        }.joined(separator: "/")
+
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("Current Workout").font(.caption.bold())
+            Text("\(reps) reps @ \(weights) lbs")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Text("vs Goal: \(delta)")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder
@@ -336,7 +445,8 @@ struct ExerciseDraftSection: View {
                         .font(.subheadline)
 
                         if let target = Double(plateTargetText) {
-                            if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight, available: plateSizes) {
+                            if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight,
+                                                                               available: plateSizes, sides: plateSides) {
                                 if plates.isEmpty && leftover == 0 {
                                     Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
                                         .font(.caption).foregroundStyle(.secondary)
@@ -346,12 +456,12 @@ struct ExerciseDraftSection: View {
                                         Text("\(Formatters.trim(p.plate)) lb plate")
                                             .font(.system(.caption, design: .monospaced))
                                         Spacer()
-                                        Text("× \(p.countPerSide) per side")
+                                        Text(plateSides == 1 ? "× \(p.countPerSide)" : "× \(p.countPerSide) per side")
                                             .font(.system(.caption, design: .monospaced)).bold()
                                     }
                                 }
                                 if leftover > 0 {
-                                    Text("Can't hit exactly — \(Formatters.trim(leftover)) lbs/side short.")
+                                    Text("Can't hit exactly — \(Formatters.trim(leftover)) lbs short.")
                                         .font(.caption2).foregroundStyle(.orange)
                                 }
                             } else {
@@ -388,9 +498,13 @@ struct PaceRow: View {
                 Text(Formatters.date.string(from: target.date))
                     .font(.caption2).foregroundStyle(.secondary)
             }
-            Text("\(target.setsSummary) = \(Formatters.trim(target.totalWeightMoved)) lbs")
+            Text(target.setsSummary)
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
+            if !target.repsVsGoalSummary.isEmpty {
+                Text("vs Goal: \(target.repsVsGoalSummary)")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             if beaten {
                 Label("Beaten by \(Formatters.trim(loggedSoFar - target.totalWeightMoved)) lbs 🔥",
                       systemImage: "flame.fill")

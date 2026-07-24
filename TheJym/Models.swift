@@ -41,10 +41,21 @@ final class AppSettings {
     var useGeminiForPhasePlanning: Bool
     var geminiAPIKey: String
     var availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25]   // plates you own, for the plate calculator
+    var hasDumbbell125Attachment: Bool = false   // finer dumbbell-weight increments, used in AI weight suggestions
+    var hasDumbbell25Attachment: Bool = false
+    var plateLoadableSides: Int = 2              // 1 or 2 — sides of the bar you can load plates on
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }
         set { aiAggressivenessRaw = newValue.rawValue }
+    }
+
+    /// Finest achievable weight increment for a dumbbell exercise, given
+    /// whichever attachments (if any) are on hand.
+    var dumbbellRoundingIncrement: Double {
+        if hasDumbbell125Attachment { return 1.25 }
+        if hasDumbbell25Attachment { return 2.5 }
+        return 5
     }
 
     init(trainingStartDate: Date = .now,
@@ -53,7 +64,10 @@ final class AppSettings {
          deloadWeeksEnabled: Bool = false,
          useGeminiForPhasePlanning: Bool = false,
          geminiAPIKey: String = "",
-         availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25]) {
+         availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25],
+         hasDumbbell125Attachment: Bool = false,
+         hasDumbbell25Attachment: Bool = false,
+         plateLoadableSides: Int = 2) {
         self.trainingStartDate = trainingStartDate
         self.aiAssistantEnabled = aiAssistantEnabled
         self.aiAggressivenessRaw = aiAggressiveness.rawValue
@@ -61,6 +75,9 @@ final class AppSettings {
         self.useGeminiForPhasePlanning = useGeminiForPhasePlanning
         self.geminiAPIKey = geminiAPIKey
         self.availablePlateSizes = availablePlateSizes
+        self.hasDumbbell125Attachment = hasDumbbell125Attachment
+        self.hasDumbbell25Attachment = hasDumbbell25Attachment
+        self.plateLoadableSides = plateLoadableSides
     }
 }
 

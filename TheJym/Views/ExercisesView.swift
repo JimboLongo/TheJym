@@ -26,8 +26,16 @@ struct ExercisesView: View {
     @State private var historyTarget: SetHistoryTarget?
     @State private var selectedIDs: Set<PersistentIdentifier> = []
     @State private var showingBulkDeleteConfirm = false
+    @State private var showingLibraryPicker = false
+    @State private var searchText = ""
 
     private var isEditing: Bool { editMode?.wrappedValue == .active }
+
+    private var filteredDefs: [ExerciseDef] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return exerciseDefs }
+        return exerciseDefs.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+    }
 
     struct SetHistoryTarget: Hashable {
         let defID: PersistentIdentifier
@@ -45,9 +53,12 @@ struct ExercisesView: View {
                     } actions: {
                         Button("Add Exercise") { showingAdd = true }
                             .buttonStyle(.borderedProminent)
+                        Button("Browse Exercise Library…") { showingLibraryPicker = true }
                     }
+                } else if filteredDefs.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
                 }
-                ForEach(exerciseDefs, id: \.persistentModelID) { def in
+                ForEach(filteredDefs, id: \.persistentModelID) { def in
                     Button {
                         selectedDef = def
                     } label: {
@@ -64,11 +75,12 @@ struct ExercisesView: View {
                     .foregroundStyle(.primary)
                 }
                 .onDelete { idx in
-                    for i in idx { context.delete(exerciseDefs[i]) }
+                    for i in idx { context.delete(filteredDefs[i]) }
                     try? context.save()
                 }
             }
             .navigationTitle("Exercises")
+            .searchable(text: $searchText, prompt: "Search exercises")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
                     if !exerciseDefs.isEmpty { EditButton() }
@@ -89,7 +101,12 @@ struct ExercisesView: View {
                         }
                         .disabled(selectedIDs.isEmpty)
                     }
-                    Button { showingAdd = true } label: { Image(systemName: "plus") }
+                    Menu {
+                        Button("New Exercise…", systemImage: "plus") { showingAdd = true }
+                        Button("Browse Exercise Library…", systemImage: "books.vertical") { showingLibraryPicker = true }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
                 }
             }
             .confirmationDialog("Delete \(selectedIDs.count) exercise\(selectedIDs.count == 1 ? "" : "s")? This also deletes their saved sets. Logged history stays intact.",
@@ -99,6 +116,9 @@ struct ExercisesView: View {
             }
             .sheet(isPresented: $showingAdd) {
                 ExerciseEditView(def: nil, bars: bars)
+            }
+            .sheet(isPresented: $showingLibraryPicker) {
+                ExerciseLibraryPickerView()
             }
             .sheet(item: $editTarget) { def in
                 ExerciseEditView(def: def, bars: bars)
@@ -294,9 +314,6 @@ struct ExerciseSetHistoryView: View {
                                            value: "\(Formatters.trim(s.weight)) lbs × \(s.reps) reps")
                                 .font(.system(.subheadline, design: .monospaced))
                         }
-                        LabeledContent("Total") {
-                            Text("\(Formatters.trim(log.totalWeightMoved)) lbs").bold()
-                        }
                     }
                 }
             }
@@ -315,5 +332,57 @@ struct ExerciseSetHistoryView: View {
                 }
             }
         }
+    }
+}
+
+/// Browse the built-in exercise catalog (the same one used to seed the
+/// library on first launch) and add any you don't already have — handy for
+/// starting fresh or finding a new exercise to try.
+struct ExerciseLibraryPickerView: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
+
+    private var existingNames: Set<String> { Set(exerciseDefs.map(\.name)) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(ExerciseLibrary.grouped, id: \.group) { group in
+                    Section(group.group) {
+                        ForEach(group.exercises, id: \.name) { entry in
+                            let alreadyAdded = existingNames.contains(entry.name)
+                            Button {
+                                addEntry(entry)
+                            } label: {
+                                HStack {
+                                    Text(entry.name).foregroundStyle(.primary)
+                                    Spacer()
+                                    if alreadyAdded {
+                                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                    } else {
+                                        Text(entry.defaultReps)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .disabled(alreadyAdded)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Exercise Library")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+    }
+
+    private func addEntry(_ entry: ExerciseLibrary.Entry) {
+        guard !existingNames.contains(entry.name) else { return }
+        let reps = entry.defaultReps.split(separator: "/").compactMap { Int($0) }
+        context.insert(ExerciseDef(name: entry.name, repSchemes: reps.isEmpty ? [] : [reps]))
+        try? context.save()
     }
 }

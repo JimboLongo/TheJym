@@ -16,6 +16,20 @@ struct TrainingStats {
     var maxStreak: Int
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
+
+    // Year/month-to-date workout-day counts, vs. the same window last year.
+    var ytdWorkoutDays: Int
+    var priorYearYtdWorkoutDays: Int
+    var mtdWorkoutDays: Int
+    var priorYearMtdWorkoutDays: Int
+
+    // Consistency-against-schedule counts. A week/month only counts once
+    // it's fully over, and only if a phase was actually active to judge it
+    // against (no schedule = not counted either way).
+    var perfectWeeks: Int       // every scheduled training day that week was logged
+    var perfectMonths: Int      // every scheduled training day that month was logged
+    var bestMonthLabel: String? // e.g. "March 2026"
+    var bestMonthWorkouts: Int  // workouts logged in that month
 }
 
 enum StatsEngine {
@@ -100,12 +114,91 @@ enum StatsEngine {
         let weeks = Double(daysSinceStart) / 7.0
         let perWeek = weeks > 0 ? Double(daysLogged) / weeks : 0
 
+        // YTD/MTD: "worked out" means an actual training session, not a rest
+        // day activity — separate from loggedDays above (which is streak math).
+        let workoutDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
+        let priorYearToday = cal.date(byAdding: .year, value: -1, to: today) ?? today
+
+        func dayCount(from windowStart: Date, through windowEnd: Date) -> Int {
+            workoutDays.filter { $0 >= windowStart && $0 <= windowEnd }.count
+        }
+        let yearStart = cal.date(from: cal.dateComponents([.year], from: today)) ?? today
+        let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
+        let priorYearStart = cal.date(from: cal.dateComponents([.year], from: priorYearToday)) ?? priorYearToday
+        let priorYearMonthStart = cal.date(from: cal.dateComponents([.year, .month], from: priorYearToday)) ?? priorYearToday
+
+        let ytdWorkoutDays = dayCount(from: yearStart, through: today)
+        let mtdWorkoutDays = dayCount(from: monthStart, through: today)
+        let priorYearYtdWorkoutDays = dayCount(from: priorYearStart, through: priorYearToday)
+        let priorYearMtdWorkoutDays = dayCount(from: priorYearMonthStart, through: priorYearToday)
+
+        // Perfect weeks/months + best month all-time: walk day-by-day again,
+        // bucketing scheduled-vs-logged training days by week and by month.
+        struct Bucket { var scheduled = 0; var logged = 0; var sessions = 0 }
+        var weekBuckets: [DateComponents: Bucket] = [:]
+        var monthBuckets: [DateComponents: Bucket] = [:]
+        var walk = start
+        iterations = 0
+        while walk <= today, iterations < 20_000 {
+            iterations += 1
+            let scheduledRest = isScheduledRestDay(walk, schedules: phaseSchedules, cal: cal)
+            let isTrainingDay = scheduledRest == false
+            let wasLogged = workoutDays.contains(walk)
+            let weekKey = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: walk)
+            let monthKey = cal.dateComponents([.year, .month], from: walk)
+
+            if isTrainingDay {
+                weekBuckets[weekKey, default: Bucket()].scheduled += 1
+                monthBuckets[monthKey, default: Bucket()].scheduled += 1
+                if wasLogged {
+                    weekBuckets[weekKey, default: Bucket()].logged += 1
+                    monthBuckets[monthKey, default: Bucket()].logged += 1
+                }
+            }
+            if wasLogged {
+                monthBuckets[monthKey, default: Bucket()].sessions += 1
+            }
+            guard let next = cal.date(byAdding: .day, value: 1, to: walk) else { break }
+            walk = next
+        }
+
+        let currentWeekKey = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today)
+        let currentMonthKey = cal.dateComponents([.year, .month], from: today)
+
+        let perfectWeeks = weekBuckets.filter { key, bucket in
+            key != currentWeekKey && bucket.scheduled > 0 && bucket.logged == bucket.scheduled
+        }.count
+        let perfectMonths = monthBuckets.filter { key, bucket in
+            key != currentMonthKey && bucket.scheduled > 0 && bucket.logged == bucket.scheduled
+        }.count
+
+        var bestMonthLabel: String?
+        var bestMonthWorkouts = 0
+        if let best = monthBuckets.filter({ $0.key != currentMonthKey })
+            .max(by: { $0.value.sessions < $1.value.sessions }),
+           best.value.sessions > 0 {
+            bestMonthWorkouts = best.value.sessions
+            if let monthDate = cal.date(from: best.key) {
+                let f = DateFormatter()
+                f.dateFormat = "MMMM yyyy"
+                bestMonthLabel = f.string(from: monthDate)
+            }
+        }
+
         return TrainingStats(daysSinceStart: daysSinceStart,
                              daysLogged: daysLogged,
                              currentStreak: current,
                              maxStreak: maxStreak,
                              percentLogged: pct,
-                             daysPerWeek: perWeek)
+                             daysPerWeek: perWeek,
+                             ytdWorkoutDays: ytdWorkoutDays,
+                             priorYearYtdWorkoutDays: priorYearYtdWorkoutDays,
+                             mtdWorkoutDays: mtdWorkoutDays,
+                             priorYearMtdWorkoutDays: priorYearMtdWorkoutDays,
+                             perfectWeeks: perfectWeeks,
+                             perfectMonths: perfectMonths,
+                             bestMonthLabel: bestMonthLabel,
+                             bestMonthWorkouts: bestMonthWorkouts)
     }
 }
 
@@ -122,11 +215,16 @@ enum PlateCalculator {
     static let defaultPlates: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25]
 
     /// Returns plates PER SIDE for a target total, or nil if unreachable exactly.
-    /// Example: bar 45, target 100 -> per side 27.5 -> [25 x1, 2.5 x1]
-    /// Example: EZ bar 15, target 42.5 -> per side 13.75 -> [10, 2.5, 1.25]
+    /// `sides` is how many sides of the bar you can actually load (2 for a
+    /// standard barbell, 1 for e.g. a landmine attachment) — with 1 side, all
+    /// the plate weight goes on that single side instead of splitting in half.
+    /// Example: bar 45, target 100, 2 sides -> per side 27.5 -> [25 x1, 2.5 x1]
+    /// Example: EZ bar 15, target 42.5, 2 sides -> per side 13.75 -> [10, 2.5, 1.25]
     static func plates(target: Double, barWeight: Double,
-                       available: [Double] = defaultPlates) -> (result: [PlateResult], leftover: Double)? {
-        let perSide = (target - barWeight) / 2
+                       available: [Double] = defaultPlates,
+                       sides: Int = 2) -> (result: [PlateResult], leftover: Double)? {
+        let loadableSides = max(1, sides)
+        let perSide = (target - barWeight) / Double(loadableSides)
         guard perSide >= 0 else { return nil }
 
         var remaining = perSide

@@ -50,6 +50,21 @@ struct StatsView: View {
                     statRow("Days per week", String(format: "%.2f", stats.daysPerWeek))
                 }
 
+                Section("Year / Month to Date") {
+                    statRow("YTD workouts", "\(stats.ytdWorkoutDays) (PY: \(stats.priorYearYtdWorkoutDays))")
+                    statRow("MTD workouts", "\(stats.mtdWorkoutDays) (PY: \(stats.priorYearMtdWorkoutDays))")
+                }
+
+                Section("Milestones") {
+                    statRow("Perfect weeks", "\(stats.perfectWeeks)")
+                    statRow("Perfect months", "\(stats.perfectMonths)")
+                    if let label = stats.bestMonthLabel {
+                        statRow("Best month all-time", "\(label) (\(stats.bestMonthWorkouts))")
+                    } else {
+                        statRow("Best month all-time", "—")
+                    }
+                }
+
                 Section("Body Weight") {
                     HStack {
                         TextField("Today's weight (lbs)", text: $newWeightText)

@@ -69,6 +69,17 @@ struct EquipmentView: View {
                     }
                 }
 
+                Section {
+                    Picker("Sides you can load plates on", selection: Binding(
+                        get: { settings?.plateLoadableSides ?? 2 },
+                        set: { settings?.plateLoadableSides = $0; try? context.save() })) {
+                        Text("1").tag(1)
+                        Text("2").tag(2)
+                    }
+                } footer: {
+                    Text("2 for a standard barbell; 1 for something like a landmine attachment where all the plate weight loads on a single side.")
+                }
+
                 Section("Plate Sizes You Have") {
                     let sizes = (settings?.availablePlateSizes ?? []).sorted(by: >)
                     if sizes.isEmpty {
@@ -132,6 +143,17 @@ struct EquipmentView: View {
                         }
                         .disabled(Double(newDumbbellWeightText) == nil)
                     }
+                }
+
+                Section {
+                    Toggle("1.25 lb Dumbbell Attachment", isOn: Binding(
+                        get: { settings?.hasDumbbell125Attachment ?? false },
+                        set: { settings?.hasDumbbell125Attachment = $0; try? context.save() }))
+                    Toggle("2.5 lb Dumbbell Attachment", isOn: Binding(
+                        get: { settings?.hasDumbbell25Attachment ?? false },
+                        set: { settings?.hasDumbbell25Attachment = $0; try? context.save() }))
+                } footer: {
+                    Text("When on, the AI Assistant suggests dumbbell weight jumps as fine as the smallest attachment you have on, instead of only jumping by 5 lb.")
                 }
             }
             .navigationTitle("Equipment")

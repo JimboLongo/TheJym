@@ -63,6 +63,11 @@ struct HistoryView: View {
     private static let charWidth: CGFloat = 7.4
     private static let colPadding: CGFloat = 16
 
+    private var workoutColWidth: CGFloat {
+        let longest = rows.reduce(7) { max($0, $1.session.dayLabel.count) }
+        return CGFloat(longest) * Self.charWidth + Self.colPadding
+    }
+
     private var exerciseColWidth: CGFloat {
         let longest = rows.reduce(8) { longest, row in
             let sets = row.log.targetReps.map(String.init).joined(separator: "/")
@@ -156,6 +161,7 @@ struct HistoryView: View {
             Color.clear.frame(width: Col.action)
             HStack(spacing: 0) {
                 Text("Day").frame(width: Col.day, alignment: .leading)
+                Text("Workout").frame(width: workoutColWidth, alignment: .leading)
                 Text("Phase").frame(width: Col.phase, alignment: .leading)
                 Text("Exercise").frame(width: exerciseColWidth, alignment: .leading)
                 Text("Lifts").frame(width: liftsColWidth, alignment: .leading)
@@ -192,6 +198,7 @@ struct HistoryView: View {
             } label: {
                 HStack(spacing: 0) {
                     Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
+                    Text(row.session.dayLabel).frame(width: workoutColWidth, alignment: .leading)
                     Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(log.exerciseName)
@@ -328,9 +335,6 @@ struct SessionDetailView: View {
                         LabeledContent("Set \(s.index + 1)",
                                        value: "\(Formatters.trim(s.weight)) × \(s.reps) = \(Formatters.trim(s.weight * Double(s.reps)))")
                             .font(.system(.subheadline, design: .monospaced))
-                    }
-                    LabeledContent("Total Weight Moved") {
-                        Text("\(Formatters.trim(log.totalWeightMoved)) lbs").bold()
                     }
                 }
             }

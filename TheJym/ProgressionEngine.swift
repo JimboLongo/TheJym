@@ -17,11 +17,15 @@ enum ProgressionEngine {
 
     /// Suggest per-set weights for the NEXT cycle of an exercise.
     ///
-    /// `history` = this exercise's logs *within the current phase, same plan key*,
-    /// oldest -> newest. The most recent entry is "today's" workout.
+    /// `history` = this exercise's logs, same plan key, oldest -> newest
+    /// (any phase — progression looks at your whole training history, not
+    /// just the current block). The most recent entry is "today's" workout.
+    /// `roundingIncrement` is the finest weight jump achievable with the
+    /// equipment on hand (e.g. 1.25/2.5 lb with a dumbbell attachment).
     static func suggestNextWeights(targetReps: [Int],
                                    history: [ExerciseLog],
-                                   aggressiveness: AIAggressiveness) -> [Double]? {
+                                   aggressiveness: AIAggressiveness,
+                                   roundingIncrement: Double = 2.5) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
         let latestWeights = latest.sortedSets.map(\.weight)
 
@@ -86,15 +90,26 @@ enum ProgressionEngine {
 
         // If they badly missed targets (avg 2+ reps short), suggest backing off ~5%.
         if avgSurplus(latest) <= -2 {
-            return latestWeights.map { roundToPlate($0 * 0.95) }
+            return latestWeights.map { roundToPlate($0 * 0.95, smallest: roundingIncrement) }
         }
 
         guard increment > 0 else { return latestWeights }   // hold the weight
-        return latestWeights.map { roundToPlate($0 + increment) }
+        return latestWeights.map { roundToPlate($0 + increment, smallest: roundingIncrement) }
     }
 
     static func roundToPlate(_ w: Double, smallest: Double = 2.5) -> Double {
         (w / smallest).rounded() * smallest
+    }
+
+    /// Estimates the equivalent weight for a different rep target, using the
+    /// Epley 1RM approximation (1RM = w * (1 + reps/30)) to scale between rep
+    /// counts. Used to smart-fill a set's weight from a sibling set with a
+    /// different target rep count when there's no history to go on yet.
+    static func estimatedWeight(from weight: Double, atReps sourceReps: Int, forReps targetReps: Int) -> Double {
+        guard weight > 0, sourceReps > 0, targetReps > 0 else { return weight }
+        let oneRepMax = weight * (1 + Double(sourceReps) / 30)
+        let estimate = oneRepMax / (1 + Double(targetReps) / 30)
+        return roundToPlate(estimate)
     }
 
     // MARK: - Deload
