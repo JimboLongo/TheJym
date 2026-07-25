@@ -123,25 +123,32 @@ struct WorkoutLogView: View {
             .padding()
             .background(.bar)
         }
-        .navigationTitle("\(day.name) · Cycle \(phase.currentCycle)")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if drafts.count > 1 {
-                ToolbarItem(placement: .principal) {
-                    Menu {
-                        ForEach(drafts) { draft in
-                            Button(draft.name) {
-                                scrollToDraftID = draft.id
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 2) {
+                    Text("\(day.name) · Cycle \(phase.currentCycle)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if drafts.count > 1 {
+                        Menu {
+                            ForEach(drafts) { draft in
+                                Button(draft.name) {
+                                    scrollToDraftID = draft.id
+                                }
                             }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("Jump to Exercise…")
-                                .font(.headline)
-                            Image(systemName: "chevron.down")
-                                .font(.caption)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("Jump to Exercise…")
+                                    .font(.headline)
+                                Image(systemName: "chevron.down")
+                                    .font(.caption)
+                            }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .onAppear(perform: buildDrafts)
