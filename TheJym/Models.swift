@@ -43,7 +43,6 @@ final class AppSettings {
     var availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25]   // plates you own, for the plate calculator
     var hasDumbbell125Attachment: Bool = false   // finer dumbbell-weight increments, used in AI weight suggestions
     var hasDumbbell25Attachment: Bool = false
-    var plateLoadableSides: Int = 2              // 1 or 2 — sides of the bar you can load plates on
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }
@@ -66,8 +65,7 @@ final class AppSettings {
          geminiAPIKey: String = "",
          availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25],
          hasDumbbell125Attachment: Bool = false,
-         hasDumbbell25Attachment: Bool = false,
-         plateLoadableSides: Int = 2) {
+         hasDumbbell25Attachment: Bool = false) {
         self.trainingStartDate = trainingStartDate
         self.aiAssistantEnabled = aiAssistantEnabled
         self.aiAggressivenessRaw = aiAggressiveness.rawValue
@@ -77,7 +75,6 @@ final class AppSettings {
         self.availablePlateSizes = availablePlateSizes
         self.hasDumbbell125Attachment = hasDumbbell125Attachment
         self.hasDumbbell25Attachment = hasDumbbell25Attachment
-        self.plateLoadableSides = plateLoadableSides
     }
 }
 
@@ -89,12 +86,14 @@ final class Bar {
     var weight: Double              // bar weight; unused (0) for a dumbbell set
     var isDumbbell: Bool = false
     var dumbbellWeights: [Double] = []   // the individual dumbbell weights you own, when isDumbbell
+    var loadableSides: Int = 2      // 1 or 2 — sides of THIS bar you can load plates on
 
-    init(name: String, weight: Double, isDumbbell: Bool = false, dumbbellWeights: [Double] = []) {
+    init(name: String, weight: Double, isDumbbell: Bool = false, dumbbellWeights: [Double] = [], loadableSides: Int = 2) {
         self.name = name
         self.weight = weight
         self.isDumbbell = isDumbbell
         self.dumbbellWeights = dumbbellWeights
+        self.loadableSides = loadableSides
     }
 }
 

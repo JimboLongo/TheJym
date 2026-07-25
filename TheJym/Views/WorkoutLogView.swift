@@ -73,7 +73,6 @@ struct WorkoutLogView: View {
 
     var body: some View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
-        let plateSides = settings?.plateLoadableSides ?? 2
         List {
             if isDeloadCycle {
                 Section {
@@ -86,7 +85,7 @@ struct WorkoutLogView: View {
                 Section {
                     ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
                                         exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                        plateSizes: plateSizes, plateSides: plateSides)
+                                        plateSizes: plateSizes)
                 }
             }
             Section {
@@ -258,7 +257,6 @@ struct ExerciseDraftSection: View {
     let allLogs: [ExerciseLog]
     let exerciseDef: ExerciseDef?
     let plateSizes: [Double]
-    let plateSides: Int
 
     @State private var showingDetails = false
     @State private var plateTargetText = ""
@@ -539,7 +537,7 @@ struct ExerciseDraftSection: View {
 
                         if let target = Double(plateTargetText) {
                             if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight,
-                                                                               available: plateSizes, sides: plateSides) {
+                                                                               available: plateSizes, sides: bar.loadableSides) {
                                 if plates.isEmpty && leftover == 0 {
                                     Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
                                         .font(.caption).foregroundStyle(.secondary)
@@ -549,7 +547,7 @@ struct ExerciseDraftSection: View {
                                         Text("\(Formatters.trim(p.plate)) lb plate")
                                             .font(.system(.caption, design: .monospaced))
                                         Spacer()
-                                        Text(plateSides == 1 ? "× \(p.countPerSide)" : "× \(p.countPerSide) per side")
+                                        Text(bar.loadableSides == 1 ? "× \(p.countPerSide)" : "× \(p.countPerSide) per side")
                                             .font(.system(.caption, design: .monospaced)).bold()
                                     }
                                 }

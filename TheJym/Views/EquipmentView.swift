@@ -35,7 +35,7 @@ struct EquipmentView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Bars") {
+                Section {
                     ForEach(bars, id: \.persistentModelID) { bar in
                         HStack {
                             Text(bar.name)
@@ -47,6 +47,14 @@ struct EquipmentView: View {
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 70)
+                            Picker("Sides", selection: Binding(
+                                get: { bar.loadableSides },
+                                set: { bar.loadableSides = $0; try? context.save() })) {
+                                Text("1 side").tag(1)
+                                Text("2 sides").tag(2)
+                            }
+                            .labelsHidden()
+                            .frame(width: 100)
                         }
                     }
                     .onDelete { idx in
@@ -67,17 +75,21 @@ struct EquipmentView: View {
                         }
                         .disabled(newBarName.isEmpty || Double(newBarWeightText) == nil)
                     }
+                } header: {
+                    Text("Bars")
+                } footer: {
+                    Text("Sides is how many sides of that bar you can load plates on — 2 for a standard barbell, 1 for something like a landmine attachment where all the plate weight loads on a single side.")
                 }
 
                 Section {
-                    Picker("Sides you can load plates on", selection: Binding(
-                        get: { settings?.plateLoadableSides ?? 2 },
-                        set: { settings?.plateLoadableSides = $0; try? context.save() })) {
-                        Text("1").tag(1)
-                        Text("2").tag(2)
-                    }
+                    Toggle("1.25 lb Dumbbell Attachment", isOn: Binding(
+                        get: { settings?.hasDumbbell125Attachment ?? false },
+                        set: { settings?.hasDumbbell125Attachment = $0; try? context.save() }))
+                    Toggle("2.5 lb Dumbbell Attachment", isOn: Binding(
+                        get: { settings?.hasDumbbell25Attachment ?? false },
+                        set: { settings?.hasDumbbell25Attachment = $0; try? context.save() }))
                 } footer: {
-                    Text("2 for a standard barbell; 1 for something like a landmine attachment where all the plate weight loads on a single side.")
+                    Text("When on, the AI Assistant suggests dumbbell weight jumps as fine as the smallest attachment you have on, instead of only jumping by 5 lb.")
                 }
 
                 Section("Plate Sizes You Have") {
@@ -143,17 +155,6 @@ struct EquipmentView: View {
                         }
                         .disabled(Double(newDumbbellWeightText) == nil)
                     }
-                }
-
-                Section {
-                    Toggle("1.25 lb Dumbbell Attachment", isOn: Binding(
-                        get: { settings?.hasDumbbell125Attachment ?? false },
-                        set: { settings?.hasDumbbell125Attachment = $0; try? context.save() }))
-                    Toggle("2.5 lb Dumbbell Attachment", isOn: Binding(
-                        get: { settings?.hasDumbbell25Attachment ?? false },
-                        set: { settings?.hasDumbbell25Attachment = $0; try? context.save() }))
-                } footer: {
-                    Text("When on, the AI Assistant suggests dumbbell weight jumps as fine as the smallest attachment you have on, instead of only jumping by 5 lb.")
                 }
             }
             .navigationTitle("Equipment")
