@@ -585,13 +585,14 @@ struct ExercisePageView: View {
                     }
 
                     if let goal = draft.targetReps[safe: i] {
-                        HStack(spacing: 2) {
+                        ZStack {
+                            Image(systemName: "arrowshape.right.fill")
+                                .font(.system(size: 30))
+                                .foregroundStyle(Color.green.opacity(0.4))
                             Text("\(goal)")
-                                .font(.subheadline)
+                                .font(.caption2.bold())
                                 .foregroundStyle(.primary)
-                            Image(systemName: "arrow.right")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .offset(x: -3)
                         }
                         .frame(width: 44, alignment: .center)
                         .offset(x: targetDragOffset[i] ?? 0)
