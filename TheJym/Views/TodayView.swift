@@ -22,6 +22,7 @@ struct TodayView: View {
     @State private var newActivityDistanceText = ""
     @State private var newActivityDistanceUnit = "mi"
     @State private var quickJumpDay: PhaseDay?
+    @State private var expandedDayIDs: Set<PersistentIdentifier> = []
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
@@ -126,50 +127,114 @@ struct TodayView: View {
             .padding(.vertical, 4)
         }
 
-        if let nextDay = phase.nextDay {
-            Section("Up Next: \(nextDay.name)") {
-                let plan = phase.plan(for: nextDay)
+        Section("Your Cycle") {
+            if let nextDay = phase.nextDay {
+                featuredDayRow(phase, nextDay)
+                ForEach(phase.orderedDays.filter { $0.persistentModelID != nextDay.persistentModelID },
+                        id: \.persistentModelID) { day in
+                    collapsibleDayRow(phase, day)
+                }
+            } else {
+                ForEach(phase.orderedDays, id: \.persistentModelID) { day in
+                    collapsibleDayRow(phase, day)
+                }
+            }
+        }
+    }
+
+    /// The day up next in the cycle: a play button to jump straight into it,
+    /// with its planned exercises previewed underneath (smaller than the
+    /// name, since this row already stands out by being first + having the
+    /// play button).
+    @ViewBuilder
+    private func featuredDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
+        let plan = phase.plan(for: day)
+        HStack(alignment: .top, spacing: 12) {
+            Button {
+                quickJumpDay = day
+            } label: {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 30))
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(day.name).font(.headline)
                 if plan.isEmpty {
-                    Text("No exercises planned for \(nextDay.name). Edit the phase to add some.")
-                        .foregroundStyle(.secondary)
+                    Text("No exercises planned — edit the phase to add some.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 } else {
                     ForEach(plan, id: \.persistentModelID) { pe in
                         HStack {
                             Text(pe.exerciseName)
                             Spacer()
                             Text(pe.targetReps.map(String.init).joined(separator: "/"))
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                                .font(.system(.caption2, design: .monospaced))
                         }
-                    }
-                    NavigationLink {
-                        WorkoutLogView(phase: phase, day: nextDay)
-                    } label: {
-                        Label("Start \(nextDay.name) Workout", systemImage: "play.fill")
-                            .font(.headline)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                     }
                 }
             }
         }
+        .padding(.vertical, 2)
+    }
 
-        Section("Or pick a different day") {
-            ForEach(phase.orderedDays, id: \.persistentModelID) { day in
-                NavigationLink {
+    /// Any other day in the cycle: just its name, with a disclosure to
+    /// expand/collapse a preview of its exercises and a way to start it.
+    @ViewBuilder
+    private func collapsibleDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
+        let isExpanded = expandedDayIDs.contains(day.persistentModelID)
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation {
+                    if isExpanded { expandedDayIDs.remove(day.persistentModelID) }
+                    else { expandedDayIDs.insert(day.persistentModelID) }
+                }
+            } label: {
+                HStack {
                     if day.isRest {
-                        RestDayLogView(phase: phase, day: day)
-                    } else {
-                        WorkoutLogView(phase: phase, day: day)
-                    }
-                } label: {
-                    if day.isRest {
-                        Label(day.name, systemImage: "moon.zzz")
-                            .foregroundStyle(.secondary)
+                        Label(day.name, systemImage: "moon.zzz").foregroundStyle(.secondary)
                     } else {
                         Text(day.name)
                     }
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                if !day.isRest {
+                    let plan = phase.plan(for: day)
+                    if plan.isEmpty {
+                        Text("No exercises planned for \(day.name).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(plan, id: \.persistentModelID) { pe in
+                            HStack {
+                                Text(pe.exerciseName)
+                                Spacer()
+                                Text(pe.targetReps.map(String.init).joined(separator: "/"))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                Button {
+                    quickJumpDay = day
+                } label: {
+                    Label(day.isRest ? "Log \(day.name)" : "Start \(day.name) Workout",
+                          systemImage: day.isRest ? "figure.walk" : "play.fill")
+                        .font(.subheadline)
                 }
             }
         }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder

@@ -73,6 +73,7 @@ struct WorkoutLogView: View {
 
     var body: some View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
+        let dumbbellIncrement = settings?.dumbbellRoundingIncrement ?? 5
         List {
             if isDeloadCycle {
                 Section {
@@ -85,7 +86,7 @@ struct WorkoutLogView: View {
                 Section {
                     ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
                                         exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                        plateSizes: plateSizes)
+                                        plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement)
                 }
             }
             Section {
@@ -257,6 +258,7 @@ struct ExerciseDraftSection: View {
     let allLogs: [ExerciseLog]
     let exerciseDef: ExerciseDef?
     let plateSizes: [Double]
+    let dumbbellIncrement: Double
 
     @State private var showingDetails = false
     @State private var plateTargetText = ""
@@ -290,6 +292,13 @@ struct ExerciseDraftSection: View {
         let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)
         guard totalReps > 0 else { return 0 }
         return draft.loggedTotal / Double(totalReps)
+    }
+    /// The +/- step for this exercise's weight fields: the smallest plate
+    /// you own for barbell/plate work, or the finest dumbbell increment
+    /// (attachments considered) for a dumbbell exercise.
+    private var weightStep: Double {
+        guard let bar = exerciseDef?.equipment else { return 2.5 }
+        return bar.isDumbbell ? dumbbellIncrement : (plateSizes.min() ?? 2.5)
     }
 
     var body: some View {
@@ -378,15 +387,17 @@ struct ExerciseDraftSection: View {
 
     private var setRows: some View {
         ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
-            HStack(spacing: 10) {
+            HStack(spacing: 6) {
                 Text("Set \(i + 1)")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
+
+                stepperButton("minus.circle") { adjustWeight(at: i, by: -weightStep) }
                 ZStack(alignment: .topTrailing) {
                     TextField("lbs", text: $draft.sets[i].weightText)
                         .keyboardType(.decimalPad)
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
+                        .frame(width: 70)
                         .focused($focusedField, equals: .weight(i))
                     if let delta = cascadeIndicator[i] {
                         Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
@@ -398,12 +409,17 @@ struct ExerciseDraftSection: View {
                             .transition(.opacity)
                     }
                 }
+                stepperButton("plus.circle") { adjustWeight(at: i, by: weightStep) }
+
                 Text("×")
+
+                stepperButton("minus.circle") { adjustReps(at: i, by: -1) }
                 TextField("reps (goal \(draft.targetReps[safe: i] ?? 0))",
                           text: $draft.sets[i].repsText)
                     .keyboardType(.numberPad)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .reps(i))
+                stepperButton("plus.circle") { adjustReps(at: i, by: 1) }
             }
             .animation(.easeInOut, value: cascadeIndicator[i])
         }
@@ -454,6 +470,31 @@ struct ExerciseDraftSection: View {
         if draft.sets.allSatisfy(\.isLogged) {
             withAnimation { draft.isExpanded = false }
         }
+    }
+
+    private func stepperButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+    }
+
+    /// Nudges a set's weight by the exercise's step size (smallest plate, or
+    /// dumbbell increment with attachments considered) and cascades the same
+    /// delta to later sets, same as a typed edit would.
+    private func adjustWeight(at index: Int, by delta: Double) {
+        let current = draft.sets[index].weight ?? 0
+        let newValue = max(0, current + delta)
+        draft.sets[index].weightText = Formatters.trim(newValue)
+        cascadeDelta(delta, from: index)
+    }
+
+    private func adjustReps(at index: Int, by delta: Int) {
+        let current = draft.sets[index].reps ?? 0
+        let newValue = max(0, current + delta)
+        draft.sets[index].repsText = String(newValue)
+        checkAutoCollapse()
     }
 
     /// If there's no history/AI weight to prefill from, entering a weight for
