@@ -588,15 +588,17 @@ struct ExercisePageView: View {
                     }
 
                     if let goal = draft.targetReps[safe: i] {
-                        ZStack {
-                            Image(systemName: "arrowshape.right.fill")
-                                .font(.system(size: 44))
-                                .foregroundStyle(Color.green.opacity(0.4))
+                        HStack(spacing: 3) {
                             Text("\(goal)")
                                 .font(.caption.bold())
                                 .foregroundStyle(.primary)
-                                .offset(x: -4)
+                            Image(systemName: "arrow.right")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.primary)
                         }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color.green.opacity(0.18), in: Capsule())
                         .frame(width: 44, alignment: .center)
                         .offset(x: targetDragOffset[i] ?? 0)
                         .animation(.interactiveSpring(), value: targetDragOffset[i])
@@ -634,7 +636,10 @@ struct ExercisePageView: View {
                                 checkAutoCollapse()
                             })) {
                             ForEach(0...50, id: \.self) { v in
-                                Text("\(v)").font(.subheadline.weight(.medium)).tag(v)
+                                Text("\(v)")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(repsExplosion[i] == true ? Color.green : Color.primary)
+                                    .tag(v)
                             }
                         }
                         .pickerStyle(.wheel)
