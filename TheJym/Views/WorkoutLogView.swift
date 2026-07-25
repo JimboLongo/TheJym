@@ -503,14 +503,14 @@ struct ExercisePageView: View {
 
     private func cascadeDelta(_ delta: Double, from index: Int) {
         guard delta != 0 else { return }
-        var affected: [Int] = []
+        var affected: [Int] = [index]
+        cascadeIndicator[index] = delta
         for k in (index + 1)..<draft.sets.count {
             guard let existing = draft.sets[k].weight else { continue }
             draft.sets[k].weightText = Formatters.trim(existing + delta)
             cascadeIndicator[k] = delta
             affected.append(k)
         }
-        guard !affected.isEmpty else { return }
         Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             for k in affected { cascadeIndicator.removeValue(forKey: k) }
