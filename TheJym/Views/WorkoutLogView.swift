@@ -427,6 +427,7 @@ struct ExerciseDraftSection: View {
                         .pickerStyle(.wheel)
                         .frame(width: 100, height: 60)
                         .clipped()
+                        .background(wheelSelectionIndicator(width: 100))
                         if let delta = cascadeIndicator[i] {
                             Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
                                 .font(.caption2.bold())
@@ -462,10 +463,26 @@ struct ExerciseDraftSection: View {
                     .pickerStyle(.wheel)
                     .frame(width: 75, height: 60)
                     .clipped()
+                    .background(wheelSelectionIndicator(width: 75))
                 }
                 .animation(.easeInOut, value: cascadeIndicator[i])
             }
         }
+    }
+
+    /// A faint highlighted band with hairline rules above/below, mimicking a
+    /// wheel picker's selection row so it reads as "scrollable" at a glance.
+    private func wheelSelectionIndicator(width: CGFloat) -> some View {
+        VStack(spacing: 28) {
+            Divider()
+            Divider()
+        }
+        .frame(width: width, height: 60)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.accentColor.opacity(0.10))
+                .frame(width: width, height: 28)
+        )
     }
 
     private func cascadeDelta(_ delta: Double, from index: Int) {
