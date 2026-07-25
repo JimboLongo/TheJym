@@ -180,15 +180,16 @@ struct WorkoutLogView: View {
                         .foregroundStyle(.secondary)
                     if drafts.count > 1 {
                         Menu {
-                            // Completed exercises sink to the bottom of the
-                            // list and show struck-through, since they now
+                            // Stay in plan order; completed exercises just
+                            // show struck-through and faded since they now
                             // live together on the shared summary page.
-                            ForEach(drafts.sorted { $0.isExpanded && !$1.isExpanded }) { draft in
+                            ForEach(drafts) { draft in
                                 Button {
                                     withAnimation { currentPageID = pageID(for: draft) }
                                 } label: {
                                     Text(draft.name)
                                         .strikethrough(!draft.isExpanded)
+                                        .foregroundColor(draft.isExpanded ? nil : .secondary)
                                 }
                             }
                         } label: {
@@ -508,15 +509,15 @@ struct ExercisePageView: View {
             }
             if draft.isExpanded {
                 HStack(spacing: 12) {
-                    Text("Set").font(.caption).foregroundStyle(.secondary)
+                    Text("Set").font(.subheadline).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .leading)
-                    Text("Weight").font(.caption).foregroundStyle(.secondary)
+                    Text("Weight").font(.subheadline).foregroundStyle(.secondary)
                         .frame(width: 100, alignment: .center)
-                    Text("Target").font(.caption).foregroundStyle(.secondary)
+                    Text("Target").font(.subheadline).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .center)
-                    Text("Reps").font(.caption).foregroundStyle(.secondary)
+                    Text("Reps").font(.subheadline).foregroundStyle(.secondary)
                         .frame(width: 100, alignment: .center)
-                    Text("+/-").font(.caption).foregroundStyle(.secondary)
+                    Text("+/-").font(.subheadline).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .center)
                 }
                 .lineLimit(1)
@@ -640,7 +641,7 @@ struct ExercisePageView: View {
     }
 
     /// Only auto-collapses if the exercise hasn't been manually reopened
-    /// since the last time it collapsed. Waits 5 seconds before collapsing so
+    /// since the last time it collapsed. Waits 3 seconds before collapsing so
     /// the last entry doesn't vanish out from under you — and bails if
     /// anything's changed (re-opened, un-logged, or superseded) by the time
     /// it fires.
@@ -649,7 +650,7 @@ struct ExercisePageView: View {
         collapseGeneration += 1
         let generation = collapseGeneration
         Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard generation == collapseGeneration,
                   draft.autoCollapseEnabled, draft.sets.allSatisfy(\.isLogged) else { return }
             withAnimation { draft.isExpanded = false; currentPageID = "summary" }
