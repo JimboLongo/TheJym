@@ -52,10 +52,17 @@ struct HistoryView: View {
                 } else {
                     List {
                         ForEach(filteredSessions, id: \.persistentModelID) { session in
-                            sessionRow(session)
+                            Section {
+                                ForEach(session.exerciseLogs.sorted { $0.order < $1.order }, id: \.persistentModelID) { log in
+                                    exerciseRow(log)
+                                }
+                            } header: {
+                                sessionHeader(session)
+                            }
                         }
                     }
                     .listStyle(.plain)
+                    .headerProminence(.increased)
                 }
             }
             .navigationTitle("History")
@@ -96,10 +103,12 @@ struct HistoryView: View {
         }
     }
 
-    private func sessionRow(_ session: WorkoutSession) -> some View {
-        let names = session.exerciseLogs.sorted { $0.order < $1.order }.map(\.exerciseName)
-
-        return HStack(spacing: 12) {
+    /// One per day: date + day name shown once, with the day's only edit
+    /// (opens the full day for editing) and delete (removes the whole day)
+    /// buttons — the individual exercises below it are read-only display;
+    /// drill in via Edit to change a weight/rep or delete one exercise.
+    private func sessionHeader(_ session: WorkoutSession) -> some View {
+        HStack(spacing: 12) {
             Button {
                 editingSessionID = session.persistentModelID
             } label: {
@@ -107,31 +116,22 @@ struct HistoryView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(Formatters.shortDate.string(from: session.date))
-                        .font(.subheadline.bold())
-                    Text(session.dayLabel)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    if session.isDeload {
-                        Text("DELOAD").font(.caption2.bold())
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(.orange.opacity(0.2), in: Capsule())
-                    }
-                    Spacer()
-                    if let n = session.phase?.number {
-                        Text("Phase \(n)").font(.caption2).foregroundStyle(.secondary)
-                    }
+            HStack {
+                Text(Formatters.shortDate.string(from: session.date))
+                    .font(.subheadline.bold())
+                Text(session.dayLabel)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if session.isDeload {
+                    Text("DELOAD").font(.caption2.bold())
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.orange.opacity(0.2), in: Capsule())
                 }
-                if !names.isEmpty {
-                    Text(names.joined(separator: ", "))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .lineLimit(1)
+                Spacer()
+                if let n = session.phase?.number {
+                    Text("Phase \(n)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-
-            Spacer()
 
             Button(role: .destructive) {
                 context.delete(session)
@@ -141,7 +141,28 @@ struct HistoryView: View {
             }
             .buttonStyle(.plain)
         }
-        .contentShape(Rectangle())
+        .textCase(nil)
+    }
+
+    private func exerciseRow(_ log: ExerciseLog) -> some View {
+        let sortedSets = log.sortedSets
+        let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
+        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
+
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(log.exerciseName).font(.subheadline.weight(.semibold))
+                Spacer()
+                if !log.targetReps.isEmpty {
+                    Text("Goal \(log.targetReps.map(String.init).joined(separator: "/"))")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Text("\(weights) lbs × \(reps) reps")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
     }
 
     private func handleImport(_ result: Result<URL, Error>) {
