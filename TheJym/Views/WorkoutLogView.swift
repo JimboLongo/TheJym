@@ -396,11 +396,11 @@ struct ExerciseDraftSection: View {
                 Text("Set").font(.headline).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
                 Text("Weight").font(.headline).foregroundStyle(.secondary)
-                    .frame(width: 130, alignment: .center)
+                    .frame(width: 100, alignment: .center)
                 Text("Goal").font(.headline).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .center)
                 Text("Reps").font(.headline).foregroundStyle(.secondary)
-                    .frame(width: 100, alignment: .center)
+                    .frame(width: 75, alignment: .center)
             }
             .padding(.bottom, 2)
 
@@ -425,7 +425,7 @@ struct ExerciseDraftSection: View {
                             }
                         }
                         .pickerStyle(.wheel)
-                        .frame(width: 130, height: 70)
+                        .frame(width: 100, height: 55)
                         .clipped()
                         if let delta = cascadeIndicator[i] {
                             Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
@@ -460,7 +460,7 @@ struct ExerciseDraftSection: View {
                         }
                     }
                     .pickerStyle(.wheel)
-                    .frame(width: 100, height: 70)
+                    .frame(width: 75, height: 55)
                     .clipped()
                 }
                 .animation(.easeInOut, value: cascadeIndicator[i])
