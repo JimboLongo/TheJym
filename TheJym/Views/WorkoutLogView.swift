@@ -430,14 +430,14 @@ struct ExerciseDraftSection: View {
                     .font(.caption).foregroundStyle(.secondary)
 
                 HStack(spacing: 16) {
-                    HStack(spacing: 2) {
-                        stepperButton("minus.circle.fill") { adjustWeight(at: i, by: -weightStep) }
+                    HStack(spacing: 4) {
+                        stepperButton("minus") { adjustWeight(at: i, by: -weightStep) }
                         ZStack(alignment: .top) {
                             TextField("lbs", text: $draft.sets[i].weightText)
                                 .keyboardType(.decimalPad)
                                 .textFieldStyle(.roundedBorder)
                                 .multilineTextAlignment(.center)
-                                .frame(width: 90)
+                                .frame(width: 74)
                                 .focused($focusedField, equals: .weight(i))
                             if let delta = cascadeIndicator[i] {
                                 Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
@@ -449,20 +449,20 @@ struct ExerciseDraftSection: View {
                                     .transition(.opacity)
                             }
                         }
-                        stepperButton("plus.circle.fill") { adjustWeight(at: i, by: weightStep) }
+                        stepperButton("plus") { adjustWeight(at: i, by: weightStep) }
                     }
 
                     Text("×").foregroundStyle(.secondary)
 
-                    HStack(spacing: 2) {
-                        stepperButton("minus.circle.fill") { adjustReps(at: i, by: -1) }
+                    HStack(spacing: 4) {
+                        stepperButton("minus") { adjustReps(at: i, by: -1) }
                         TextField("reps", text: $draft.sets[i].repsText)
                             .keyboardType(.numberPad)
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.center)
                             .frame(width: 70)
                             .focused($focusedField, equals: .reps(i))
-                        stepperButton("plus.circle.fill") { adjustReps(at: i, by: 1) }
+                        stepperButton("plus") { adjustReps(at: i, by: 1) }
                     }
                 }
             }
@@ -520,10 +520,12 @@ struct ExerciseDraftSection: View {
     private func stepperButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.title3)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(Color.accentColor, in: Circle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.accentColor)
     }
 
     /// Nudges a set's weight by the exercise's step size (smallest plate, or
