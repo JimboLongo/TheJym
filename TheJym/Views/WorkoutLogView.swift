@@ -32,6 +32,7 @@ struct WorkoutLogView: View {
     @State private var recapEntries: [RecapEntry] = []
     @State private var recapChoices: [String: Bool] = [:]
     @State private var currentPageID: String?
+    @State private var showExerciseJumpList = false
     /// Last time the user touched anything in this workout — used to keep
     /// the screen from auto-locking for up to 3 minutes of idle time.
     @State private var lastInteraction = Date()
@@ -179,19 +180,8 @@ struct WorkoutLogView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if drafts.count > 1 {
-                        Menu {
-                            // Stay in plan order; completed exercises just
-                            // show struck-through and faded since they now
-                            // live together on the shared summary page.
-                            ForEach(drafts) { draft in
-                                Button {
-                                    withAnimation { currentPageID = pageID(for: draft) }
-                                } label: {
-                                    Text(draft.name)
-                                        .strikethrough(!draft.isExpanded)
-                                        .foregroundColor(draft.isExpanded ? nil : .secondary)
-                                }
-                            }
+                        Button {
+                            showExerciseJumpList = true
                         } label: {
                             HStack(spacing: 4) {
                                 Text("Jump to Exercise…")
@@ -199,6 +189,26 @@ struct WorkoutLogView: View {
                                 Image(systemName: "chevron.down")
                                     .font(.caption)
                             }
+                        }
+                        // A native Menu's UIMenu backing drops strikethrough
+                        // and custom colors on its items, so completed
+                        // exercises couldn't actually look struck-through —
+                        // a real List in a popover renders Text styling
+                        // normally, since it's not translated through UIKit's
+                        // menu system.
+                        .popover(isPresented: $showExerciseJumpList) {
+                            List(drafts) { draft in
+                                Button {
+                                    withAnimation { currentPageID = pageID(for: draft) }
+                                    showExerciseJumpList = false
+                                } label: {
+                                    Text(draft.name)
+                                        .strikethrough(!draft.isExpanded)
+                                        .foregroundStyle(draft.isExpanded ? .primary : .secondary)
+                                }
+                            }
+                            .presentationCompactAdaptation(.popover)
+                            .frame(minWidth: 250, minHeight: 200)
                         }
                     }
                 }
@@ -393,6 +403,7 @@ struct ExercisePageView: View {
     @Binding var currentPageID: String?
 
     @State private var plateTargetText = ""
+    @State private var showAddEquipmentSheet = false
     /// Sets a later set's weight was just shifted by via cascade, so the
     /// field can flash a "+10"/"-5" badge before fading out.
     @State private var cascadeIndicator: [Int: Double] = [:]
@@ -765,21 +776,28 @@ struct ExercisePageView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("No equipment tagged for this exercise yet.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if allBars.isEmpty {
-                        Text("Add a bar or dumbbell set in the Equipment tab first.")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    } else {
-                        Menu {
-                            ForEach(allBars) { bar in
-                                Button(bar.name) {
-                                    def.equipment = bar
-                                    try? context.save()
-                                }
+                    Menu {
+                        ForEach(allBars) { bar in
+                            Button(bar.name) {
+                                def.equipment = bar
+                                try? context.save()
                             }
-                        } label: {
-                            Label("Quick Add Equipment", systemImage: "plus.circle")
-                                .font(.caption.bold())
                         }
+                        if !allBars.isEmpty { Divider() }
+                        Button {
+                            showAddEquipmentSheet = true
+                        } label: {
+                            Label("New Equipment…", systemImage: "plus")
+                        }
+                    } label: {
+                        Label("Quick Add Equipment", systemImage: "plus.circle")
+                            .font(.caption.bold())
+                    }
+                }
+                .sheet(isPresented: $showAddEquipmentSheet) {
+                    NewEquipmentSheet { bar in
+                        def.equipment = bar
+                        try? context.save()
                     }
                 }
             } else {
@@ -789,6 +807,67 @@ struct ExercisePageView: View {
         }
         .padding(10)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+// MARK: - Quick "add new equipment" sheet, reachable from a workout
+
+struct NewEquipmentSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+
+    @State private var name = ""
+    @State private var weightText = ""
+    @State private var isDumbbell = false
+    @State private var loadableSides = 2
+
+    var onSave: (Bar) -> Void
+
+    private var canSave: Bool {
+        !name.isEmpty && (isDumbbell || Double(weightText) != nil)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name e.g. Trap Bar", text: $name)
+                    Toggle("This is a dumbbell set", isOn: $isDumbbell)
+                    if !isDumbbell {
+                        TextField("Bar weight (lbs)", text: $weightText)
+                            .keyboardType(.decimalPad)
+                        Picker("Sides", selection: $loadableSides) {
+                            Text("1 side").tag(1)
+                            Text("2 sides").tag(2)
+                        }
+                    }
+                } footer: {
+                    if isDumbbell {
+                        Text("Add the individual dumbbell weights you own in the Equipment tab afterward.")
+                    }
+                }
+            }
+            .navigationTitle("New Equipment")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let bar = Bar(name: name,
+                                     weight: isDumbbell ? 0 : (Double(weightText) ?? 0),
+                                     isDumbbell: isDumbbell,
+                                     loadableSides: loadableSides)
+                        context.insert(bar)
+                        try? context.save()
+                        onSave(bar)
+                        dismiss()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+        }
     }
 }
 
