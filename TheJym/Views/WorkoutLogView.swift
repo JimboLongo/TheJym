@@ -658,6 +658,7 @@ struct ExercisePageView: View {
 
                         if repsExplosion[i] == true {
                             ExplosionBurst()
+                                .frame(width: 100, height: wheelHeight)
                                 .allowsHitTesting(false)
                         }
                         if let delta = repsDeltaIndicator[i] {
@@ -666,7 +667,7 @@ struct ExercisePageView: View {
                                 .foregroundStyle(delta > 0 ? .green : .red)
                                 .padding(.horizontal, 5).padding(.vertical, 1)
                                 .background(.thinMaterial, in: Capsule())
-                                .offset(y: -18)
+                                .offset(y: -8)
                                 .transition(.opacity)
                         }
                     }
