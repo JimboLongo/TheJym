@@ -349,7 +349,9 @@ struct ExercisePageView: View {
         let available = pageHeight - chromeHeight
         let setCount = max(draft.sets.count, 1)
         let perSet = available / CGFloat(setCount)
-        return min(90, max(40, perSet))
+        // Taller floor/ceiling than before so more of the previous/next row
+        // peeks through above and below the selected value.
+        return min(100, max(60, perSet))
     }
 
     var body: some View {
@@ -450,7 +452,7 @@ struct ExercisePageView: View {
                                 if delta != 0 { cascadeDelta(delta, from: i) }
                             })) {
                             ForEach(weightValues, id: \.self) { v in
-                                Text(Formatters.trim(v)).font(.subheadline).tag(v)
+                                Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
                             }
                         }
                         .pickerStyle(.wheel)
@@ -485,7 +487,7 @@ struct ExercisePageView: View {
                             checkAutoCollapse()
                         })) {
                         ForEach(0...50, id: \.self) { v in
-                            Text("\(v)").font(.subheadline).tag(v)
+                            Text("\(v)").font(.subheadline.weight(.medium)).tag(v)
                         }
                     }
                     .pickerStyle(.wheel)
