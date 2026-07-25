@@ -2,8 +2,6 @@
 //  HistoryView.swift
 //  TheJym
 //
-//  Every past workout, with per-exercise total weight moved.
-//
 
 import SwiftUI
 import SwiftData
@@ -18,6 +16,11 @@ extension UTType {
         ?? .data
 }
 
+/// One row per logged day (WorkoutSession) — a plain, native List, the
+/// standard high-performance choice for a log like this (List virtualizes
+/// rows automatically; the old horizontally-scrolling flat table didn't).
+/// Each row shows the date + day name once, with an edit button that opens
+/// the full day for editing and a delete button that removes the whole day.
 struct HistoryView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
@@ -27,95 +30,32 @@ struct HistoryView: View {
     @State private var showingImportHelp = false
     @State private var importResultMessage: String?
     @State private var searchText = ""
-    @State private var editingLog: ExerciseLog?
-    @State private var showingEdit = false
+    @State private var editingSessionID: PersistentIdentifier?
 
-    /// One row per logged exercise (not per session) — Sets/Weights/Reps are
-    /// per-exercise, so that's the natural row unit for a flat table.
-    private struct Row: Identifiable {
-        let log: ExerciseLog
-        let session: WorkoutSession
-        var id: PersistentIdentifier { log.persistentModelID }
-    }
-
-    private var rows: [Row] {
-        sessions.flatMap { session in
-            session.exerciseLogs.sorted { $0.order < $1.order }.map { Row(log: $0, session: session) }
-        }
-    }
-
-    private var filteredRows: [Row] {
+    private var filteredSessions: [WorkoutSession] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return rows }
-        return rows.filter { $0.log.exerciseName.localizedCaseInsensitiveContains(trimmed) }
-    }
-
-    private enum Col {
-        static let day: CGFloat = 62
-        static let phase: CGFloat = 48
-        static let source: CGFloat = 70
-        static let action: CGFloat = 32
-    }
-
-    // Exercise/Lifts are sized from the longest string that'll ever land in
-    // them (monospaced font, so character count maps to width reliably) —
-    // that way nothing ever wraps or gets cut off.
-    private static let charWidth: CGFloat = 7.4
-    private static let colPadding: CGFloat = 16
-
-    private var workoutColWidth: CGFloat {
-        let longest = rows.reduce(7) { max($0, $1.session.dayLabel.count) }
-        return CGFloat(longest) * Self.charWidth + Self.colPadding
-    }
-
-    private var exerciseColWidth: CGFloat {
-        let longest = rows.reduce(8) { longest, row in
-            let sets = row.log.targetReps.map(String.init).joined(separator: "/")
-            return max(longest, row.log.exerciseName.count, sets.count)
+        guard !trimmed.isEmpty else { return sessions }
+        return sessions.filter { session in
+            session.exerciseLogs.contains { $0.exerciseName.localizedCaseInsensitiveContains(trimmed) }
         }
-        return CGFloat(longest) * Self.charWidth + Self.colPadding
-    }
-
-    private var liftsColWidth: CGFloat {
-        let longest = rows.reduce(5) { longest, row in
-            let sortedSets = row.log.sortedSets
-            let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
-            let reps = "(" + sortedSets.map { String($0.reps) }.joined(separator: "/") + ")"
-            return max(longest, weights.count, reps.count)
-        }
-        return CGFloat(longest) * Self.charWidth + Self.colPadding
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if rows.isEmpty {
+                if sessions.isEmpty {
                     ContentUnavailableView("No workouts yet",
                                            systemImage: "clock.arrow.circlepath",
                                            description: Text("Your logged sessions will show up here."))
-                } else if filteredRows.isEmpty {
+                } else if filteredSessions.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                 } else {
-                    GeometryReader { geo in
-                        ScrollView(.horizontal) {
-                            ScrollView(.vertical) {
-                                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                                    Section {
-                                        ForEach(filteredRows) { row in
-                                            rowView(row)
-                                            Divider()
-                                        }
-                                    } header: {
-                                        VStack(spacing: 0) {
-                                            headerRow
-                                            Divider()
-                                        }
-                                    }
-                                }
-                            }
-                            .frame(height: geo.size.height)
+                    List {
+                        ForEach(filteredSessions, id: \.persistentModelID) { session in
+                            sessionRow(session)
                         }
                     }
+                    .listStyle(.plain)
                 }
             }
             .navigationTitle("History")
@@ -148,94 +88,60 @@ struct HistoryView: View {
             } message: {
                 Text(importResultMessage ?? "")
             }
-            .sheet(isPresented: $showingEdit) {
-                if let editingLog {
-                    EditExerciseLogView(log: editingLog)
+            .navigationDestination(item: $editingSessionID) { id in
+                if let session = sessions.first(where: { $0.persistentModelID == id }) {
+                    SessionDetailView(session: session)
                 }
             }
         }
     }
 
-    private var headerRow: some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: Col.action)
-            HStack(spacing: 0) {
-                Text("Day").frame(width: Col.day, alignment: .leading)
-                Text("Workout").frame(width: workoutColWidth, alignment: .leading)
-                Text("Phase").frame(width: Col.phase, alignment: .leading)
-                Text("Exercise").frame(width: exerciseColWidth, alignment: .leading)
-                Text("Lifts").frame(width: liftsColWidth, alignment: .leading)
-                Text("Source").frame(width: Col.source, alignment: .leading)
-            }
-            .padding(.horizontal, 12)
-            Color.clear.frame(width: Col.action)
-        }
-        .font(.caption.bold())
-        .padding(.vertical, 6)
-        .background(.bar)
-    }
+    private func sessionRow(_ session: WorkoutSession) -> some View {
+        let names = session.exerciseLogs.sorted { $0.order < $1.order }.map(\.exerciseName)
 
-    private func rowView(_ row: Row) -> some View {
-        let log = row.log
-        let sets = log.targetReps.map(String.init).joined(separator: "/")
-        let sortedSets = log.sortedSets
-        let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
-        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
-        let source = row.session.dayLabel == "Imported" ? "Imported" : "Logged"
-
-        return HStack(spacing: 0) {
+        return HStack(spacing: 12) {
             Button {
-                editingLog = log
-                showingEdit = true
+                editingSessionID = session.persistentModelID
             } label: {
                 Image(systemName: "pencil").foregroundStyle(.blue)
             }
-            .frame(width: Col.action)
             .buttonStyle(.plain)
 
-            NavigationLink {
-                SessionDetailView(session: row.session)
-            } label: {
-                HStack(spacing: 0) {
-                    Text(Formatters.shortDate.string(from: row.session.date)).frame(width: Col.day, alignment: .leading)
-                    Text(row.session.dayLabel).frame(width: workoutColWidth, alignment: .leading)
-                    Text(row.session.phase.map { String($0.number) } ?? "—").frame(width: Col.phase, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(log.exerciseName)
-                        Text(sets.isEmpty ? "—" : sets).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(Formatters.shortDate.string(from: session.date))
+                        .font(.subheadline.bold())
+                    Text(session.dayLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    if session.isDeload {
+                        Text("DELOAD").font(.caption2.bold())
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.orange.opacity(0.2), in: Capsule())
                     }
-                    .frame(width: exerciseColWidth, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(weights)
-                        Text("(\(reps))").foregroundStyle(.secondary)
+                    Spacer()
+                    if let n = session.phase?.number {
+                        Text("Phase \(n)").font(.caption2).foregroundStyle(.secondary)
                     }
-                    .frame(width: liftsColWidth, alignment: .leading)
-                    Text(source).frame(width: Col.source, alignment: .leading)
                 }
-                .padding(.horizontal, 12)
-                .contentShape(Rectangle())
+                if !names.isEmpty {
+                    Text(names.joined(separator: ", "))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-            .buttonStyle(.plain)
 
-            Button {
-                delete(row)
+            Spacer()
+
+            Button(role: .destructive) {
+                context.delete(session)
+                try? context.save()
             } label: {
                 Image(systemName: "trash").foregroundStyle(.red)
             }
-            .frame(width: Col.action)
             .buttonStyle(.plain)
         }
-        .font(.system(.caption, design: .monospaced))
-        .padding(.vertical, 6)
-    }
-
-    private func delete(_ row: Row) {
-        if row.session.exerciseLogs.count <= 1 {
-            context.delete(row.session)
-        } else {
-            context.delete(row.log)
-        }
-        try? context.save()
+        .contentShape(Rectangle())
     }
 
     private func handleImport(_ result: Result<URL, Error>) {
@@ -323,82 +229,56 @@ struct CSVFormatHelpView: View {
     }
 }
 
+/// The full logged day: every exercise, editable in place. Editing a
+/// weight/reps field persists immediately; delete a set with swipe, or an
+/// entire exercise with the trash button in its section header.
 struct SessionDetailView: View {
+    @Environment(\.modelContext) private var context
     let session: WorkoutSession
+
+    private var sortedLogs: [ExerciseLog] {
+        session.exerciseLogs.sorted { $0.order < $1.order }
+    }
 
     var body: some View {
         List {
-            ForEach(session.exerciseLogs.sorted { $0.order < $1.order }, id: \.persistentModelID) { log in
-                Section(log.exerciseName) {
+            ForEach(sortedLogs, id: \.persistentModelID) { log in
+                Section {
                     if !log.targetReps.isEmpty {
                         LabeledContent("Goal", value: log.targetReps.map(String.init).joined(separator: "/"))
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    ForEach(log.sortedSets, id: \.persistentModelID) { s in
-                        LabeledContent("Set \(s.index + 1)",
-                                       value: "\(Formatters.trim(s.weight)) × \(s.reps) = \(Formatters.trim(s.weight * Double(s.reps)))")
-                            .font(.system(.subheadline, design: .monospaced))
-                    }
-                }
-            }
-        }
-        .navigationTitle(Formatters.date.string(from: session.date))
-    }
-}
-
-/// Edit an already-logged exercise entry in place: its name, target Sets
-/// scheme, and the actual weight/reps of each set.
-struct EditExerciseLogView: View {
-    @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
-    @Bindable var log: ExerciseLog
-
-    @State private var targetRepsText = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Exercise") {
-                    TextField("Exercise name", text: $log.exerciseName)
-                }
-                Section("Sets (target)") {
-                    TextField("e.g. 5/5/5/3/3", text: $targetRepsText)
-                        .keyboardType(.numbersAndPunctuation)
-                        .onChange(of: targetRepsText) { _, new in
-                            log.targetReps = new.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                        }
-                }
-                Section("Lifts") {
                     ForEach(log.sortedSets, id: \.persistentModelID) { set in
                         SetEditRow(set: set)
                     }
                     .onDelete { idx in
                         let sorted = log.sortedSets
                         for i in idx { context.delete(sorted[i]) }
-                        renumberSets()
+                        try? context.save()
                     }
-                    Button("Add Set") { addSet() }
+                    Button("Add Set") { addSet(to: log) }
+                } header: {
+                    HStack {
+                        Text(log.exerciseName)
+                        Spacer()
+                        Button(role: .destructive) {
+                            context.delete(log)
+                            try? context.save()
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                    }
                 }
-            }
-            .navigationTitle("Edit Entry")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { try? context.save(); dismiss() }
-                }
-            }
-            .onAppear {
-                targetRepsText = log.targetReps.map(String.init).joined(separator: "/")
             }
         }
+        .navigationTitle(Formatters.date.string(from: session.date))
     }
 
-    private func addSet() {
+    private func addSet(to log: ExerciseLog) {
         let s = SetLog(index: log.sets.count, weight: 0, reps: 0)
         s.exerciseLog = log
         context.insert(s)
-    }
-
-    private func renumberSets() {
-        for (i, s) in log.sortedSets.enumerated() { s.index = i }
+        try? context.save()
     }
 }
 
