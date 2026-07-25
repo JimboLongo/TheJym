@@ -599,9 +599,9 @@ struct ExercisePageView: View {
                                 .font(.caption2.bold())
                                 .foregroundStyle(.primary)
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 4)
-                        .background(Color.green.opacity(0.18), in: Capsule())
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(Color(red: 0.596, green: 0.820, blue: 0.369), in: Capsule())
                         .frame(width: 44, alignment: .center)
                         .offset(x: targetDragOffset[i] ?? 0)
                         .animation(.interactiveSpring(), value: targetDragOffset[i])
