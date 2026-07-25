@@ -360,9 +360,6 @@ struct ExerciseDraftSection: View {
 
     private var header: some View {
         HStack {
-            Text("Goal \(draft.targetReps.map(String.init).joined(separator: "/"))")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
             Spacer()
             if draft.isExpanded {
                 Button {
