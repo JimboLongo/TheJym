@@ -29,6 +29,7 @@ struct WorkoutLogView: View {
     @State private var showFinishSheet = false
     @State private var aiSuggestions: [AISuggestionRow] = []
     @State private var scrollToDraftID: UUID?
+    @State private var selectedExerciseName: String?
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -89,6 +90,9 @@ struct WorkoutLogView: View {
                         ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
                                             exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
                                             plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement)
+                    } header: {
+                        Text(drafts[i].name)
+                            .font(.headline)
                     }
                     .id(drafts[i].id)
                 }
@@ -103,6 +107,7 @@ struct WorkoutLogView: View {
                     .disabled(drafts.allSatisfy { $0.sets.allSatisfy { !$0.isLogged } })
                 }
             }
+            .listStyle(.plain)
             .onChange(of: scrollToDraftID) { _, newID in
                 if let newID {
                     withAnimation { proxy.scrollTo(newID, anchor: .top) }
@@ -115,11 +120,14 @@ struct WorkoutLogView: View {
                 ToolbarItem(placement: .principal) {
                     Menu {
                         ForEach(drafts) { draft in
-                            Button(draft.name) { scrollToDraftID = draft.id }
+                            Button(draft.name) {
+                                scrollToDraftID = draft.id
+                                selectedExerciseName = draft.name
+                            }
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text("\(day.name) · Cycle \(phase.currentCycle)")
+                            Text(selectedExerciseName ?? "\(day.name) · Cycle \(phase.currentCycle)")
                                 .font(.headline)
                             Image(systemName: "chevron.down")
                                 .font(.caption)
@@ -382,11 +390,10 @@ struct ExerciseDraftSection: View {
 
     private var header: some View {
         HStack {
-            Text(draft.name).font(.headline)
-            Spacer()
             Text("Goal \(draft.targetReps.map(String.init).joined(separator: "/"))")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
+            Spacer()
             if draft.isExpanded {
                 Button {
                     withAnimation { showingDetails.toggle() }
