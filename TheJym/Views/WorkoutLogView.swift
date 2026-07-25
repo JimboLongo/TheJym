@@ -426,6 +426,9 @@ struct ExercisePageView: View {
     @State private var collapseGeneration = 0
     /// Live horizontal drag offset for "swipe the target into reps", per set.
     @State private var targetDragOffset: [Int: CGFloat] = [:]
+    /// True briefly over the reps wheel right after a successful swipe-copy,
+    /// to show a little burst drawing attention to the update.
+    @State private var repsExplosion: [Int: Bool] = [:]
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -587,12 +590,12 @@ struct ExercisePageView: View {
                     if let goal = draft.targetReps[safe: i] {
                         ZStack {
                             Image(systemName: "arrowshape.right.fill")
-                                .font(.system(size: 30))
+                                .font(.system(size: 44))
                                 .foregroundStyle(Color.green.opacity(0.4))
                             Text("\(goal)")
-                                .font(.caption2.bold())
+                                .font(.caption.bold())
                                 .foregroundStyle(.primary)
-                                .offset(x: -3)
+                                .offset(x: -4)
                         }
                         .frame(width: 44, alignment: .center)
                         .offset(x: targetDragOffset[i] ?? 0)
@@ -607,6 +610,11 @@ struct ExercisePageView: View {
                                     if value.translation.width > 40 {
                                         draft.sets[i].repsText = String(goal)
                                         checkAutoCollapse()
+                                        repsExplosion[i] = true
+                                        Task {
+                                            try? await Task.sleep(nanoseconds: 500_000_000)
+                                            repsExplosion[i] = false
+                                        }
                                     }
                                     targetDragOffset[i] = 0
                                 }
@@ -618,19 +626,26 @@ struct ExercisePageView: View {
                             .frame(width: 44, alignment: .center)
                     }
 
-                    Picker("Reps", selection: Binding(
-                        get: { draft.sets[i].reps ?? 0 },
-                        set: { newValue in
-                            draft.sets[i].repsText = String(newValue)
-                            checkAutoCollapse()
-                        })) {
-                        ForEach(0...50, id: \.self) { v in
-                            Text("\(v)").font(.subheadline.weight(.medium)).tag(v)
+                    ZStack {
+                        Picker("Reps", selection: Binding(
+                            get: { draft.sets[i].reps ?? 0 },
+                            set: { newValue in
+                                draft.sets[i].repsText = String(newValue)
+                                checkAutoCollapse()
+                            })) {
+                            ForEach(0...50, id: \.self) { v in
+                                Text("\(v)").font(.subheadline.weight(.medium)).tag(v)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(width: 100, height: wheelHeight)
+                        .clipped()
+
+                        if repsExplosion[i] == true {
+                            ExplosionBurst()
+                                .allowsHitTesting(false)
                         }
                     }
-                    .pickerStyle(.wheel)
-                    .frame(width: 100, height: wheelHeight)
-                    .clipped()
 
                     if let delta = repsDelta(for: i) {
                         Text(delta > 0 ? "+\(delta)" : "\(delta)")
@@ -882,6 +897,38 @@ struct NewEquipmentSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Little attention-grabbing burst for the swipe-to-copy reps update
+
+struct ExplosionBurst: View {
+    @State private var expanded = false
+
+    private let particleCount = 10
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<particleCount, id: \.self) { i in
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 6, height: 6)
+                    .offset(expanded ? offset(for: i) : .zero)
+                    .opacity(expanded ? 0 : 1)
+                    .scaleEffect(expanded ? 0.3 : 1)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.45)) {
+                expanded = true
+            }
+        }
+    }
+
+    private func offset(for index: Int) -> CGSize {
+        let angle = (Double(index) / Double(particleCount)) * 2 * .pi
+        let radius: Double = 34
+        return CGSize(width: cos(angle) * radius, height: sin(angle) * radius)
     }
 }
 
