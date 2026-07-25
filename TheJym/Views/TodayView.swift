@@ -194,7 +194,7 @@ struct TodayView: View {
 
     @ViewBuilder
     private var restDayActivitySection: some View {
-        Section("Rest Day Activity") {
+        Section("Rest Day Activity Quick Add") {
             Text("Log a walk or something light on an off day — it counts toward your streak, but skipping it on an actual rest day won't break one.")
                 .font(.caption).foregroundStyle(.secondary)
             TextField("e.g. Walk, Yoga, Bike Ride", text: $newActivityText)
