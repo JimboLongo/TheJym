@@ -666,6 +666,7 @@ struct ExercisePageView: View {
                                 .foregroundStyle(delta > 0 ? .green : .red)
                                 .padding(.horizontal, 5).padding(.vertical, 1)
                                 .background(.thinMaterial, in: Capsule())
+                                .offset(y: -18)
                                 .transition(.opacity)
                         }
                     }
