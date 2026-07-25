@@ -259,6 +259,11 @@ struct ExerciseDraftSection: View {
 
     @State private var showingDetails = false
     @State private var plateTargetText = ""
+    @FocusState private var focusedWeightIndex: Int?
+    /// Snapshot taken when a weight field gains focus, so on blur we can
+    /// tell what actually changed (and avoid reacting to every keystroke —
+    /// e.g. typing "175" one digit at a time shouldn't cascade three times).
+    @State private var weightOnFocus: [Int: String] = [:]
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -301,6 +306,14 @@ struct ExerciseDraftSection: View {
             }
         }
         .padding(.vertical, 4)
+        .onChange(of: focusedWeightIndex) { oldIndex, newIndex in
+            if let oldIndex, oldIndex != newIndex, oldIndex < draft.sets.count {
+                commitWeightEdit(at: oldIndex)
+            }
+            if let newIndex {
+                weightOnFocus[newIndex] = draft.sets[newIndex].weightText
+            }
+        }
     }
 
     private var header: some View {
@@ -340,9 +353,7 @@ struct ExerciseDraftSection: View {
                     .keyboardType(.decimalPad)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 80)
-                    .onChange(of: draft.sets[i].weightText) { _, _ in
-                        smartFillIfNeeded(from: i)
-                    }
+                    .focused($focusedWeightIndex, equals: i)
                 Text("×")
                 TextField("reps (goal \(draft.targetReps[safe: i] ?? 0))",
                           text: $draft.sets[i].repsText)
@@ -354,6 +365,36 @@ struct ExerciseDraftSection: View {
                         }
                     }
             }
+        }
+    }
+
+    /// Runs once editing a weight field actually finishes (it loses focus),
+    /// not on every keystroke — so typing "175" doesn't cascade on "1", "17",
+    /// then "175" in turn.
+    private func commitWeightEdit(at index: Int) {
+        let before = weightOnFocus.removeValue(forKey: index) ?? ""
+        let after = draft.sets[index].weightText
+        guard before != after else { return }
+
+        if before.isEmpty {
+            // First-ever entry with nothing to prefill from: smart-fill the
+            // other still-empty sets (same reps -> same weight, different
+            // reps -> Epley-estimated).
+            smartFillIfNeeded(from: index)
+        } else if let oldWeight = Double(before), let newWeight = Double(after) {
+            // Editing an existing weight: shift every LATER set that already
+            // has a weight by the same delta, preserving the gap between
+            // rep-groups (e.g. 165/165/185/185 -> edit set 1 to 175 ->
+            // 175/175/195/195). Earlier sets are never touched.
+            cascadeDelta(newWeight - oldWeight, from: index)
+        }
+    }
+
+    private func cascadeDelta(_ delta: Double, from index: Int) {
+        guard delta != 0 else { return }
+        for k in (index + 1)..<draft.sets.count {
+            guard let existing = draft.sets[k].weight else { continue }
+            draft.sets[k].weightText = Formatters.trim(existing + delta)
         }
     }
 
