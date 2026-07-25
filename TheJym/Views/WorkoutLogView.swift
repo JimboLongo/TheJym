@@ -57,6 +57,9 @@ struct WorkoutLogView: View {
         /// False after the user manually reopens a collapsed exercise, so it
         /// won't auto-collapse again until they close it themselves.
         var autoCollapseEnabled: Bool = true
+        /// Notes / plate-calculator panel toggle, lifted up here (instead of
+        /// local view state) so the sticky section header can drive it too.
+        var showingDetails: Bool = false
         var loggedTotal: Double {
             sets.reduce(0) { $0 + (Double($1.reps ?? 0) * ($1.weight ?? 0)) }
         }
@@ -88,8 +91,51 @@ struct WorkoutLogView: View {
                                             exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
                                             plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement)
                     } header: {
-                        Text(drafts[i].name)
-                            .font(.title2.bold())
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(drafts[i].name)
+                                    .font(.title2.bold())
+                                Spacer()
+                                if drafts[i].isExpanded {
+                                    Button {
+                                        withAnimation { drafts[i].showingDetails.toggle() }
+                                    } label: {
+                                        Image(systemName: drafts[i].showingDetails ? "chevron.up.circle.fill" : "info.circle")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .imageScale(.large)
+                                    Button {
+                                        withAnimation { drafts[i].isExpanded = false }
+                                    } label: {
+                                        Image(systemName: "checkmark.circle")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .imageScale(.large)
+                                } else {
+                                    Button {
+                                        // Reopened manually — leave it open until the user
+                                        // closes it again themselves, don't auto-collapse twice.
+                                        withAnimation { drafts[i].isExpanded = true; drafts[i].autoCollapseEnabled = false }
+                                    } label: {
+                                        Label("Edit", systemImage: "pencil.circle")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.caption)
+                                }
+                            }
+                            if drafts[i].isExpanded {
+                                HStack(spacing: 12) {
+                                    Text("Set").font(.title3).foregroundStyle(.secondary)
+                                        .frame(width: 44, alignment: .leading)
+                                    Text("Weight").font(.title3).foregroundStyle(.secondary)
+                                        .frame(width: 100, alignment: .center)
+                                    Text("Goal").font(.title3).foregroundStyle(.secondary)
+                                        .frame(width: 44, alignment: .center)
+                                    Text("Reps").font(.title3).foregroundStyle(.secondary)
+                                        .frame(width: 75, alignment: .center)
+                                }
+                            }
+                        }
                     }
                     .id(drafts[i].id)
                 }
@@ -290,7 +336,6 @@ struct ExerciseDraftSection: View {
     let plateSizes: [Double]
     let dumbbellIncrement: Double
 
-    @State private var showingDetails = false
     @State private var plateTargetText = ""
     /// Sets a later set's weight was just shifted by via cascade, so the
     /// field can flash a "+10"/"-5" badge before fading out.
@@ -327,10 +372,8 @@ struct ExerciseDraftSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            header
-
             if draft.isExpanded {
-                if showingDetails {
+                if draft.showingDetails {
                     notesAndPlateCalc(exerciseDef)
                 }
                 setRows
@@ -358,52 +401,8 @@ struct ExerciseDraftSection: View {
         .padding(.vertical, 4)
     }
 
-    private var header: some View {
-        HStack {
-            Spacer()
-            if draft.isExpanded {
-                Button {
-                    withAnimation { showingDetails.toggle() }
-                } label: {
-                    Image(systemName: showingDetails ? "chevron.up.circle.fill" : "info.circle")
-                }
-                .buttonStyle(.plain)
-                .imageScale(.large)
-                Button {
-                    withAnimation { draft.isExpanded = false }
-                } label: {
-                    Image(systemName: "checkmark.circle")
-                }
-                .buttonStyle(.plain)
-                .imageScale(.large)
-            } else {
-                Button {
-                    // Reopened manually — leave it open until the user closes
-                    // it again themselves, don't auto-collapse a second time.
-                    withAnimation { draft.isExpanded = true; draft.autoCollapseEnabled = false }
-                } label: {
-                    Label("Edit", systemImage: "pencil.circle")
-                }
-                .buttonStyle(.plain)
-                .font(.caption)
-            }
-        }
-    }
-
     private var setRows: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                Text("Set").font(.title3).foregroundStyle(.secondary)
-                    .frame(width: 44, alignment: .leading)
-                Text("Weight").font(.title3).foregroundStyle(.secondary)
-                    .frame(width: 100, alignment: .center)
-                Text("Goal").font(.title3).foregroundStyle(.secondary)
-                    .frame(width: 44, alignment: .center)
-                Text("Reps").font(.title3).foregroundStyle(.secondary)
-                    .frame(width: 75, alignment: .center)
-            }
-            .padding(.bottom, 2)
-
+        VStack(alignment: .leading, spacing: -8) {
             ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
                 HStack(spacing: 12) {
                     Text("Set \(i + 1)")
