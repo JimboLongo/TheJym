@@ -275,6 +275,10 @@ struct ExerciseDraftSection: View {
     /// Sets a later set's weight was just shifted by via cascade, so the
     /// field can flash a "+10"/"-5" badge before fading out.
     @State private var cascadeIndicator: [Int: Double] = [:]
+    /// Weight-nudge taps not yet cascaded — accumulated so a burst of taps
+    /// cascades once with the total, instead of once per tap.
+    @State private var pendingCascadeDelta: [Int: Double] = [:]
+    @State private var cascadeDebounceTask: [Int: Task<Void, Never>] = [:]
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -387,39 +391,51 @@ struct ExerciseDraftSection: View {
 
     private var setRows: some View {
         ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
-            HStack(spacing: 6) {
+            HStack(spacing: 0) {
                 Text("Set \(i + 1)")
                     .font(.caption).foregroundStyle(.secondary)
-                    .frame(width: 44, alignment: .leading)
+                    .frame(width: 40, alignment: .leading)
 
-                stepperButton("minus.circle") { adjustWeight(at: i, by: -weightStep) }
-                ZStack(alignment: .topTrailing) {
-                    TextField("lbs", text: $draft.sets[i].weightText)
-                        .keyboardType(.decimalPad)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
-                        .focused($focusedField, equals: .weight(i))
-                    if let delta = cascadeIndicator[i] {
-                        Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
-                            .font(.caption2.bold())
-                            .foregroundStyle(delta > 0 ? .green : .red)
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(.thinMaterial, in: Capsule())
-                            .offset(x: 8, y: -10)
-                            .transition(.opacity)
+                Spacer(minLength: 4)
+
+                HStack(spacing: 10) {
+                    stepperButton("minus.circle.fill") { adjustWeight(at: i, by: -weightStep) }
+                    ZStack(alignment: .top) {
+                        TextField("lbs", text: $draft.sets[i].weightText)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 64)
+                            .focused($focusedField, equals: .weight(i))
+                        if let delta = cascadeIndicator[i] {
+                            Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                                .font(.caption2.bold())
+                                .foregroundStyle(delta > 0 ? .green : .red)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(.thinMaterial, in: Capsule())
+                                .offset(y: -14)
+                                .transition(.opacity)
+                        }
                     }
+                    stepperButton("plus.circle.fill") { adjustWeight(at: i, by: weightStep) }
                 }
-                stepperButton("plus.circle") { adjustWeight(at: i, by: weightStep) }
 
-                Text("×")
+                Spacer(minLength: 8)
+                Text("×").foregroundStyle(.secondary)
+                Spacer(minLength: 8)
 
-                stepperButton("minus.circle") { adjustReps(at: i, by: -1) }
-                TextField("reps (goal \(draft.targetReps[safe: i] ?? 0))",
-                          text: $draft.sets[i].repsText)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .reps(i))
-                stepperButton("plus.circle") { adjustReps(at: i, by: 1) }
+                HStack(spacing: 10) {
+                    stepperButton("minus.circle.fill") { adjustReps(at: i, by: -1) }
+                    TextField("reps", text: $draft.sets[i].repsText)
+                        .keyboardType(.numberPad)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.center)
+                        .frame(width: 44)
+                        .focused($focusedField, equals: .reps(i))
+                    stepperButton("plus.circle.fill") { adjustReps(at: i, by: 1) }
+                }
+
+                Spacer(minLength: 4)
             }
             .animation(.easeInOut, value: cascadeIndicator[i])
         }
@@ -475,19 +491,31 @@ struct ExerciseDraftSection: View {
     private func stepperButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
+                .font(.title3)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color.accentColor)
     }
 
     /// Nudges a set's weight by the exercise's step size (smallest plate, or
-    /// dumbbell increment with attachments considered) and cascades the same
-    /// delta to later sets, same as a typed edit would.
+    /// dumbbell increment with attachments considered). The field itself
+    /// updates immediately on every tap; cascading the change to later sets
+    /// (and showing the +/- badge) waits until tapping pauses, so a quick
+    /// burst of taps cascades once with the total instead of once per tap.
     private func adjustWeight(at index: Int, by delta: Double) {
         let current = draft.sets[index].weight ?? 0
         let newValue = max(0, current + delta)
         draft.sets[index].weightText = Formatters.trim(newValue)
-        cascadeDelta(delta, from: index)
+
+        pendingCascadeDelta[index, default: 0] += delta
+        cascadeDebounceTask[index]?.cancel()
+        cascadeDebounceTask[index] = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            let total = pendingCascadeDelta.removeValue(forKey: index) ?? 0
+            cascadeDebounceTask[index] = nil
+            if total != 0 { cascadeDelta(total, from: index) }
+        }
     }
 
     private func adjustReps(at index: Int, by delta: Int) {
