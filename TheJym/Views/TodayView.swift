@@ -47,23 +47,6 @@ struct TodayView: View {
                 restDayActivitySection
             }
             .navigationTitle("Train")
-            .toolbar {
-                if let phase = activePhase, !phase.orderedDays.isEmpty {
-                    ToolbarItem(placement: .principal) {
-                        Menu {
-                            ForEach(phase.orderedDays, id: \.persistentModelID) { day in
-                                Button(day.isRest ? "\(day.name) (Rest)" : day.name) { quickJumpDay = day }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("Train")
-                                Image(systemName: "chevron.down")
-                                    .font(.caption)
-                            }
-                        }
-                    }
-                }
-            }
             .sheet(isPresented: $showingPhaseSetup) {
                 PhaseBuilderView(previousPhase: nil)
             }

@@ -168,7 +168,10 @@ struct HistoryView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            Text("\(weights) lbs × \(reps) reps")
+            Text("\(weights) lbs")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Text("\(reps) reps")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.secondary)
         }
