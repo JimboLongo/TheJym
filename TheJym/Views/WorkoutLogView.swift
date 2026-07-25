@@ -421,7 +421,7 @@ struct ExerciseDraftSection: View {
                                 if delta != 0 { cascadeDelta(delta, from: i) }
                             })) {
                             ForEach(weightValues, id: \.self) { v in
-                                Text(Formatters.trim(v)).tag(v)
+                                Text(Formatters.trim(v)).font(.footnote).tag(v)
                             }
                         }
                         .pickerStyle(.wheel)
@@ -456,7 +456,7 @@ struct ExerciseDraftSection: View {
                             checkAutoCollapse()
                         })) {
                         ForEach(0...50, id: \.self) { v in
-                            Text("\(v)").tag(v)
+                            Text("\(v)").font(.footnote).tag(v)
                         }
                     }
                     .pickerStyle(.wheel)
