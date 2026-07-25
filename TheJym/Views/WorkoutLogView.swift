@@ -429,6 +429,9 @@ struct ExercisePageView: View {
     /// True briefly over the reps wheel right after a successful swipe-copy,
     /// to show a little burst drawing attention to the update.
     @State private var repsExplosion: [Int: Bool] = [:]
+    /// +/- flash badge for a swipe-copy into reps, mirroring the weight
+    /// cascade indicator's look.
+    @State private var repsDeltaIndicator: [Int: Int] = [:]
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -610,12 +613,19 @@ struct ExercisePageView: View {
                                 }
                                 .onEnded { value in
                                     if value.translation.width > 40 {
+                                        let oldReps = draft.sets[i].reps ?? 0
                                         draft.sets[i].repsText = String(goal)
                                         checkAutoCollapse()
+                                        let delta = goal - oldReps
+                                        if delta != 0 { repsDeltaIndicator[i] = delta }
                                         repsExplosion[i] = true
                                         Task {
                                             try? await Task.sleep(nanoseconds: 500_000_000)
                                             repsExplosion[i] = false
+                                        }
+                                        Task {
+                                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                            repsDeltaIndicator[i] = nil
                                         }
                                     }
                                     targetDragOffset[i] = 0
@@ -628,7 +638,7 @@ struct ExercisePageView: View {
                             .frame(width: 44, alignment: .center)
                     }
 
-                    ZStack {
+                    ZStack(alignment: .top) {
                         Picker("Reps", selection: Binding(
                             get: { draft.sets[i].reps ?? 0 },
                             set: { newValue in
@@ -650,7 +660,16 @@ struct ExercisePageView: View {
                             ExplosionBurst()
                                 .allowsHitTesting(false)
                         }
+                        if let delta = repsDeltaIndicator[i] {
+                            Text(delta > 0 ? "+\(delta)" : "\(delta)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(delta > 0 ? .green : .red)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(.thinMaterial, in: Capsule())
+                                .transition(.opacity)
+                        }
                     }
+                    .animation(.easeInOut, value: repsDeltaIndicator[i])
 
                     if let delta = repsDelta(for: i) {
                         Text(delta > 0 ? "+\(delta)" : "\(delta)")
