@@ -28,7 +28,7 @@ struct WorkoutLogView: View {
     @State private var drafts: [ExerciseDraft] = []
     @State private var showFinishSheet = false
     @State private var aiSuggestions: [AISuggestionRow] = []
-    @State private var scrollToDraftID: UUID?
+    @State private var currentPageID: UUID?
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -76,28 +76,25 @@ struct WorkoutLogView: View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
         let dumbbellIncrement = settings?.dumbbellRoundingIncrement ?? 5
         GeometryReader { geo in
-            ScrollViewReader { proxy in
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(drafts.indices), id: \.self) { i in
-                            ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
-                                            exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                            plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
-                                            pageHeight: geo.size.height)
-                                .frame(height: geo.size.height)
-                                .clipped()
-                                .id(drafts[i].id)
-                        }
-                    }
-                    .scrollTargetLayout()
-                }
-                .scrollTargetBehavior(.paging)
-                .onChange(of: scrollToDraftID) { _, newID in
-                    if let newID {
-                        withAnimation { proxy.scrollTo(newID, anchor: .top) }
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(drafts.indices), id: \.self) { i in
+                        ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
+                                        exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
+                                        plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
+                                        pageHeight: geo.size.height)
+                            .frame(height: geo.size.height)
+                            .clipped()
+                            .id(drafts[i].id)
                     }
                 }
+                .scrollTargetLayout()
             }
+            // .always caps each swipe to moving one page, regardless of
+            // flick velocity — plain .paging can otherwise skip a page on a
+            // strong swipe.
+            .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+            .scrollPosition(id: $currentPageID, anchor: .top)
         }
         .safeAreaInset(edge: .top) {
             if isDeloadCycle {
@@ -135,7 +132,7 @@ struct WorkoutLogView: View {
                         Menu {
                             ForEach(drafts) { draft in
                                 Button(draft.name) {
-                                    scrollToDraftID = draft.id
+                                    withAnimation { currentPageID = draft.id }
                                 }
                             }
                         } label: {
