@@ -392,62 +392,75 @@ struct ExerciseDraftSection: View {
 
     private var setRows: some View {
         VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 12) {
+                Text("Set").font(.caption).foregroundStyle(.secondary)
+                    .frame(width: 44, alignment: .leading)
+                Text("Weight").font(.caption).foregroundStyle(.secondary)
+                    .frame(width: 130, alignment: .center)
+                Text("Goal").font(.caption).foregroundStyle(.secondary)
+                    .frame(width: 44, alignment: .center)
+                Text("Reps").font(.caption).foregroundStyle(.secondary)
+                    .frame(width: 100, alignment: .center)
+            }
+
             ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
                 HStack(spacing: 12) {
                     Text("Set \(i + 1)")
                         .font(.title3)
                         .foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .leading)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let goal = draft.targetReps[safe: i] {
-                            Text("Goal: \(goal)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                    ZStack(alignment: .top) {
+                        Picker("Weight", selection: Binding(
+                            get: { nearestValue(draft.sets[i].weight ?? 0, in: weightValues) },
+                            set: { newValue in
+                                let old = draft.sets[i].weight ?? 0
+                                draft.sets[i].weightText = Formatters.trim(newValue)
+                                let delta = newValue - old
+                                if delta != 0 { cascadeDelta(delta, from: i) }
+                            })) {
+                            ForEach(weightValues, id: \.self) { v in
+                                Text(Formatters.trim(v)).tag(v)
+                            }
                         }
-                        HStack(spacing: 12) {
-                            ZStack(alignment: .top) {
-                                Picker("Weight", selection: Binding(
-                                    get: { nearestValue(draft.sets[i].weight ?? 0, in: weightValues) },
-                                    set: { newValue in
-                                        let old = draft.sets[i].weight ?? 0
-                                        draft.sets[i].weightText = Formatters.trim(newValue)
-                                        let delta = newValue - old
-                                        if delta != 0 { cascadeDelta(delta, from: i) }
-                                    })) {
-                                    ForEach(weightValues, id: \.self) { v in
-                                        Text(Formatters.trim(v)).tag(v)
-                                    }
-                                }
-                                .pickerStyle(.wheel)
-                                .frame(width: 130, height: 110)
-                                .clipped()
-                                if let delta = cascadeIndicator[i] {
-                                    Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
-                                        .font(.caption2.bold())
-                                        .foregroundStyle(delta > 0 ? .green : .red)
-                                        .padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(.thinMaterial, in: Capsule())
-                                        .transition(.opacity)
-                                }
-                            }
-
-                            Text("×").foregroundStyle(.secondary)
-
-                            Picker("Reps", selection: Binding(
-                                get: { draft.sets[i].reps ?? 0 },
-                                set: { newValue in
-                                    draft.sets[i].repsText = String(newValue)
-                                    checkAutoCollapse()
-                                })) {
-                                ForEach(0...50, id: \.self) { v in
-                                    Text("\(v)").tag(v)
-                                }
-                            }
-                            .pickerStyle(.wheel)
-                            .frame(width: 100, height: 110)
-                            .clipped()
+                        .pickerStyle(.wheel)
+                        .frame(width: 130, height: 110)
+                        .clipped()
+                        if let delta = cascadeIndicator[i] {
+                            Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                                .font(.caption2.bold())
+                                .foregroundStyle(delta > 0 ? .green : .red)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(.thinMaterial, in: Capsule())
+                                .transition(.opacity)
                         }
                     }
+
+                    if let goal = draft.targetReps[safe: i] {
+                        Text("\(goal)")
+                            .font(.title3)
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, alignment: .center)
+                    } else {
+                        Text("–")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .center)
+                    }
+
+                    Picker("Reps", selection: Binding(
+                        get: { draft.sets[i].reps ?? 0 },
+                        set: { newValue in
+                            draft.sets[i].repsText = String(newValue)
+                            checkAutoCollapse()
+                        })) {
+                        ForEach(0...50, id: \.self) { v in
+                            Text("\(v)").tag(v)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 100, height: 110)
+                    .clipped()
                 }
                 .animation(.easeInOut, value: cascadeIndicator[i])
             }
