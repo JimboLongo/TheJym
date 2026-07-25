@@ -212,16 +212,17 @@ struct TodayView: View {
                     let plan = phase.plan(for: day)
                     if plan.isEmpty {
                         Text("No exercises planned for \(day.name).")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
                             HStack {
                                 Text(pe.exerciseName)
                                 Spacer()
                                 Text(pe.targetReps.map(String.init).joined(separator: "/"))
-                                    .font(.system(.caption, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                                    .font(.system(.caption2, design: .monospaced))
                             }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         }
                     }
                 }
