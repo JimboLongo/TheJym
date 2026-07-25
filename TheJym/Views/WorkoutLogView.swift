@@ -422,45 +422,41 @@ struct ExerciseDraftSection: View {
                 Text("Set \(i + 1)")
                     .font(.caption).foregroundStyle(.secondary)
 
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    stepperButton("minus.circle.fill") { adjustWeight(at: i, by: -weightStep) }
-                    Spacer(minLength: 6)
-                    ZStack(alignment: .top) {
-                        TextField("lbs", text: $draft.sets[i].weightText)
-                            .keyboardType(.decimalPad)
+                HStack(spacing: 16) {
+                    HStack(spacing: 2) {
+                        stepperButton("minus.circle.fill") { adjustWeight(at: i, by: -weightStep) }
+                        ZStack(alignment: .top) {
+                            TextField("lbs", text: $draft.sets[i].weightText)
+                                .keyboardType(.decimalPad)
+                                .textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.center)
+                                .frame(width: 90)
+                                .focused($focusedField, equals: .weight(i))
+                            if let delta = cascadeIndicator[i] {
+                                Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(delta > 0 ? .green : .red)
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(.thinMaterial, in: Capsule())
+                                    .offset(y: -14)
+                                    .transition(.opacity)
+                            }
+                        }
+                        stepperButton("plus.circle.fill") { adjustWeight(at: i, by: weightStep) }
+                    }
+
+                    Text("×").foregroundStyle(.secondary)
+
+                    HStack(spacing: 2) {
+                        stepperButton("minus.circle.fill") { adjustReps(at: i, by: -1) }
+                        TextField("reps", text: $draft.sets[i].repsText)
+                            .keyboardType(.numberPad)
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.center)
                             .frame(width: 70)
-                            .focused($focusedField, equals: .weight(i))
-                        if let delta = cascadeIndicator[i] {
-                            Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
-                                .font(.caption2.bold())
-                                .foregroundStyle(delta > 0 ? .green : .red)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(.thinMaterial, in: Capsule())
-                                .offset(y: -14)
-                                .transition(.opacity)
-                        }
+                            .focused($focusedField, equals: .reps(i))
+                        stepperButton("plus.circle.fill") { adjustReps(at: i, by: 1) }
                     }
-                    Spacer(minLength: 6)
-                    stepperButton("plus.circle.fill") { adjustWeight(at: i, by: weightStep) }
-
-                    Spacer(minLength: 12)
-                    Text("×").foregroundStyle(.secondary)
-                    Spacer(minLength: 12)
-
-                    stepperButton("minus.circle.fill") { adjustReps(at: i, by: -1) }
-                    Spacer(minLength: 6)
-                    TextField("reps", text: $draft.sets[i].repsText)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.center)
-                        .frame(width: 50)
-                        .focused($focusedField, equals: .reps(i))
-                    Spacer(minLength: 6)
-                    stepperButton("plus.circle.fill") { adjustReps(at: i, by: 1) }
-                    Spacer(minLength: 0)
                 }
             }
             .animation(.easeInOut, value: cascadeIndicator[i])
