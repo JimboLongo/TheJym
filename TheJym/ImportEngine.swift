@@ -5,16 +5,25 @@
 //  Bulk-import historical workouts from a CSV or Excel (.xlsx) file (e.g. a
 //  Google Sheet exported/shared as either). One row = one exercise logged on
 //  one day, with Date, Exercise, Sets, Weights, and Reps columns (any order,
-//  header matched case-insensitively):
+//  header matched case-insensitively), plus two optional columns, Phase and
+//  Day, to attribute the row to a real Phase/PhaseDay instead of a generic
+//  "Imported" entry:
 //
-//    Date       | Exercise    | Sets      | Weights           | Reps
-//    2026-01-05 | Back Squat  | 5/5/5/3/3 | 135/135/135/145/145 | 6/5/5/5/3
+//    Date       | Phase | Day    | Exercise    | Sets      | Weights              | Reps
+//    2026-01-05 | 2     | Push A | Back Squat  | 5/5/5/3/3 | 135/135/135/145/145 | 6/5/5/5/3
 //
 //  Sets is the target rep scheme for that exercise (becomes a saved "Set" on
 //  it in the Exercises tab); Weights and Reps are what was actually lifted,
 //  one slash-separated value per set, in the same order. Weights and Reps
 //  must have the same count; Sets may have a different count or be left
 //  blank if there was no real target.
+//
+//  Phase is that phase's number; Day is the day's name (e.g. "Push A"),
+//  matched case-insensitively against that phase's days. If either is
+//  missing or doesn't match an existing Phase/PhaseDay, the row still
+//  imports — it just falls back to an unattributed "Imported" entry (or
+//  keeps whatever Day text was given as the label, if only the phase match
+//  failed).
 //
 
 import Foundation
@@ -27,6 +36,8 @@ enum ImportEngine {
         let targetReps: [Int]     // "Sets" column, e.g. [5,5,5,3,3]
         let weights: [Double]     // "Weights" column
         let reps: [Int]           // "Reps" column — actual reps achieved
+        let phaseNumber: Int?     // optional "Phase" column
+        let dayLabel: String?     // optional "Day" column, e.g. "Push A"
     }
 
     struct ImportResult {
@@ -69,6 +80,9 @@ enum ImportEngine {
               let weightsIdx = header.firstIndex(where: { $0.hasPrefix("weight") }),
               let repsIdx = header.firstIndex(where: { $0.hasPrefix("rep") })
         else { return ([], 0) }
+        // Optional — the import still works fine without either of these.
+        let phaseIdx = header.firstIndex(where: { $0.hasPrefix("phase") })
+        let dayIdx = header.firstIndex(where: { $0.hasPrefix("day") })
 
         var out: [ImportedEntry] = []
         var skipped = 0
@@ -87,25 +101,50 @@ enum ImportEngine {
             let reps = repsStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !weights.isEmpty, weights.count == reps.count else { skipped += 1; continue }
 
-            out.append(ImportedEntry(date: date, exerciseName: name, targetReps: targetReps, weights: weights, reps: reps))
+            let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
+            let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
+
+            out.append(ImportedEntry(date: date, exerciseName: name, targetReps: targetReps, weights: weights, reps: reps,
+                                     phaseNumber: phaseStr.flatMap { Int($0) },
+                                     dayLabel: (dayStr?.isEmpty == false) ? dayStr : nil))
         }
         return (out, skipped)
     }
 
-    /// Groups rows into one WorkoutSession per calendar day, one ExerciseLog
-    /// per row, sets built from the row's Weights/Reps pairs in order.
+    /// Groups rows into one WorkoutSession per calendar day (further split if
+    /// rows disagree on Phase/Day), one ExerciseLog per row, sets built from
+    /// the row's Weights/Reps pairs in order. A row's Phase/Day, if given and
+    /// matched, links the session to that real Phase/PhaseDay; otherwise it
+    /// falls back to an unattributed "Imported" entry.
     @MainActor
     static func importIntoStore(_ rows: [ImportedEntry], context: ModelContext) -> ImportResult {
         let cal = Calendar.current
-        let byDay = Dictionary(grouping: rows) { cal.startOfDay(for: $0.date) }
         let existingDefs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
         var knownDefs = Dictionary(uniqueKeysWithValues: existingDefs.map { ($0.name, $0) })
+        let existingPhases = (try? context.fetch(FetchDescriptor<Phase>())) ?? []
+
+        struct GroupKey: Hashable {
+            let day: Date
+            let phaseNumber: Int?
+            let dayLabel: String?
+        }
+        let grouped = Dictionary(grouping: rows) { row in
+            GroupKey(day: cal.startOfDay(for: row.date), phaseNumber: row.phaseNumber, dayLabel: row.dayLabel)
+        }
 
         var sessionsCreated = 0
         var setsImported = 0
 
-        for (day, dayRows) in byDay.sorted(by: { $0.key < $1.key }) {
-            let session = WorkoutSession(date: day, dayLabel: "Imported", cycleNumber: 0)
+        for (key, dayRows) in grouped.sorted(by: { $0.key.day < $1.key.day }) {
+            let matchedPhase = key.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+            let matchedDay = matchedPhase.flatMap { phase in
+                key.dayLabel.flatMap { label in
+                    phase.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
+                }
+            }
+            let session = WorkoutSession(date: key.day, day: matchedDay,
+                                         dayLabel: key.dayLabel ?? "Imported", cycleNumber: 0)
+            session.phase = matchedPhase
             context.insert(session)
             sessionsCreated += 1
 

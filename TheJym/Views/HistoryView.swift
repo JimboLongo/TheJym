@@ -286,15 +286,15 @@ struct CSVFormatHelpView: View {
             List {
                 Section {
                     Text("Works with a .csv file or an Excel/Sheets .xlsx workbook (first sheet).")
-                    Text("Columns (any order): **Date**, **Exercise**, **Sets**, **Weights**, **Reps**.")
+                    Text("Required columns (any order): **Date**, **Exercise**, **Sets**, **Weights**, **Reps**. Optional: **Phase**, **Day**.")
                     Text("One row = one exercise logged on one day. Sets, Weights, and Reps are slash-separated, one value per set, in the same order.")
                         .foregroundStyle(.secondary)
                 }
 
                 Section("Example") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Date,Exercise,Sets,Weights,Reps")
-                        Text("2026-01-05,Back Squat,5/5/5/3/3,135/135/135/145/145,6/5/5/5/3")
+                        Text("Date,Phase,Day,Exercise,Sets,Weights,Reps")
+                        Text("2026-01-05,2,Push A,Back Squat,5/5/5/3/3,135/135/135/145/145,6/5/5/5/3")
                     }
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
@@ -307,6 +307,8 @@ struct CSVFormatHelpView: View {
                           systemImage: "checkmark.circle")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
                           systemImage: "questionmark.circle")
+                    Label("Phase is that phase's number; Day is the day's name (e.g. \"Push A\"), matched case-insensitively. If given and matched, the imported workout is attributed to that real Phase/Day, just like one logged live. Leave them out (or leave them unmatched) and the row still imports fine as a generic \"Imported\" entry.",
+                          systemImage: "calendar.badge.checkmark")
                     Label("If a spreadsheet \"fixes\" a value like 12/12/12 into a date (12/12/2012, a leading '12/12/12, or a raw date serial like 41255), it's recovered automatically back to 12/12/12 — no need to clean it up first.",
                           systemImage: "wand.and.stars")
                 } header: {
