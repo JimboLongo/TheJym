@@ -40,6 +40,16 @@ struct HistoryView: View {
         }
     }
 
+    /// A session's exercises, narrowed to just the ones matching the search
+    /// — so searching "Squat" doesn't also surface everything else you did
+    /// that day.
+    private func filteredLogs(for session: WorkoutSession) -> [ExerciseLog] {
+        let sorted = session.exerciseLogs.sorted { $0.order < $1.order }
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return sorted }
+        return sorted.filter { $0.exerciseName.localizedCaseInsensitiveContains(trimmed) }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -53,7 +63,7 @@ struct HistoryView: View {
                     List {
                         ForEach(filteredSessions, id: \.persistentModelID) { session in
                             Section {
-                                ForEach(session.exerciseLogs.sorted { $0.order < $1.order }, id: \.persistentModelID) { log in
+                                ForEach(filteredLogs(for: session), id: \.persistentModelID) { log in
                                     exerciseRow(log)
                                 }
                             } header: {
@@ -66,7 +76,7 @@ struct HistoryView: View {
                 }
             }
             .navigationTitle("History")
-            .searchable(text: $searchText, prompt: "Filter by exercise")
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Filter by exercise")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {

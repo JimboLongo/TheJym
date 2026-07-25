@@ -80,7 +80,7 @@ struct ExercisesView: View {
                 }
             }
             .navigationTitle("Exercises")
-            .searchable(text: $searchText, prompt: "Search exercises")
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search exercises")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
                     if !exerciseDefs.isEmpty { EditButton() }
