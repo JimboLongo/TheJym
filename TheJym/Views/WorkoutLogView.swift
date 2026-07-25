@@ -14,6 +14,8 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
+import Combine
 
 struct WorkoutLogView: View {
     @Environment(\.modelContext) private var context
@@ -26,9 +28,13 @@ struct WorkoutLogView: View {
     let day: PhaseDay
 
     @State private var drafts: [ExerciseDraft] = []
-    @State private var showFinishSheet = false
-    @State private var aiSuggestions: [AISuggestionRow] = []
-    @State private var currentPageID: UUID?
+    @State private var showRecapSheet = false
+    @State private var recapEntries: [RecapEntry] = []
+    @State private var recapChoices: [String: Bool] = [:]
+    @State private var currentPageID: String?
+    /// Last time the user touched anything in this workout — used to keep
+    /// the screen from auto-locking for up to 3 minutes of idle time.
+    @State private var lastInteraction = Date()
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -64,12 +70,47 @@ struct WorkoutLogView: View {
         }
     }
 
-    struct AISuggestionRow: Identifiable {
+    struct RecapEntry: Identifiable {
         let id = UUID()
-        var name: String
-        var current: String
-        var suggested: [Double]
-        var overrideText: String
+        var exerciseName: String
+        /// Prior best total to compare against — nil if never logged before.
+        var previousTotal: Double?
+        var todayTotal: Double
+        var streak: Int
+        var requiredStreak: Int
+        /// Non-nil only when suggestNextWeights proposes a change from what
+        /// was actually lifted today (a jump if higher, a drop if lower).
+        var suggestion: [Double]?
+        var currentWeights: [Double]
+    }
+
+    /// One page in the paging ScrollView: either a single active exercise,
+    /// or the shared summary page that all completed exercises collapse
+    /// into once they're done (see item 8 — "move completed onto one screen").
+    private enum WorkoutPage: Identifiable {
+        case exercise(Int)
+        case completedSummary
+        var id: String {
+            switch self {
+            case .exercise(let i): return "exercise-\(i)"
+            case .completedSummary: return "summary"
+            }
+        }
+    }
+
+    /// Active (still-expanded) exercises each get their own page, in plan
+    /// order; any collapsed/completed ones are gathered onto one trailing
+    /// summary page instead of each taking a full screen.
+    private var pages: [WorkoutPage] {
+        var result: [WorkoutPage] = drafts.indices.filter { drafts[$0].isExpanded }.map { .exercise($0) }
+        if drafts.contains(where: { !$0.isExpanded }) {
+            result.append(.completedSummary)
+        }
+        return result
+    }
+
+    private func pageID(for draft: ExerciseDraft) -> String {
+        draft.isExpanded ? "ex-\(draft.id)" : "summary"
     }
 
     var body: some View {
@@ -78,14 +119,23 @@ struct WorkoutLogView: View {
         GeometryReader { geo in
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(drafts.indices), id: \.self) { i in
-                        ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
-                                        exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                        plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
-                                        pageHeight: geo.size.height)
-                            .frame(height: geo.size.height)
-                            .clipped()
-                            .id(drafts[i].id)
+                    ForEach(pages) { page in
+                        Group {
+                            switch page {
+                            case .exercise(let i):
+                                ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
+                                                exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
+                                                plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
+                                                pageHeight: geo.size.height, currentPageID: $currentPageID)
+                                    .id("ex-\(drafts[i].id)")
+                            case .completedSummary:
+                                CompletedSummaryPageView(drafts: $drafts, pageHeight: geo.size.height,
+                                                        currentPageID: $currentPageID)
+                                    .id("summary")
+                            }
+                        }
+                        .frame(height: geo.size.height)
+                        .clipped()
                     }
                 }
                 .scrollTargetLayout()
@@ -130,9 +180,15 @@ struct WorkoutLogView: View {
                         .foregroundStyle(.secondary)
                     if drafts.count > 1 {
                         Menu {
-                            ForEach(drafts) { draft in
-                                Button(draft.name) {
-                                    withAnimation { currentPageID = draft.id }
+                            // Completed exercises sink to the bottom of the
+                            // list and show struck-through, since they now
+                            // live together on the shared summary page.
+                            ForEach(drafts.sorted { $0.isExpanded && !$1.isExpanded }) { draft in
+                                Button {
+                                    withAnimation { currentPageID = pageID(for: draft) }
+                                } label: {
+                                    Text(draft.name)
+                                        .strikethrough(!draft.isExpanded)
                                 }
                             }
                         } label: {
@@ -148,10 +204,25 @@ struct WorkoutLogView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
-        .onAppear(perform: buildDrafts)
-        .onChange(of: drafts) { _, _ in saveDraftToDisk() }
-        .sheet(isPresented: $showFinishSheet, onDismiss: { dismiss() }) {
-            AISuggestionSheet(rows: $aiSuggestions) { applySuggestions() }
+        .onAppear {
+            buildDrafts()
+            UIApplication.shared.isIdleTimerDisabled = true
+            lastInteraction = Date()
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
+            // Keep the screen awake for up to 3 minutes of idle time (e.g.
+            // resting between sets); let it lock normally after that.
+            UIApplication.shared.isIdleTimerDisabled = Date().timeIntervalSince(lastInteraction) < 180
+        }
+        .onChange(of: drafts) { _, _ in
+            lastInteraction = Date()
+            saveDraftToDisk()
+        }
+        .sheet(isPresented: $showRecapSheet, onDismiss: { dismiss() }) {
+            WorkoutRecapView(entries: recapEntries, choices: $recapChoices) { applyRecapChoices() }
         }
     }
 
@@ -237,9 +308,16 @@ struct WorkoutLogView: View {
         session.phase = phase
         context.insert(session)
 
+        let agg = settings?.aiAggressiveness ?? .moderate
+        var entries: [RecapEntry] = []
+
         for (order, d) in drafts.enumerated() {
             let logged = d.sets.filter(\.isLogged)
             guard !logged.isEmpty else { continue }
+
+            let pe = phase.plan(for: day).first { $0.exerciseName == d.name }
+            let priorLogs = pe.map(history) ?? []
+
             let log = ExerciseLog(exerciseName: d.name, targetReps: d.targetReps, order: order)
             log.session = session
             context.insert(log)
@@ -248,49 +326,46 @@ struct WorkoutLogView: View {
                 set.exerciseLog = log
                 context.insert(set)
             }
+
+            // Recap + next-cycle progression — skip during a deload (weights
+            // are intentionally cut, so progression math doesn't apply) or
+            // once the phase is over (no next cycle to jump into).
+            if !isDeloadCycle, !phase.isComplete {
+                let increment = roundingIncrement(for: d.name)
+                let combinedHistory = priorLogs + [log]
+                let streak = ProgressionEngine.currentStreak(targetReps: d.targetReps, history: combinedHistory)
+                let suggestion = ProgressionEngine.suggestNextWeights(
+                    targetReps: d.targetReps, history: combinedHistory,
+                    aggressiveness: agg, roundingIncrement: increment)
+                let currentWeights = log.sortedSets.map(\.weight)
+                entries.append(RecapEntry(exerciseName: d.name,
+                                          previousTotal: priorLogs.last?.totalWeightMoved,
+                                          todayTotal: log.totalWeightMoved,
+                                          streak: streak,
+                                          requiredStreak: ProgressionEngine.requiredStreak(for: agg),
+                                          suggestion: (suggestion != currentWeights) ? suggestion : nil,
+                                          currentWeights: currentWeights))
+            }
         }
         try? context.save()
         clearSavedDraft()
 
-        // AI Assistant: suggest next-cycle weights if enabled and phase continues.
-        if settings?.aiAssistantEnabled == true, !phase.isComplete, !isDeloadCycle {
-            buildAISuggestions()
-            if !aiSuggestions.isEmpty {
-                showFinishSheet = true
-                return
-            }
-        }
-        dismiss()
-    }
-
-    private func buildAISuggestions() {
-        let agg = settings?.aiAggressiveness ?? .moderate
-        aiSuggestions = []
-        for pe in phase.plan(for: day) {
-            let logs = history(for: pe)
-            let increment = roundingIncrement(for: pe.exerciseName)
-            guard let suggestion = ProgressionEngine.suggestNextWeights(
-                targetReps: pe.targetReps, history: logs,
-                aggressiveness: agg, roundingIncrement: increment),
-                let latest = logs.last else { continue }
-
-            let currentStr = latest.sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
-            let suggestedStr = suggestion.map { Formatters.trim($0) }.joined(separator: "/")
-            guard suggestedStr != currentStr else { continue }   // no change, skip
-
-            aiSuggestions.append(AISuggestionRow(name: pe.exerciseName,
-                                                 current: currentStr,
-                                                 suggested: suggestion,
-                                                 overrideText: suggestedStr))
+        if !entries.isEmpty {
+            recapEntries = entries
+            // Default to accepting the suggested jump/drop — matches the
+            // app's existing "AI suggestion applied unless overridden" pattern.
+            recapChoices = Dictionary(uniqueKeysWithValues: entries.map { ($0.exerciseName, true) })
+            showRecapSheet = true
+        } else {
+            dismiss()
         }
     }
 
-    private func applySuggestions() {
-        for row in aiSuggestions {
-            guard let pe = phase.plan(for: day).first(where: { $0.exerciseName == row.name }) else { continue }
-            let weights = row.overrideText.split(separator: "/")
-                .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-            if !weights.isEmpty { pe.suggestedWeights = weights }
+    private func applyRecapChoices() {
+        for entry in recapEntries {
+            guard let suggestion = entry.suggestion, recapChoices[entry.exerciseName] == true,
+                  let pe = phase.plan(for: day).first(where: { $0.exerciseName == entry.exerciseName }) else { continue }
+            pe.suggestedWeights = suggestion
         }
         try? context.save()
     }
@@ -299,6 +374,9 @@ struct WorkoutLogView: View {
 // MARK: - One exercise's logging card + pace panel
 
 struct ExercisePageView: View {
+    @Environment(\.modelContext) private var context
+    @Query(sort: \Bar.name) private var allBars: [Bar]
+
     @Binding var draft: WorkoutLogView.ExerciseDraft
     let allLogs: [ExerciseLog]
     let exerciseDef: ExerciseDef?
@@ -308,11 +386,19 @@ struct ExercisePageView: View {
     /// from the name down through the pace panel must fit inside it so a
     /// vertical swipe moves cleanly to the next exercise instead of scrolling.
     let pageHeight: CGFloat
+    /// Redirected to the shared completed-exercises page when this one
+    /// collapses (manually or via the delayed auto-collapse), since its own
+    /// page disappears from the paging list at that point.
+    @Binding var currentPageID: String?
 
     @State private var plateTargetText = ""
     /// Sets a later set's weight was just shifted by via cascade, so the
     /// field can flash a "+10"/"-5" badge before fading out.
     @State private var cascadeIndicator: [Int: Double] = [:]
+    /// Bumped on every checkAutoCollapse call so a stale, already-scheduled
+    /// 5-second auto-collapse (from a set that's since been un-logged, or
+    /// superseded by a newer completion) doesn't fire.
+    @State private var collapseGeneration = 0
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -400,7 +486,7 @@ struct ExercisePageView: View {
                     .buttonStyle(.plain)
                     .imageScale(.large)
                     Button {
-                        withAnimation { draft.isExpanded = false }
+                        withAnimation { draft.isExpanded = false; currentPageID = "summary" }
                     } label: {
                         Image(systemName: "checkmark.circle")
                     }
@@ -424,10 +510,10 @@ struct ExercisePageView: View {
                         .frame(width: 44, alignment: .leading)
                     Text("Weight").font(.title3).foregroundStyle(.secondary)
                         .frame(width: 100, alignment: .center)
-                    Text("Goal").font(.title3).foregroundStyle(.secondary)
+                    Text("Target").font(.title3).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .center)
                     Text("Reps").font(.title3).foregroundStyle(.secondary)
-                        .frame(width: 75, alignment: .center)
+                        .frame(width: 100, alignment: .center)
                     Text("+/-").font(.title3).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .center)
                 }
@@ -471,10 +557,19 @@ struct ExercisePageView: View {
                     }
 
                     if let goal = draft.targetReps[safe: i] {
-                        Text("\(goal)")
-                            .font(.subheadline)
-                            .foregroundStyle(.primary)
-                            .frame(width: 44, alignment: .center)
+                        Button {
+                            // Tap the target to copy it straight into this
+                            // set's reps, for when you hit it exactly.
+                            draft.sets[i].repsText = String(goal)
+                            checkAutoCollapse()
+                        } label: {
+                            Text("\(goal)")
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                                .underline()
+                                .frame(width: 44, alignment: .center)
+                        }
+                        .buttonStyle(.plain)
                     } else {
                         Text("–")
                             .font(.subheadline)
@@ -493,7 +588,7 @@ struct ExercisePageView: View {
                         }
                     }
                     .pickerStyle(.wheel)
-                    .frame(width: 75, height: wheelHeight)
+                    .frame(width: 100, height: wheelHeight)
                     .clipped()
 
                     if let delta = repsDelta(for: i) {
@@ -530,11 +625,19 @@ struct ExercisePageView: View {
     }
 
     /// Only auto-collapses if the exercise hasn't been manually reopened
-    /// since the last time it collapsed.
+    /// since the last time it collapsed. Waits 5 seconds before collapsing so
+    /// the last entry doesn't vanish out from under you — and bails if
+    /// anything's changed (re-opened, un-logged, or superseded) by the time
+    /// it fires.
     private func checkAutoCollapse() {
-        guard draft.autoCollapseEnabled else { return }
-        if draft.sets.allSatisfy(\.isLogged) {
-            withAnimation { draft.isExpanded = false }
+        guard draft.autoCollapseEnabled, draft.sets.allSatisfy(\.isLogged) else { return }
+        collapseGeneration += 1
+        let generation = collapseGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard generation == collapseGeneration,
+                  draft.autoCollapseEnabled, draft.sets.allSatisfy(\.isLogged) else { return }
+            withAnimation { draft.isExpanded = false; currentPageID = "summary" }
         }
     }
 
@@ -642,8 +745,29 @@ struct ExercisePageView: View {
                         }
                     }
                 }
+            } else if let def {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No equipment tagged for this exercise yet.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if allBars.isEmpty {
+                        Text("Add a bar or dumbbell set in the Equipment tab first.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        Menu {
+                            ForEach(allBars) { bar in
+                                Button(bar.name) {
+                                    def.equipment = bar
+                                    try? context.save()
+                                }
+                            }
+                        } label: {
+                            Label("Quick Add Equipment", systemImage: "plus.circle")
+                                .font(.caption.bold())
+                        }
+                    }
+                }
             } else {
-                Text("Tag equipment for this exercise in the Exercises tab to use the plate calculator.")
+                Text("Add this exercise in the Exercises tab to tag equipment for it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -701,9 +825,9 @@ struct PaceRow: View {
     @ViewBuilder
     private var loggedComparison: some View {
         let beaten = loggedSoFar > target.totalWeightMoved
-        let paceReps = PaceEngine.repsNeededNextSet(targetTotal: target.totalWeightMoved,
-                                                    loggedSoFar: loggedSoFar,
-                                                    remainingWeights: remainingWeights)
+        let paceReps = PaceEngine.repsToClinch(targetTotal: target.totalWeightMoved,
+                                               loggedSoFar: loggedSoFar,
+                                               nextWeight: remainingWeights.first ?? 0)
         if beaten {
             Label("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥",
                   systemImage: "flame.fill")
@@ -713,48 +837,137 @@ struct PaceRow: View {
                   systemImage: "arrow.down.right")
                 .font(.caption).foregroundStyle(.red)
         } else if let reps = paceReps {
-            Label("Need \(reps) reps/set pace to beat it (\(remainingWeights.count) sets left)",
+            Label("Need \(reps) reps in your next set to stay on pace",
                   systemImage: "target")
                 .font(.caption).foregroundStyle(.orange)
         }
     }
 }
 
-// MARK: - AI suggestion sheet (override before accepting)
+// MARK: - End-of-workout recap (what you beat, progress to a weight jump,
+// and an explicit jump/stay or drop/stay choice per exercise)
 
-struct AISuggestionSheet: View {
+struct WorkoutRecapView: View {
     @Environment(\.dismiss) private var dismiss
-    @Binding var rows: [WorkoutLogView.AISuggestionRow]
-    var onApply: () -> Void
+    let entries: [WorkoutLogView.RecapEntry]
+    @Binding var choices: [String: Bool]
+    var onDone: () -> Void
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Text("AI suggestions for your next cycle. Edit any of these before applying, or skip to keep current weights.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                ForEach($rows) { $row in
-                    Section(row.name) {
-                        LabeledContent("This cycle", value: row.current)
-                        LabeledContent("Suggested") {
-                            Text(row.suggested.map { Formatters.trim($0) }.joined(separator: "/"))
-                                .foregroundStyle(.green)
+            List {
+                ForEach(entries) { entry in
+                    Section(entry.exerciseName) {
+                        comparisonLabel(for: entry)
+
+                        if entry.requiredStreak > 0 {
+                            LabeledContent("Progress to next weight jump") {
+                                Text("\(min(entry.streak, entry.requiredStreak))/\(entry.requiredStreak)")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        TextField("Next cycle (override)", text: $row.overrideText)
-                            .font(.system(.body, design: .monospaced))
-                            .keyboardType(.numbersAndPunctuation)
+
+                        if let suggestion = entry.suggestion {
+                            let isJump = (suggestion.first ?? 0) > (entry.currentWeights.first ?? 0)
+                            Picker("", selection: Binding(
+                                get: { choices[entry.exerciseName] ?? true },
+                                set: { choices[entry.exerciseName] = $0 })) {
+                                Text(isJump
+                                     ? "Jump to \(suggestion.map { Formatters.trim($0) }.joined(separator: "/"))"
+                                     : "Drop to \(suggestion.map { Formatters.trim($0) }.joined(separator: "/"))")
+                                    .tag(true)
+                                Text("Stay at \(entry.currentWeights.map { Formatters.trim($0) }.joined(separator: "/"))")
+                                    .tag(false)
+                            }
+                            .pickerStyle(.segmented)
+                        }
                     }
                 }
             }
-            .navigationTitle("Next Cycle Weights")
+            .navigationTitle("Workout Recap")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Skip") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") { onApply(); dismiss() }
+                    Button("Done") { onDone(); dismiss() }
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func comparisonLabel(for entry: WorkoutLogView.RecapEntry) -> some View {
+        if let previous = entry.previousTotal {
+            if entry.todayTotal > previous {
+                Label("Beat previous workout (\(Formatters.trim(entry.todayTotal - previous)) lbs more)",
+                      systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            } else if entry.todayTotal < previous {
+                Label("Missed previous workout by \(Formatters.trim(previous - entry.todayTotal)) lbs",
+                      systemImage: "xmark.circle")
+                    .foregroundStyle(.red)
+            } else {
+                Label("Tied previous workout", systemImage: "equal.circle")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Label("First time logging this exercise", systemImage: "star.fill")
+                .foregroundStyle(.blue)
+        }
+    }
+}
+
+// MARK: - Completed exercises, gathered onto one shared page
+
+struct CompletedSummaryPageView: View {
+    @Binding var drafts: [WorkoutLogView.ExerciseDraft]
+    let pageHeight: CGFloat
+    @Binding var currentPageID: String?
+
+    private var completedIndices: [Int] {
+        drafts.indices.filter { !drafts[$0].isExpanded }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Completed")
+                    .font(.title2.bold())
+                ForEach(completedIndices, id: \.self) { i in
+                    row(for: i)
+                }
+            }
+            .padding()
+            .frame(minHeight: pageHeight, alignment: .top)
+        }
+    }
+
+    private func row(for i: Int) -> some View {
+        let draft = drafts[i]
+        let weights = draft.sets.map { $0.weightText.isEmpty ? "—" : $0.weightText }.joined(separator: "/")
+        let reps = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }.joined(separator: "/")
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(draft.name).font(.headline)
+                Spacer()
+                Button {
+                    // Reopening moves it back to its own page and out of
+                    // this summary — jump there so the transition is clear.
+                    withAnimation {
+                        drafts[i].isExpanded = true
+                        drafts[i].autoCollapseEnabled = false
+                        currentPageID = "ex-\(drafts[i].id)"
+                    }
+                } label: {
+                    Label("Edit", systemImage: "pencil.circle")
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+            }
+            Text("\(reps) reps @ \(weights) lbs")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

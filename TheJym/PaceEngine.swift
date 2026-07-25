@@ -75,28 +75,10 @@ enum PaceEngine {
 
     // MARK: Reps-to-beat math
 
-    /// Given a target total, the sets already logged, and the weights planned for the
-    /// remaining sets, return the reps you need in the NEXT set to stay "on pace" to
-    /// beat the target (deficit spread proportionally across remaining sets by weight).
-    ///
-    /// Example: target 3,890, nothing logged yet, plan 135/135/135/145/145/145
-    /// -> remaining capacity per rep = 135+135+135+145+145+145 = 840
-    /// -> even pace requires ~4.63 "reps worth" per weighted set; next set at 135
-    ///    needs ceil((3891 * 135/840) / 135) ... simplified below to an even-reps solve.
-    static func repsNeededNextSet(targetTotal: Double,
-                                  loggedSoFar: Double,
-                                  remainingWeights: [Double]) -> Int? {
-        guard let next = remainingWeights.first, next > 0 else { return nil }
-        let deficit = targetTotal - loggedSoFar + 1   // +1 lb·rep to BEAT, not tie
-        if deficit <= 0 { return 0 }                   // already beaten
-        let capacityPerRep = remainingWeights.reduce(0, +)
-        guard capacityPerRep > 0 else { return nil }
-        // Solve for equal reps r across remaining sets: r * capacityPerRep >= deficit
-        let evenReps = deficit / capacityPerRep
-        return Int(ceil(evenReps))
-    }
-
-    /// Reps needed in the FINAL remaining set to beat outright (if it all came down to this set).
+    /// Reps needed in just the NEXT set (at its current, possibly just-
+    /// adjusted weight) to beat the target outright — doesn't spread the
+    /// deficit across every remaining set, so a weight bump on the next set
+    /// is reflected immediately in the pace needed for that one set.
     static func repsToClinch(targetTotal: Double,
                              loggedSoFar: Double,
                              nextWeight: Double) -> Int? {

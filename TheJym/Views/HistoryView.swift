@@ -161,7 +161,7 @@ struct HistoryView: View {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("lbs")
-                    if showGoal { Text("goal") }
+                    if showGoal { Text("target") }
                     Text("reps")
                 }
                 .font(.caption2)
@@ -316,7 +316,7 @@ struct SessionDetailView: View {
             ForEach(sortedLogs, id: \.persistentModelID) { log in
                 Section {
                     if !log.targetReps.isEmpty {
-                        LabeledContent("Goal", value: log.targetReps.map(String.init).joined(separator: "/"))
+                        LabeledContent("Target", value: log.targetReps.map(String.init).joined(separator: "/"))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(log.sortedSets, id: \.persistentModelID) { set in

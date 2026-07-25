@@ -28,48 +28,7 @@ enum ProgressionEngine {
                                    roundingIncrement: Double = 2.5) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
         let latestWeights = latest.sortedSets.map(\.weight)
-
-        // Did a given session EXCEED every target rep? (strictly more on at least
-        // one set, and >= target on all sets)
-        func exceeded(_ log: ExerciseLog) -> Bool {
-            let sets = log.sortedSets
-            guard sets.count == targetReps.count else { return metAll(log) }
-            var strict = false
-            for (i, s) in sets.enumerated() {
-                if s.reps < targetReps[i] { return false }
-                if s.reps > targetReps[i] { strict = true }
-            }
-            return strict
-        }
-        func metAll(_ log: ExerciseLog) -> Bool {
-            let sets = log.sortedSets
-            guard !sets.isEmpty else { return false }
-            for (i, s) in sets.enumerated() {
-                let t = i < targetReps.count ? targetReps[i] : targetReps.last ?? 0
-                if s.reps < t { return false }
-            }
-            return true
-        }
-        /// Average surplus reps per set in the latest session.
-        func avgSurplus(_ log: ExerciseLog) -> Double {
-            let sets = log.sortedSets
-            guard !sets.isEmpty else { return 0 }
-            var total = 0
-            for (i, s) in sets.enumerated() {
-                let t = i < targetReps.count ? targetReps[i] : targetReps.last ?? 0
-                total += (s.reps - t)
-            }
-            return Double(total) / Double(sets.count)
-        }
-
-        // Consecutive-exceed streak counting back from the latest session,
-        // only counting sessions at the SAME weights as the latest (so a bump
-        // resets the clock).
-        var streak = 0
-        for log in history.reversed() {
-            guard log.sortedSets.map(\.weight) == latestWeights else { break }
-            if exceeded(log) { streak += 1 } else { break }
-        }
+        let streak = currentStreak(targetReps: targetReps, history: history)
 
         let smallJump: Double = 2.5
         let bigJump: Double = 5
@@ -78,23 +37,86 @@ enum ProgressionEngine {
         var increment: Double = 0
         switch aggressiveness {
         case .conservative:
-            if streak >= 3 { increment = avgSurplus(latest) >= 2 ? bigJump : smallJump }
+            if streak >= 3 { increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? bigJump : smallJump }
         case .moderate:
-            if streak >= 2 { increment = avgSurplus(latest) >= 2 ? bigJump : smallJump }
-            else if streak >= 1 && avgSurplus(latest) >= 3 { increment = smallJump }
+            if streak >= 2 { increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? bigJump : smallJump }
+            else if streak >= 1 && avgSurplus(latest, targetReps: targetReps) >= 3 { increment = smallJump }
         case .aggressive:
-            if metAll(latest) {
-                increment = avgSurplus(latest) >= 2 ? hugeJump : bigJump
+            if metAll(latest, targetReps: targetReps) {
+                increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? hugeJump : bigJump
             }
         }
 
         // If they badly missed targets (avg 2+ reps short), suggest backing off ~5%.
-        if avgSurplus(latest) <= -2 {
+        if avgSurplus(latest, targetReps: targetReps) <= -2 {
             return latestWeights.map { roundToPlate($0 * 0.95, smallest: roundingIncrement) }
         }
 
         guard increment > 0 else { return latestWeights }   // hold the weight
         return latestWeights.map { roundToPlate($0 + increment, smallest: roundingIncrement) }
+    }
+
+    // MARK: - Shared performance checks (used by suggestNextWeights + recap)
+
+    /// Did a given session EXCEED every target rep? (strictly more on at
+    /// least one set, and >= target on all sets)
+    private static func exceeded(_ log: ExerciseLog, targetReps: [Int]) -> Bool {
+        let sets = log.sortedSets
+        guard sets.count == targetReps.count else { return metAll(log, targetReps: targetReps) }
+        var strict = false
+        for (i, s) in sets.enumerated() {
+            if s.reps < targetReps[i] { return false }
+            if s.reps > targetReps[i] { strict = true }
+        }
+        return strict
+    }
+
+    private static func metAll(_ log: ExerciseLog, targetReps: [Int]) -> Bool {
+        let sets = log.sortedSets
+        guard !sets.isEmpty else { return false }
+        for (i, s) in sets.enumerated() {
+            let t = i < targetReps.count ? targetReps[i] : targetReps.last ?? 0
+            if s.reps < t { return false }
+        }
+        return true
+    }
+
+    /// Average surplus reps per set in a session (negative = fell short).
+    private static func avgSurplus(_ log: ExerciseLog, targetReps: [Int]) -> Double {
+        let sets = log.sortedSets
+        guard !sets.isEmpty else { return 0 }
+        var total = 0
+        for (i, s) in sets.enumerated() {
+            let t = i < targetReps.count ? targetReps[i] : targetReps.last ?? 0
+            total += (s.reps - t)
+        }
+        return Double(total) / Double(sets.count)
+    }
+
+    /// Consecutive most-recent sessions (at the same weights as the latest)
+    /// that exceeded every target rep — exposed for progress display (e.g.
+    /// the end-of-workout recap's "2/3 sessions to a weight jump"), separate
+    /// from the jump decision itself which still comes from suggestNextWeights.
+    static func currentStreak(targetReps: [Int], history: [ExerciseLog]) -> Int {
+        guard let latest = history.last, !latest.sets.isEmpty else { return 0 }
+        let latestWeights = latest.sortedSets.map(\.weight)
+        var streak = 0
+        for log in history.reversed() {
+            guard log.sortedSets.map(\.weight) == latestWeights else { break }
+            if exceeded(log, targetReps: targetReps) { streak += 1 } else { break }
+        }
+        return streak
+    }
+
+    /// How many consecutive exceeded sessions are needed to trigger a weight
+    /// jump at this aggressiveness — mirrors the thresholds in
+    /// suggestNextWeights, for progress display purposes.
+    static func requiredStreak(for aggressiveness: AIAggressiveness) -> Int {
+        switch aggressiveness {
+        case .conservative: return 3
+        case .moderate: return 2
+        case .aggressive: return 1
+        }
     }
 
     static func roundToPlate(_ w: Double, smallest: Double = 2.5) -> Double {
