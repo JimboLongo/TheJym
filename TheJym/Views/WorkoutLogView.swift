@@ -75,86 +75,53 @@ struct WorkoutLogView: View {
     var body: some View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
         let dumbbellIncrement = settings?.dumbbellRoundingIncrement ?? 5
-        ScrollViewReader { proxy in
-            List {
-                if isDeloadCycle {
-                    Section {
-                        Label("Deload cycle — weights below are cut to ~60% to dissipate fatigue before the next block. Go light, move well, recover.",
-                              systemImage: "arrow.down.heart")
-                            .font(.callout).foregroundStyle(.orange)
-                    }
-                }
-                ForEach(Array(drafts.indices), id: \.self) { i in
-                    Section {
-                        ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
+        GeometryReader { geo in
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(drafts.indices), id: \.self) { i in
+                            ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
                                             exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                            plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement)
-                    } header: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(drafts[i].name)
-                                    .font(.title2.bold())
-                                Spacer()
-                                if drafts[i].isExpanded {
-                                    Button {
-                                        withAnimation { drafts[i].showingDetails.toggle() }
-                                    } label: {
-                                        Image(systemName: drafts[i].showingDetails ? "chevron.up.circle.fill" : "info.circle")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .imageScale(.large)
-                                    Button {
-                                        withAnimation { drafts[i].isExpanded = false }
-                                    } label: {
-                                        Image(systemName: "checkmark.circle")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .imageScale(.large)
-                                } else {
-                                    Button {
-                                        // Reopened manually — leave it open until the user
-                                        // closes it again themselves, don't auto-collapse twice.
-                                        withAnimation { drafts[i].isExpanded = true; drafts[i].autoCollapseEnabled = false }
-                                    } label: {
-                                        Label("Edit", systemImage: "pencil.circle")
-                                    }
-                                    .buttonStyle(.plain)
-                                    .font(.caption)
-                                }
-                            }
-                            if drafts[i].isExpanded {
-                                HStack(spacing: 12) {
-                                    Text("Set").font(.title3).foregroundStyle(.secondary)
-                                        .frame(width: 44, alignment: .leading)
-                                    Text("Weight").font(.title3).foregroundStyle(.secondary)
-                                        .frame(width: 100, alignment: .center)
-                                    Text("Goal").font(.title3).foregroundStyle(.secondary)
-                                        .frame(width: 44, alignment: .center)
-                                    Text("Reps").font(.title3).foregroundStyle(.secondary)
-                                        .frame(width: 75, alignment: .center)
-                                }
-                            }
+                                            plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
+                                            pageHeight: geo.size.height)
+                                .frame(height: geo.size.height)
+                                .clipped()
+                                .id(drafts[i].id)
                         }
                     }
-                    .id(drafts[i].id)
+                    .scrollTargetLayout()
                 }
-                Section {
-                    Button {
-                        finishWorkout()
-                    } label: {
-                        Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
+                .scrollTargetBehavior(.paging)
+                .onChange(of: scrollToDraftID) { _, newID in
+                    if let newID {
+                        withAnimation { proxy.scrollTo(newID, anchor: .top) }
                     }
-                    .disabled(drafts.allSatisfy { $0.sets.allSatisfy { !$0.isLogged } })
                 }
             }
-            .listStyle(.plain)
-            .onChange(of: scrollToDraftID) { _, newID in
-                if let newID {
-                    withAnimation { proxy.scrollTo(newID, anchor: .top) }
-                }
+        }
+        .safeAreaInset(edge: .top) {
+            if isDeloadCycle {
+                Label("Deload cycle — weights below are cut to ~60% to dissipate fatigue before the next block. Go light, move well, recover.",
+                      systemImage: "arrow.down.heart")
+                    .font(.callout).foregroundStyle(.orange)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.12))
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            Button {
+                finishWorkout()
+            } label: {
+                Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(drafts.allSatisfy { $0.sets.allSatisfy { !$0.isLogged } })
+            .padding()
+            .background(.bar)
         }
         .navigationTitle("\(day.name) · Cycle \(phase.currentCycle)")
         .toolbar {
@@ -327,12 +294,16 @@ struct WorkoutLogView: View {
 
 // MARK: - One exercise's logging card + pace panel
 
-struct ExerciseDraftSection: View {
+struct ExercisePageView: View {
     @Binding var draft: WorkoutLogView.ExerciseDraft
     let allLogs: [ExerciseLog]
     let exerciseDef: ExerciseDef?
     let plateSizes: [Double]
     let dumbbellIncrement: Double
+    /// Full available height for this one exercise's "page" — everything
+    /// from the name down through the pace panel must fit inside it so a
+    /// vertical swipe moves cleanly to the next exercise instead of scrolling.
+    let pageHeight: CGFloat
 
     @State private var plateTargetText = ""
     /// Sets a later set's weight was just shifted by via cascade, so the
@@ -367,9 +338,20 @@ struct ExerciseDraftSection: View {
     private var weightValues: [Double] {
         Array(stride(from: 0.0, through: 600.0, by: weightStep))
     }
+    /// Shrinks the weight/reps wheels as needed so all of this exercise's
+    /// sets, plus the header and pace panel, fit within one page height.
+    private var wheelHeight: CGFloat {
+        let chromeHeight: CGFloat = 300   // header + pace panel + paddings, estimated
+        let available = pageHeight - chromeHeight
+        let setCount = max(draft.sets.count, 1)
+        let perSet = available / CGFloat(setCount)
+        return min(90, max(40, perSet))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            header
+
             if draft.isExpanded {
                 if draft.showingDetails {
                     notesAndPlateCalc(exerciseDef)
@@ -396,7 +378,57 @@ struct ExerciseDraftSection: View {
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal)
+        .padding(.vertical, 12)
+        .frame(height: pageHeight, alignment: .top)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(draft.name)
+                    .font(.title2.bold())
+                Spacer()
+                if draft.isExpanded {
+                    Button {
+                        withAnimation { draft.showingDetails.toggle() }
+                    } label: {
+                        Image(systemName: draft.showingDetails ? "chevron.up.circle.fill" : "info.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .imageScale(.large)
+                    Button {
+                        withAnimation { draft.isExpanded = false }
+                    } label: {
+                        Image(systemName: "checkmark.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .imageScale(.large)
+                } else {
+                    Button {
+                        // Reopened manually — leave it open until the user closes
+                        // it again themselves, don't auto-collapse a second time.
+                        withAnimation { draft.isExpanded = true; draft.autoCollapseEnabled = false }
+                    } label: {
+                        Label("Edit", systemImage: "pencil.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                }
+            }
+            if draft.isExpanded {
+                HStack(spacing: 12) {
+                    Text("Set").font(.title3).foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .leading)
+                    Text("Weight").font(.title3).foregroundStyle(.secondary)
+                        .frame(width: 100, alignment: .center)
+                    Text("Goal").font(.title3).foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .center)
+                    Text("Reps").font(.title3).foregroundStyle(.secondary)
+                        .frame(width: 75, alignment: .center)
+                }
+            }
+        }
     }
 
     private var setRows: some View {
@@ -422,7 +454,7 @@ struct ExerciseDraftSection: View {
                             }
                         }
                         .pickerStyle(.wheel)
-                        .frame(width: 100, height: 90)
+                        .frame(width: 100, height: wheelHeight)
                         .clipped()
                         if let delta = cascadeIndicator[i] {
                             Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
@@ -457,7 +489,7 @@ struct ExerciseDraftSection: View {
                         }
                     }
                     .pickerStyle(.wheel)
-                    .frame(width: 75, height: 90)
+                    .frame(width: 75, height: wheelHeight)
                     .clipped()
                 }
                 .animation(.easeInOut, value: cascadeIndicator[i])
