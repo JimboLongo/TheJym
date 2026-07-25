@@ -393,13 +393,13 @@ struct ExerciseDraftSection: View {
     private var setRows: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                Text("Set").font(.headline).foregroundStyle(.secondary)
+                Text("Set").font(.title3).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
-                Text("Weight").font(.headline).foregroundStyle(.secondary)
+                Text("Weight").font(.title3).foregroundStyle(.secondary)
                     .frame(width: 100, alignment: .center)
-                Text("Goal").font(.headline).foregroundStyle(.secondary)
+                Text("Goal").font(.title3).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .center)
-                Text("Reps").font(.headline).foregroundStyle(.secondary)
+                Text("Reps").font(.title3).foregroundStyle(.secondary)
                     .frame(width: 75, alignment: .center)
             }
             .padding(.bottom, 2)
@@ -407,7 +407,7 @@ struct ExerciseDraftSection: View {
             ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
                 HStack(spacing: 12) {
                     Text("Set \(i + 1)")
-                        .font(.footnote)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .leading)
 
@@ -421,11 +421,11 @@ struct ExerciseDraftSection: View {
                                 if delta != 0 { cascadeDelta(delta, from: i) }
                             })) {
                             ForEach(weightValues, id: \.self) { v in
-                                Text(Formatters.trim(v)).font(.footnote).tag(v)
+                                Text(Formatters.trim(v)).font(.subheadline).tag(v)
                             }
                         }
                         .pickerStyle(.wheel)
-                        .frame(width: 100, height: 55)
+                        .frame(width: 100, height: 60)
                         .clipped()
                         if let delta = cascadeIndicator[i] {
                             Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
@@ -439,12 +439,12 @@ struct ExerciseDraftSection: View {
 
                     if let goal = draft.targetReps[safe: i] {
                         Text("\(goal)")
-                            .font(.footnote)
+                            .font(.subheadline)
                             .foregroundStyle(.primary)
                             .frame(width: 44, alignment: .center)
                     } else {
                         Text("–")
-                            .font(.footnote)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .center)
                     }
@@ -456,11 +456,11 @@ struct ExerciseDraftSection: View {
                             checkAutoCollapse()
                         })) {
                         ForEach(0...50, id: \.self) { v in
-                            Text("\(v)").font(.footnote).tag(v)
+                            Text("\(v)").font(.subheadline).tag(v)
                         }
                     }
                     .pickerStyle(.wheel)
-                    .frame(width: 75, height: 55)
+                    .frame(width: 75, height: 60)
                     .clipped()
                 }
                 .animation(.easeInOut, value: cascadeIndicator[i])
