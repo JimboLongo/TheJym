@@ -28,6 +28,7 @@ struct WorkoutLogView: View {
     @State private var drafts: [ExerciseDraft] = []
     @State private var showFinishSheet = false
     @State private var aiSuggestions: [AISuggestionRow] = []
+    @State private var scrollToDraftID: UUID?
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -74,33 +75,59 @@ struct WorkoutLogView: View {
     var body: some View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
         let dumbbellIncrement = settings?.dumbbellRoundingIncrement ?? 5
-        List {
-            if isDeloadCycle {
+        ScrollViewReader { proxy in
+            List {
+                if isDeloadCycle {
+                    Section {
+                        Label("Deload cycle — weights below are cut to ~60% to dissipate fatigue before the next block. Go light, move well, recover.",
+                              systemImage: "arrow.down.heart")
+                            .font(.callout).foregroundStyle(.orange)
+                    }
+                }
+                ForEach(Array(drafts.indices), id: \.self) { i in
+                    Section {
+                        ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
+                                            exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
+                                            plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement)
+                    }
+                    .id(drafts[i].id)
+                }
                 Section {
-                    Label("Deload cycle — weights below are cut to ~60% to dissipate fatigue before the next block. Go light, move well, recover.",
-                          systemImage: "arrow.down.heart")
-                        .font(.callout).foregroundStyle(.orange)
+                    Button {
+                        finishWorkout()
+                    } label: {
+                        Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(drafts.allSatisfy { $0.sets.allSatisfy { !$0.isLogged } })
                 }
             }
-            ForEach(Array(drafts.indices), id: \.self) { i in
-                Section {
-                    ExerciseDraftSection(draft: $drafts[i], allLogs: allExerciseLogs,
-                                        exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                        plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement)
+            .onChange(of: scrollToDraftID) { _, newID in
+                if let newID {
+                    withAnimation { proxy.scrollTo(newID, anchor: .top) }
                 }
-            }
-            Section {
-                Button {
-                    finishWorkout()
-                } label: {
-                    Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(drafts.allSatisfy { $0.sets.allSatisfy { !$0.isLogged } })
             }
         }
         .navigationTitle("\(day.name) · Cycle \(phase.currentCycle)")
+        .toolbar {
+            if drafts.count > 1 {
+                ToolbarItem(placement: .principal) {
+                    Menu {
+                        ForEach(drafts) { draft in
+                            Button(draft.name) { scrollToDraftID = draft.id }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("\(day.name) · Cycle \(phase.currentCycle)")
+                                .font(.headline)
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+        }
         .onAppear(perform: buildDrafts)
         .onChange(of: drafts) { _, _ in saveDraftToDisk() }
         .sheet(isPresented: $showFinishSheet, onDismiss: { dismiss() }) {

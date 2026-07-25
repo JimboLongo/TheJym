@@ -155,11 +155,7 @@ struct HistoryView: View {
     }
 
     private func exerciseRow(_ log: ExerciseLog) -> some View {
-        let sortedSets = log.sortedSets
-        let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
-        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
-
-        return VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(log.exerciseName).font(.subheadline.weight(.semibold))
                 Spacer()
@@ -168,14 +164,45 @@ struct HistoryView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            Text("\(weights) lbs")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-            Text("\(reps) reps")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("lbs")
+                    Text("reps")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary.opacity(0.7))
+
+                liftsGrid(log)
+            }
         }
         .padding(.vertical, 2)
+    }
+
+    /// Weights on top, reps below, laid out in a Grid so each column's width
+    /// matches its widest value — the "/" separators land in the same
+    /// horizontal spot on both lines, and each rep centers under its weight.
+    private func liftsGrid(_ log: ExerciseLog) -> some View {
+        let sortedSets = log.sortedSets
+        return Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
+            GridRow {
+                ForEach(Array(sortedSets.enumerated()), id: \.offset) { idx, set in
+                    Text(Formatters.trim(set.weight))
+                    if idx < sortedSets.count - 1 {
+                        Text("/").foregroundStyle(.secondary.opacity(0.5))
+                    }
+                }
+            }
+            GridRow {
+                ForEach(Array(sortedSets.enumerated()), id: \.offset) { idx, set in
+                    Text(String(set.reps))
+                    if idx < sortedSets.count - 1 {
+                        Text("/").foregroundStyle(.secondary.opacity(0.5))
+                    }
+                }
+            }
+        }
+        .font(.system(.caption, design: .monospaced))
+        .foregroundStyle(.secondary)
     }
 
     private func handleImport(_ result: Result<URL, Error>) {
