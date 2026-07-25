@@ -428,6 +428,8 @@ struct ExercisePageView: View {
                         .frame(width: 44, alignment: .center)
                     Text("Reps").font(.title3).foregroundStyle(.secondary)
                         .frame(width: 75, alignment: .center)
+                    Text("+/-").font(.title3).foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .center)
                 }
             }
         }
@@ -493,6 +495,18 @@ struct ExercisePageView: View {
                     .pickerStyle(.wheel)
                     .frame(width: 75, height: wheelHeight)
                     .clipped()
+
+                    if let delta = repsDelta(for: i) {
+                        Text(delta > 0 ? "+\(delta)" : "\(delta)")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(delta >= 0 ? .green : .red)
+                            .frame(width: 44, alignment: .center)
+                    } else {
+                        Text("–")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .center)
+                    }
                 }
                 .animation(.easeInOut, value: cascadeIndicator[i])
             }
@@ -526,6 +540,15 @@ struct ExercisePageView: View {
 
     private func nearestValue(_ target: Double, in values: [Double]) -> Double {
         values.min(by: { abs($0 - target) < abs($1 - target) }) ?? 0
+    }
+
+    /// Actual reps minus goal reps for a set, once reps have been entered —
+    /// nil (shown as a dash) until then, so it doesn't default to "-N" for a
+    /// set that hasn't been logged yet.
+    private func repsDelta(for index: Int) -> Int? {
+        guard let reps = draft.sets[index].reps,
+              let goal = draft.targetReps[safe: index] else { return nil }
+        return reps - goal
     }
 
     /// Compact summary of today's entered weights/reps, shown once the
