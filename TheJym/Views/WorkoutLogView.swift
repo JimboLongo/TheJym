@@ -365,22 +365,18 @@ struct ExercisePageView: View {
                 currentWorkoutRow
             }
 
-            // Pace panel
-            if comparisons.isEmpty {
-                Text("First time logging this — set the baseline. 💪")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(comparisons) { c in
-                        PaceRow(target: c,
-                                loggedSoFar: draft.loggedTotal,
-                                remainingWeights: remainingWeights,
-                                avgWeightPerRep: avgWeightPerRep)
-                    }
+            // Pace panel — always shows all three comparisons; any with no
+            // prior data yet just says so instead of being omitted.
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(comparisons) { c in
+                    PaceRow(target: c,
+                            loggedSoFar: draft.loggedTotal,
+                            remainingWeights: remainingWeights,
+                            avgWeightPerRep: avgWeightPerRep)
                 }
-                .padding(10)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             }
+            .padding(10)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
@@ -646,34 +642,55 @@ struct PaceRow: View {
         return "\(reps) rep\(reps == 1 ? "" : "s")"
     }
 
+    /// A human label for what "no data yet" means for this particular kind.
+    private var noDataMessage: String {
+        switch target.kind {
+        case .lastLogged: return "First time logging this exercise — set the baseline. 💪"
+        case .bestAtTheseWeights: return "First time at this exact weight — set the baseline. 💪"
+        case .bestForExercise: return "No logs yet for this rep scheme — set the baseline. 💪"
+        }
+    }
+
     var body: some View {
-        let beaten = loggedSoFar > target.totalWeightMoved
-        let paceReps = PaceEngine.repsNeededNextSet(targetTotal: target.totalWeightMoved,
-                                                    loggedSoFar: loggedSoFar,
-                                                    remainingWeights: remainingWeights)
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(target.kind.rawValue).font(.caption.bold())
                 Spacer()
-                Text(Formatters.date.string(from: target.date))
+                if let date = target.date {
+                    Text(Formatters.date.string(from: date))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            if target.hasData {
+                Text(target.setsSummary)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                loggedComparison
+            } else {
+                Text(noDataMessage)
                     .font(.caption2).foregroundStyle(.secondary)
             }
-            Text(target.setsSummary)
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.secondary)
-            if beaten {
-                Label("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥",
-                      systemImage: "flame.fill")
-                    .font(.caption).foregroundStyle(.green)
-            } else if remainingWeights.isEmpty {
-                Label("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar))",
-                      systemImage: "arrow.down.right")
-                    .font(.caption).foregroundStyle(.red)
-            } else if let reps = paceReps {
-                Label("Need \(reps) reps/set pace to beat it (\(remainingWeights.count) sets left)",
-                      systemImage: "target")
-                    .font(.caption).foregroundStyle(.orange)
-            }
+        }
+    }
+
+    @ViewBuilder
+    private var loggedComparison: some View {
+        let beaten = loggedSoFar > target.totalWeightMoved
+        let paceReps = PaceEngine.repsNeededNextSet(targetTotal: target.totalWeightMoved,
+                                                    loggedSoFar: loggedSoFar,
+                                                    remainingWeights: remainingWeights)
+        if beaten {
+            Label("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥",
+                  systemImage: "flame.fill")
+                .font(.caption).foregroundStyle(.green)
+        } else if remainingWeights.isEmpty {
+            Label("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar))",
+                  systemImage: "arrow.down.right")
+                .font(.caption).foregroundStyle(.red)
+        } else if let reps = paceReps {
+            Label("Need \(reps) reps/set pace to beat it (\(remainingWeights.count) sets left)",
+                  systemImage: "target")
+                .font(.caption).foregroundStyle(.orange)
         }
     }
 }
