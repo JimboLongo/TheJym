@@ -197,18 +197,31 @@ struct WorkoutLogView: View {
                         // normally, since it's not translated through UIKit's
                         // menu system.
                         .popover(isPresented: $showExerciseJumpList) {
-                            List(drafts) { draft in
-                                Button {
-                                    withAnimation { currentPageID = pageID(for: draft) }
-                                    showExerciseJumpList = false
-                                } label: {
-                                    Text(draft.name)
-                                        .strikethrough(!draft.isExpanded)
-                                        .foregroundStyle(draft.isExpanded ? .primary : .secondary)
+                            // A plain VStack (not List) so there are no row
+                            // separators and everything's sized to fit — no
+                            // internal scrolling — matching the compact look
+                            // the native Menu had, minus its style stripping.
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(drafts) { draft in
+                                    Button {
+                                        withAnimation { currentPageID = pageID(for: draft) }
+                                        showExerciseJumpList = false
+                                    } label: {
+                                        Text(draft.name)
+                                            .font(.subheadline)
+                                            .strikethrough(!draft.isExpanded)
+                                            .foregroundStyle(draft.isExpanded ? .primary : .secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.vertical, 6)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
                             .presentationCompactAdaptation(.popover)
-                            .frame(minWidth: 250, minHeight: 200)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(minWidth: 220)
                         }
                     }
                 }
