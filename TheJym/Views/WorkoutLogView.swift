@@ -55,6 +55,9 @@ struct WorkoutLogView: View {
         var hadNoBaseline: Bool = false
         /// False once every set is logged and it's auto-collapsed to a summary.
         var isExpanded: Bool = true
+        /// False after the user manually reopens a collapsed exercise, so it
+        /// won't auto-collapse again until they close it themselves.
+        var autoCollapseEnabled: Bool = true
         var loggedTotal: Double {
             sets.reduce(0) { $0 + (Double($1.reps ?? 0) * ($1.weight ?? 0)) }
         }
@@ -259,11 +262,19 @@ struct ExerciseDraftSection: View {
 
     @State private var showingDetails = false
     @State private var plateTargetText = ""
-    @FocusState private var focusedWeightIndex: Int?
+
+    private enum FocusTarget: Hashable {
+        case weight(Int)
+        case reps(Int)
+    }
+    @FocusState private var focusedField: FocusTarget?
     /// Snapshot taken when a weight field gains focus, so on blur we can
     /// tell what actually changed (and avoid reacting to every keystroke —
     /// e.g. typing "175" one digit at a time shouldn't cascade three times).
     @State private var weightOnFocus: [Int: String] = [:]
+    /// Sets a later set's weight was just shifted by via cascade, so the
+    /// field can flash a "+10"/"-5" badge before fading out.
+    @State private var cascadeIndicator: [Int: Double] = [:]
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -274,6 +285,13 @@ struct ExerciseDraftSection: View {
     /// Weights for sets not yet logged (reps missing), using entered weight or 0.
     private var remainingWeights: [Double] {
         draft.sets.filter { $0.reps == nil }.map { $0.weight ?? 0 }
+    }
+    /// Average weight moved per rep so far this workout — used to translate
+    /// a beaten-by/fell-short-by weight delta into an equivalent rep count.
+    private var avgWeightPerRep: Double {
+        let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)
+        guard totalReps > 0 else { return 0 }
+        return draft.loggedTotal / Double(totalReps)
     }
 
     var body: some View {
@@ -298,7 +316,8 @@ struct ExerciseDraftSection: View {
                     ForEach(comparisons) { c in
                         PaceRow(target: c,
                                 loggedSoFar: draft.loggedTotal,
-                                remainingWeights: remainingWeights)
+                                remainingWeights: remainingWeights,
+                                avgWeightPerRep: avgWeightPerRep)
                     }
                 }
                 .padding(10)
@@ -306,12 +325,19 @@ struct ExerciseDraftSection: View {
             }
         }
         .padding(.vertical, 4)
-        .onChange(of: focusedWeightIndex) { oldIndex, newIndex in
-            if let oldIndex, oldIndex != newIndex, oldIndex < draft.sets.count {
-                commitWeightEdit(at: oldIndex)
+        .onChange(of: focusedField) { oldField, newField in
+            if let oldField, oldField != newField {
+                switch oldField {
+                case .weight(let idx) where idx < draft.sets.count:
+                    commitWeightEdit(at: idx)
+                case .reps:
+                    checkAutoCollapse()
+                default:
+                    break
+                }
             }
-            if let newIndex {
-                weightOnFocus[newIndex] = draft.sets[newIndex].weightText
+            if case .weight(let idx) = newField {
+                weightOnFocus[idx] = draft.sets[idx].weightText
             }
         }
     }
@@ -331,9 +357,18 @@ struct ExerciseDraftSection: View {
                 }
                 .buttonStyle(.plain)
                 .imageScale(.large)
+                Button {
+                    withAnimation { draft.isExpanded = false }
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                }
+                .buttonStyle(.plain)
+                .imageScale(.large)
             } else {
                 Button {
-                    withAnimation { draft.isExpanded = true }
+                    // Reopened manually — leave it open until the user closes
+                    // it again themselves, don't auto-collapse a second time.
+                    withAnimation { draft.isExpanded = true; draft.autoCollapseEnabled = false }
                 } label: {
                     Label("Edit", systemImage: "pencil.circle")
                 }
@@ -349,22 +384,30 @@ struct ExerciseDraftSection: View {
                 Text("Set \(i + 1)")
                     .font(.caption).foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
-                TextField("lbs", text: $draft.sets[i].weightText)
-                    .keyboardType(.decimalPad)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 80)
-                    .focused($focusedWeightIndex, equals: i)
+                ZStack(alignment: .topTrailing) {
+                    TextField("lbs", text: $draft.sets[i].weightText)
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                        .focused($focusedField, equals: .weight(i))
+                    if let delta = cascadeIndicator[i] {
+                        Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                            .font(.caption2.bold())
+                            .foregroundStyle(delta > 0 ? .green : .red)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(.thinMaterial, in: Capsule())
+                            .offset(x: 8, y: -10)
+                            .transition(.opacity)
+                    }
+                }
                 Text("×")
                 TextField("reps (goal \(draft.targetReps[safe: i] ?? 0))",
                           text: $draft.sets[i].repsText)
                     .keyboardType(.numberPad)
                     .textFieldStyle(.roundedBorder)
-                    .onChange(of: draft.sets[i].repsText) { _, _ in
-                        if draft.sets.allSatisfy(\.isLogged) {
-                            withAnimation { draft.isExpanded = false }
-                        }
-                    }
+                    .focused($focusedField, equals: .reps(i))
             }
+            .animation(.easeInOut, value: cascadeIndicator[i])
         }
     }
 
@@ -392,9 +435,26 @@ struct ExerciseDraftSection: View {
 
     private func cascadeDelta(_ delta: Double, from index: Int) {
         guard delta != 0 else { return }
+        var affected: [Int] = []
         for k in (index + 1)..<draft.sets.count {
             guard let existing = draft.sets[k].weight else { continue }
             draft.sets[k].weightText = Formatters.trim(existing + delta)
+            cascadeIndicator[k] = delta
+            affected.append(k)
+        }
+        guard !affected.isEmpty else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            for k in affected { cascadeIndicator.removeValue(forKey: k) }
+        }
+    }
+
+    /// Only auto-collapses if the exercise hasn't been manually reopened
+    /// since the last time it collapsed.
+    private func checkAutoCollapse() {
+        guard draft.autoCollapseEnabled else { return }
+        if draft.sets.allSatisfy(\.isLogged) {
+            withAnimation { draft.isExpanded = false }
         }
     }
 
@@ -418,20 +478,12 @@ struct ExerciseDraftSection: View {
     private var currentWorkoutRow: some View {
         let weights = draft.sets.map { $0.weightText.isEmpty ? "—" : $0.weightText }.joined(separator: "/")
         let reps = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }.joined(separator: "/")
-        let delta = draft.sets.enumerated().map { i, s -> String in
-            guard let r = s.reps else { return "—" }
-            let goal = draft.targetReps[safe: i] ?? r
-            let d = r - goal
-            return d == 0 ? "0" : (d > 0 ? "+\(d)" : "\(d)")
-        }.joined(separator: "/")
 
         return VStack(alignment: .leading, spacing: 2) {
             Text("Current Workout").font(.caption.bold())
             Text("\(reps) reps @ \(weights) lbs")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
-            Text("vs Goal: \(delta)")
-                .font(.caption2).foregroundStyle(.secondary)
         }
         .padding(10)
         .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
@@ -526,6 +578,16 @@ struct PaceRow: View {
     let target: ComparisonTarget
     let loggedSoFar: Double
     let remainingWeights: [Double]
+    /// Average weight moved per rep so far — converts a beaten-by/fell-
+    /// short-by weight delta into an equivalent whole-rep count.
+    let avgWeightPerRep: Double
+
+    /// Whole reps (rounded up — a partial rep still costs you a full one).
+    private func repsEquivalent(_ lbsDelta: Double) -> String {
+        guard avgWeightPerRep > 0 else { return "0 reps" }
+        let reps = max(1, Int(ceil(abs(lbsDelta) / avgWeightPerRep)))
+        return "\(reps) rep\(reps == 1 ? "" : "s")"
+    }
 
     var body: some View {
         let beaten = loggedSoFar > target.totalWeightMoved
@@ -542,16 +604,12 @@ struct PaceRow: View {
             Text(target.setsSummary)
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
-            if !target.repsVsGoalSummary.isEmpty {
-                Text("vs Goal: \(target.repsVsGoalSummary)")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
             if beaten {
-                Label("Beaten by \(Formatters.trim(loggedSoFar - target.totalWeightMoved)) lbs 🔥",
+                Label("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥",
                       systemImage: "flame.fill")
                     .font(.caption).foregroundStyle(.green)
             } else if remainingWeights.isEmpty {
-                Label("Fell short by \(Formatters.trim(target.totalWeightMoved - loggedSoFar)) lbs",
+                Label("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar))",
                       systemImage: "arrow.down.right")
                     .font(.caption).foregroundStyle(.red)
             } else if let reps = paceReps {

@@ -19,13 +19,6 @@ struct ComparisonTarget: Identifiable {
     let date: Date
     let totalWeightMoved: Double
     let setsSummary: String        // "6/6/5/4/4/3 reps @ 135/135/135/145/145/145 lbs"
-    let repsVsGoal: [Int]          // per set: actual reps - that day's target reps
-
-    /// "+2/+1/0/-1" style summary of repsVsGoal, or "" if there's nothing to show.
-    var repsVsGoalSummary: String {
-        guard !repsVsGoal.isEmpty else { return "" }
-        return repsVsGoal.map { $0 == 0 ? "0" : ($0 > 0 ? "+\($0)" : "\($0)") }.joined(separator: "/")
-    }
 }
 
 enum PaceEngine {
@@ -69,12 +62,10 @@ enum PaceEngine {
         let sortedSets = log.sortedSets
         let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
         let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
-        let repsVsGoal = zip(sortedSets.map(\.reps), log.targetReps).map { $0 - $1 }
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
-                                setsSummary: "\(reps) reps @ \(weights) lbs",
-                                repsVsGoal: repsVsGoal)
+                                setsSummary: "\(reps) reps @ \(weights) lbs")
     }
 
     // MARK: Reps-to-beat math
