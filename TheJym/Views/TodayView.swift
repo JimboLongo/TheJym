@@ -19,6 +19,8 @@ struct TodayView: View {
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
     @State private var newActivityText = ""
+    @State private var newActivityDistanceText = ""
+    @State private var newActivityDistanceUnit = "mi"
     @State private var quickJumpDay: PhaseDay?
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -45,11 +47,11 @@ struct TodayView: View {
             }
             .navigationTitle("Train")
             .toolbar {
-                if let phase = activePhase, !phase.trainingDays.isEmpty {
+                if let phase = activePhase, !phase.orderedDays.isEmpty {
                     ToolbarItem(placement: .principal) {
                         Menu {
-                            ForEach(phase.trainingDays, id: \.persistentModelID) { day in
-                                Button(day.name) { quickJumpDay = day }
+                            ForEach(phase.orderedDays, id: \.persistentModelID) { day in
+                                Button(day.isRest ? "\(day.name) (Rest)" : day.name) { quickJumpDay = day }
                             }
                         } label: {
                             HStack(spacing: 4) {
@@ -71,7 +73,11 @@ struct TodayView: View {
             }
             .navigationDestination(item: $quickJumpDay) { day in
                 if let phase = activePhase {
-                    WorkoutLogView(phase: phase, day: day)
+                    if day.isRest {
+                        RestDayLogView(phase: phase, day: day)
+                    } else {
+                        WorkoutLogView(phase: phase, day: day)
+                    }
                 }
             }
         }
@@ -147,9 +153,20 @@ struct TodayView: View {
         }
 
         Section("Or pick a different day") {
-            ForEach(phase.trainingDays, id: \.persistentModelID) { day in
-                NavigationLink(day.name) {
-                    WorkoutLogView(phase: phase, day: day)
+            ForEach(phase.orderedDays, id: \.persistentModelID) { day in
+                NavigationLink {
+                    if day.isRest {
+                        RestDayLogView(phase: phase, day: day)
+                    } else {
+                        WorkoutLogView(phase: phase, day: day)
+                    }
+                } label: {
+                    if day.isRest {
+                        Label(day.name, systemImage: "moon.zzz")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(day.name)
+                    }
                 }
             }
         }
@@ -180,14 +197,29 @@ struct TodayView: View {
         Section("Rest Day Activity") {
             Text("Log a walk or something light on an off day — it counts toward your streak, but skipping it on an actual rest day won't break one.")
                 .font(.caption).foregroundStyle(.secondary)
+            TextField("e.g. Walk, Yoga, Bike Ride", text: $newActivityText)
             HStack {
-                TextField("e.g. Walk, Yoga, Bike Ride", text: $newActivityText)
+                TextField("Distance (optional)", text: $newActivityDistanceText)
+                    .keyboardType(.decimalPad)
+                Picker("Unit", selection: $newActivityDistanceUnit) {
+                    Text("mi").tag("mi")
+                    Text("km").tag("km")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 120)
                 Button("Log") { logActivity() }
                     .buttonStyle(.borderedProminent)
                     .disabled(newActivityText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             ForEach(todaysActivities, id: \.persistentModelID) { activity in
-                Text(activity.name)
+                HStack {
+                    Text(activity.name)
+                    Spacer()
+                    if let d = activity.distance, d > 0 {
+                        Text("\(Formatters.trim(d)) \(activity.distanceUnit)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .onDelete { idx in
                 for i in idx { context.delete(todaysActivities[i]) }
@@ -199,8 +231,160 @@ struct TodayView: View {
     private func logActivity() {
         let trimmed = newActivityText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        context.insert(RestDayActivity(name: trimmed))
+        context.insert(RestDayActivity(name: trimmed,
+                                       distance: Double(newActivityDistanceText),
+                                       distanceUnit: newActivityDistanceUnit))
         try? context.save()
         newActivityText = ""
+        newActivityDistanceText = ""
+    }
+}
+
+/// Log a specific scheduled Rest day: an ad hoc exercise (any name/sets, not
+/// tied to a plan), and/or a cardio activity with an optional distance.
+/// Exercises are tied to this PhaseDay for reference, but never to
+/// Phase.sessions — a Rest day logging something shouldn't shift where the
+/// cycle thinks you are.
+struct RestDayLogView: View {
+    @Environment(\.modelContext) private var context
+    @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
+    @Query(sort: \RestDayActivity.date, order: .reverse) private var allActivities: [RestDayActivity]
+
+    let phase: Phase
+    let day: PhaseDay
+
+    struct SetDraft: Identifiable { let id = UUID(); var weightText = ""; var repsText = "" }
+    struct ExDraft: Identifiable { let id = UUID(); var name = ""; var sets: [SetDraft] = [SetDraft()] }
+
+    @State private var exercises: [ExDraft] = [ExDraft()]
+    @State private var activityName = ""
+    @State private var distanceText = ""
+    @State private var distanceUnit = "mi"
+
+    private var todaysActivities: [RestDayActivity] {
+        allActivities.filter { Calendar.current.isDateInToday($0.date) }
+    }
+
+    private var canSaveExercises: Bool {
+        exercises.contains { ex in
+            !ex.name.trimmingCharacters(in: .whitespaces).isEmpty &&
+            ex.sets.contains { Double($0.weightText) != nil && Int($0.repsText) != nil }
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section("Cardio / Activity") {
+                TextField("e.g. Walk, Bike Ride, Yoga", text: $activityName)
+                HStack {
+                    TextField("Distance (optional)", text: $distanceText)
+                        .keyboardType(.decimalPad)
+                    Picker("Unit", selection: $distanceUnit) {
+                        Text("mi").tag("mi")
+                        Text("km").tag("km")
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 120)
+                }
+                Button("Log Activity") { logActivity() }
+                    .disabled(activityName.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                ForEach(todaysActivities, id: \.persistentModelID) { activity in
+                    HStack {
+                        Text(activity.name)
+                        Spacer()
+                        if let d = activity.distance, d > 0 {
+                            Text("\(Formatters.trim(d)) \(activity.distanceUnit)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .onDelete { idx in
+                    for i in idx { context.delete(todaysActivities[i]) }
+                    try? context.save()
+                }
+            }
+
+            ForEach(exercises.indices, id: \.self) { i in
+                Section {
+                    TextField("Exercise name", text: $exercises[i].name)
+                        .font(.headline)
+                    ForEach($exercises[i].sets) { $set in
+                        HStack(spacing: 10) {
+                            TextField("lbs", text: $set.weightText)
+                                .keyboardType(.decimalPad)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 80)
+                            Text("×")
+                            TextField("reps", text: $set.repsText)
+                                .keyboardType(.numberPad)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 60)
+                        }
+                    }
+                    .onDelete { idx in exercises[i].sets.remove(atOffsets: idx) }
+                    Button("Add Set") { exercises[i].sets.append(SetDraft()) }
+                } header: {
+                    HStack {
+                        Text(exercises.count > 1 ? "Exercise \(i + 1)" : "Exercise")
+                        Spacer()
+                        if exercises.count > 1 {
+                            Button(role: .destructive) {
+                                exercises.remove(at: i)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section {
+                Button("Add Exercise") { exercises.append(ExDraft()) }
+                Button("Save Exercises") { saveExercises() }
+                    .disabled(!canSaveExercises)
+            }
+        }
+        .navigationTitle(day.name)
+    }
+
+    private func logActivity() {
+        let trimmed = activityName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        context.insert(RestDayActivity(name: trimmed,
+                                       distance: Double(distanceText),
+                                       distanceUnit: distanceUnit))
+        try? context.save()
+        activityName = ""
+        distanceText = ""
+    }
+
+    private func saveExercises() {
+        var entries: [(name: String, sets: [SetDraft])] = []
+        for ex in exercises {
+            let name = ex.name.trimmingCharacters(in: .whitespaces)
+            let validSets = ex.sets.filter { Double($0.weightText) != nil && Int($0.repsText) != nil }
+            guard !name.isEmpty, !validSets.isEmpty else { continue }
+            entries.append((name, validSets))
+        }
+        guard !entries.isEmpty else { return }
+
+        let session = WorkoutSession(day: day, dayLabel: day.name, cycleNumber: 0)
+        context.insert(session)
+
+        var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
+        for (order, entry) in entries.enumerated() {
+            let log = ExerciseLog(exerciseName: entry.name, targetReps: [], order: order)
+            log.session = session
+            context.insert(log)
+            for (i, s) in entry.sets.enumerated() {
+                let set = SetLog(index: i, weight: Double(s.weightText) ?? 0, reps: Int(s.repsText) ?? 0)
+                set.exerciseLog = log
+                context.insert(set)
+            }
+            ExerciseDef.ensureAnyVariantExists(name: entry.name, knownDefs: &knownDefs, context: context)
+        }
+        try? context.save()
+        exercises = [ExDraft()]
     }
 }

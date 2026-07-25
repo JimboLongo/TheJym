@@ -359,10 +359,14 @@ final class SetLog {
 final class RestDayActivity {
     var date: Date
     var name: String
+    var distance: Double?          // optional — e.g. miles walked/biked
+    var distanceUnit: String = "mi"
 
-    init(date: Date = .now, name: String) {
+    init(date: Date = .now, name: String, distance: Double? = nil, distanceUnit: String = "mi") {
         self.date = date
         self.name = name
+        self.distance = distance
+        self.distanceUnit = distanceUnit
     }
 }
 
