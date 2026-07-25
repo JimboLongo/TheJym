@@ -155,18 +155,13 @@ struct HistoryView: View {
     }
 
     private func exerciseRow(_ log: ExerciseLog) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(log.exerciseName).font(.subheadline.weight(.semibold))
-                Spacer()
-                if !log.targetReps.isEmpty {
-                    Text("Goal \(log.targetReps.map(String.init).joined(separator: "/"))")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-            }
+        let showGoal = !log.targetReps.isEmpty
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(log.exerciseName).font(.subheadline.weight(.semibold))
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("lbs")
+                    if showGoal { Text("goal") }
                     Text("reps")
                 }
                 .font(.caption2)
@@ -178,24 +173,39 @@ struct HistoryView: View {
         .padding(.vertical, 2)
     }
 
-    /// Weights on top, reps below, laid out in a Grid so each column's width
-    /// matches its widest value — the "/" separators land in the same
-    /// horizontal spot on both lines, and each rep centers under its weight.
+    /// Weights, goal (target reps), and actual reps stacked in that order,
+    /// laid out in a Grid so each column's width matches its widest value —
+    /// the "/" separators land in the same horizontal spot on every line,
+    /// and each column centers its goal/reps under its weight.
     private func liftsGrid(_ log: ExerciseLog) -> some View {
         let sortedSets = log.sortedSets
+        let targetReps = log.targetReps
+        let showGoal = !targetReps.isEmpty
+        let columnCount = max(sortedSets.count, targetReps.count)
+
         return Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
             GridRow {
-                ForEach(Array(sortedSets.enumerated()), id: \.offset) { idx, set in
-                    Text(Formatters.trim(set.weight))
-                    if idx < sortedSets.count - 1 {
+                ForEach(0..<columnCount, id: \.self) { idx in
+                    Text(idx < sortedSets.count ? Formatters.trim(sortedSets[idx].weight) : "")
+                    if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
                     }
                 }
             }
+            if showGoal {
+                GridRow {
+                    ForEach(0..<columnCount, id: \.self) { idx in
+                        Text(idx < targetReps.count ? String(targetReps[idx]) : "")
+                        if idx < columnCount - 1 {
+                            Text("/").foregroundStyle(.secondary.opacity(0.5))
+                        }
+                    }
+                }
+            }
             GridRow {
-                ForEach(Array(sortedSets.enumerated()), id: \.offset) { idx, set in
-                    Text(String(set.reps))
-                    if idx < sortedSets.count - 1 {
+                ForEach(0..<columnCount, id: \.self) { idx in
+                    Text(idx < sortedSets.count ? String(sortedSets[idx].reps) : "")
+                    if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
                     }
                 }
