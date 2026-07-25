@@ -310,10 +310,13 @@ struct ExerciseDraftSection: View {
     /// Sets a later set's weight was just shifted by via cascade, so the
     /// field can flash a "+10"/"-5" badge before fading out.
     @State private var cascadeIndicator: [Int: Double] = [:]
-    /// Weight-nudge taps not yet cascaded — accumulated so a burst of taps
-    /// cascades once with the total, instead of once per tap.
-    @State private var pendingCascadeDelta: [Int: Double] = [:]
-    @State private var cascadeDebounceTask: [Int: Task<Void, Never>] = [:]
+    @State private var wheelTarget: WheelTarget?
+
+    private struct WheelTarget: Identifiable, Equatable {
+        let index: Int
+        let isWeight: Bool
+        var id: String { "\(index)-\(isWeight)" }
+    }
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -386,6 +389,9 @@ struct ExerciseDraftSection: View {
                 weightOnFocus[idx] = draft.sets[idx].weightText
             }
         }
+        .popover(item: $wheelTarget) { target in
+            wheelPickerContent(for: target)
+        }
     }
 
     private var header: some View {
@@ -431,7 +437,6 @@ struct ExerciseDraftSection: View {
 
                 HStack(spacing: 16) {
                     HStack(spacing: 4) {
-                        stepperButton("minus") { adjustWeight(at: i, by: -weightStep) }
                         ZStack(alignment: .top) {
                             TextField("lbs", text: $draft.sets[i].weightText)
                                 .keyboardType(.decimalPad)
@@ -449,20 +454,19 @@ struct ExerciseDraftSection: View {
                                     .transition(.opacity)
                             }
                         }
-                        stepperButton("plus") { adjustWeight(at: i, by: weightStep) }
+                        wheelButton { wheelTarget = WheelTarget(index: i, isWeight: true) }
                     }
 
                     Text("×").foregroundStyle(.secondary)
 
                     HStack(spacing: 4) {
-                        stepperButton("minus") { adjustReps(at: i, by: -1) }
                         TextField("reps", text: $draft.sets[i].repsText)
                             .keyboardType(.numberPad)
                             .textFieldStyle(.roundedBorder)
                             .multilineTextAlignment(.center)
                             .frame(width: 70)
                             .focused($focusedField, equals: .reps(i))
-                        stepperButton("plus") { adjustReps(at: i, by: 1) }
+                        wheelButton { wheelTarget = WheelTarget(index: i, isWeight: false) }
                     }
                 }
             }
@@ -517,43 +521,67 @@ struct ExerciseDraftSection: View {
         }
     }
 
-    private func stepperButton(_ systemImage: String, action: @escaping () -> Void) -> some View {
+    private func wheelButton(action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 26, height: 26)
-                .background(Color.accentColor, in: Circle())
+            Image(systemName: "arrow.up.and.down.circle.fill")
+                .font(.system(size: 24))
+                .foregroundStyle(Color.accentColor)
         }
         .buttonStyle(.plain)
     }
 
-    /// Nudges a set's weight by the exercise's step size (smallest plate, or
-    /// dumbbell increment with attachments considered). The field itself
-    /// updates immediately on every tap; cascading the change to later sets
-    /// (and showing the +/- badge) waits until tapping pauses, so a quick
-    /// burst of taps cascades once with the total instead of once per tap.
-    private func adjustWeight(at index: Int, by delta: Double) {
-        let current = draft.sets[index].weight ?? 0
-        let newValue = max(0, current + delta)
-        draft.sets[index].weightText = Formatters.trim(newValue)
-
-        pendingCascadeDelta[index, default: 0] += delta
-        cascadeDebounceTask[index]?.cancel()
-        cascadeDebounceTask[index] = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-            let total = pendingCascadeDelta.removeValue(forKey: index) ?? 0
-            cascadeDebounceTask[index] = nil
-            if total != 0 { cascadeDelta(total, from: index) }
+    /// The scrollable wheel for either a set's weight or its reps — values
+    /// step by the same increments the old +/- buttons used (smallest plate/
+    /// dumbbell increment for weight, 1 for reps). Weight changes cascade to
+    /// later sets immediately, same as before.
+    @ViewBuilder
+    private func wheelPickerContent(for target: WheelTarget) -> some View {
+        if target.isWeight {
+            let step = weightStep
+            let values = Array(stride(from: 0.0, through: 600.0, by: step))
+            VStack(spacing: 4) {
+                Text("Set \(target.index + 1) Weight").font(.headline)
+                Picker("Weight", selection: Binding(
+                    get: { nearestValue(draft.sets[target.index].weight ?? 0, in: values) },
+                    set: { newValue in
+                        let old = draft.sets[target.index].weight ?? 0
+                        draft.sets[target.index].weightText = Formatters.trim(newValue)
+                        let delta = newValue - old
+                        if delta != 0 { cascadeDelta(delta, from: target.index) }
+                    })) {
+                    ForEach(values, id: \.self) { v in
+                        Text(Formatters.trim(v)).tag(v)
+                    }
+                }
+                .pickerStyle(.wheel)
+            }
+            .padding()
+            .presentationDetents([.height(260)])
+            .presentationCompactAdaptation(.popover)
+        } else {
+            let values = Array(0...50)
+            VStack(spacing: 4) {
+                Text("Set \(target.index + 1) Reps").font(.headline)
+                Picker("Reps", selection: Binding(
+                    get: { draft.sets[target.index].reps ?? 0 },
+                    set: { newValue in
+                        draft.sets[target.index].repsText = String(newValue)
+                        checkAutoCollapse()
+                    })) {
+                    ForEach(values, id: \.self) { v in
+                        Text("\(v)").tag(v)
+                    }
+                }
+                .pickerStyle(.wheel)
+            }
+            .padding()
+            .presentationDetents([.height(260)])
+            .presentationCompactAdaptation(.popover)
         }
     }
 
-    private func adjustReps(at index: Int, by delta: Int) {
-        let current = draft.sets[index].reps ?? 0
-        let newValue = max(0, current + delta)
-        draft.sets[index].repsText = String(newValue)
-        checkAutoCollapse()
+    private func nearestValue(_ target: Double, in values: [Double]) -> Double {
+        values.min(by: { abs($0 - target) < abs($1 - target) }) ?? 0
     }
 
     /// If there's no history/AI weight to prefill from, entering a weight for
