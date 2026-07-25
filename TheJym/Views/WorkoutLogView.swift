@@ -29,7 +29,6 @@ struct WorkoutLogView: View {
     @State private var showFinishSheet = false
     @State private var aiSuggestions: [AISuggestionRow] = []
     @State private var scrollToDraftID: UUID?
-    @State private var selectedExerciseName: String?
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -165,12 +164,11 @@ struct WorkoutLogView: View {
                         ForEach(drafts) { draft in
                             Button(draft.name) {
                                 scrollToDraftID = draft.id
-                                selectedExerciseName = draft.name
                             }
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text(selectedExerciseName ?? "\(day.name) · Cycle \(phase.currentCycle)")
+                            Text("Jump to Exercise…")
                                 .font(.headline)
                             Image(systemName: "chevron.down")
                                 .font(.caption)
