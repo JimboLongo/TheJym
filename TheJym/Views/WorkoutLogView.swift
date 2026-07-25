@@ -399,6 +399,8 @@ struct ExercisePageView: View {
     /// 5-second auto-collapse (from a set that's since been un-logged, or
     /// superseded by a newer completion) doesn't fire.
     @State private var collapseGeneration = 0
+    /// Live horizontal drag offset for "swipe the target into reps", per set.
+    @State private var targetDragOffset: [Int: CGFloat] = [:]
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -506,17 +508,18 @@ struct ExercisePageView: View {
             }
             if draft.isExpanded {
                 HStack(spacing: 12) {
-                    Text("Set").font(.title3).foregroundStyle(.secondary)
+                    Text("Set").font(.caption).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .leading)
-                    Text("Weight").font(.title3).foregroundStyle(.secondary)
+                    Text("Weight").font(.caption).foregroundStyle(.secondary)
                         .frame(width: 100, alignment: .center)
-                    Text("Target").font(.title3).foregroundStyle(.secondary)
+                    Text("Target").font(.caption).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .center)
-                    Text("Reps").font(.title3).foregroundStyle(.secondary)
+                    Text("Reps").font(.caption).foregroundStyle(.secondary)
                         .frame(width: 100, alignment: .center)
-                    Text("+/-").font(.title3).foregroundStyle(.secondary)
+                    Text("+/-").font(.caption).foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .center)
                 }
+                .lineLimit(1)
             }
         }
     }
@@ -557,19 +560,31 @@ struct ExercisePageView: View {
                     }
 
                     if let goal = draft.targetReps[safe: i] {
-                        Button {
-                            // Tap the target to copy it straight into this
-                            // set's reps, for when you hit it exactly.
-                            draft.sets[i].repsText = String(goal)
-                            checkAutoCollapse()
-                        } label: {
+                        HStack(spacing: 2) {
                             Text("\(goal)")
                                 .font(.subheadline)
                                 .foregroundStyle(.primary)
-                                .underline()
-                                .frame(width: 44, alignment: .center)
+                            Image(systemName: "arrow.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
+                        .frame(width: 44, alignment: .center)
+                        .offset(x: targetDragOffset[i] ?? 0)
+                        .animation(.interactiveSpring(), value: targetDragOffset[i])
+                        .gesture(
+                            DragGesture(minimumDistance: 10)
+                                .onChanged { value in
+                                    // Only follow rightward drags, toward the reps wheel.
+                                    targetDragOffset[i] = max(0, value.translation.width)
+                                }
+                                .onEnded { value in
+                                    if value.translation.width > 40 {
+                                        draft.sets[i].repsText = String(goal)
+                                        checkAutoCollapse()
+                                    }
+                                    targetDragOffset[i] = 0
+                                }
+                        )
                     } else {
                         Text("–")
                             .font(.subheadline)
