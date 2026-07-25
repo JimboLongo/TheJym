@@ -52,9 +52,6 @@ struct WorkoutLogView: View {
         var name: String
         var targetReps: [Int]
         var sets: [SetDraft]
-        /// True if this exercise had no AI suggestion and no previous-workout
-        /// weight to prefill from — drives the smart-fill-across-sets behavior.
-        var hadNoBaseline: Bool = false
         /// False once every set is logged and it's auto-collapsed to a summary.
         var isExpanded: Bool = true
         /// False after the user manually reopens a collapsed exercise, so it
@@ -186,15 +183,13 @@ struct WorkoutLogView: View {
             if isDeloadCycle, !weights.isEmpty {
                 weights = ProgressionEngine.deloadWeights(from: weights)
             }
-            let hadNoBaseline = weights.isEmpty
             let sets = pe.targetReps.enumerated().map { i, _ in
                 SetDraft(weightText: i < weights.count ? Formatters.trim(weights[i]) : "",
                          repsText: "")
             }
             drafts.append(ExerciseDraft(name: pe.exerciseName,
                                         targetReps: pe.targetReps,
-                                        sets: sets,
-                                        hadNoBaseline: hadNoBaseline))
+                                        sets: sets))
         }
     }
 
@@ -297,26 +292,9 @@ struct ExerciseDraftSection: View {
 
     @State private var showingDetails = false
     @State private var plateTargetText = ""
-
-    private enum FocusTarget: Hashable {
-        case weight(Int)
-        case reps(Int)
-    }
-    @FocusState private var focusedField: FocusTarget?
-    /// Snapshot taken when a weight field gains focus, so on blur we can
-    /// tell what actually changed (and avoid reacting to every keystroke —
-    /// e.g. typing "175" one digit at a time shouldn't cascade three times).
-    @State private var weightOnFocus: [Int: String] = [:]
     /// Sets a later set's weight was just shifted by via cascade, so the
     /// field can flash a "+10"/"-5" badge before fading out.
     @State private var cascadeIndicator: [Int: Double] = [:]
-    @State private var wheelTarget: WheelTarget?
-
-    private struct WheelTarget: Identifiable, Equatable {
-        let index: Int
-        let isWeight: Bool
-        var id: String { "\(index)-\(isWeight)" }
-    }
 
     private var comparisons: [ComparisonTarget] {
         PaceEngine.comparisons(for: draft.name,
@@ -341,6 +319,10 @@ struct ExerciseDraftSection: View {
     private var weightStep: Double {
         guard let bar = exerciseDef?.equipment else { return 2.5 }
         return bar.isDumbbell ? dumbbellIncrement : (plateSizes.min() ?? 2.5)
+    }
+    /// Selectable values for the inline weight wheel, spaced by weightStep.
+    private var weightValues: [Double] {
+        Array(stride(from: 0.0, through: 600.0, by: weightStep))
     }
 
     var body: some View {
@@ -374,24 +356,6 @@ struct ExerciseDraftSection: View {
             }
         }
         .padding(.vertical, 4)
-        .onChange(of: focusedField) { oldField, newField in
-            if let oldField, oldField != newField {
-                switch oldField {
-                case .weight(let idx) where idx < draft.sets.count:
-                    commitWeightEdit(at: idx)
-                case .reps:
-                    checkAutoCollapse()
-                default:
-                    break
-                }
-            }
-            if case .weight(let idx) = newField {
-                weightOnFocus[idx] = draft.sets[idx].weightText
-            }
-        }
-        .popover(item: $wheelTarget) { target in
-            wheelPickerContent(for: target)
-        }
     }
 
     private var header: some View {
@@ -436,63 +400,50 @@ struct ExerciseDraftSection: View {
                     .font(.caption).foregroundStyle(.secondary)
 
                 HStack(spacing: 16) {
-                    HStack(spacing: 4) {
-                        ZStack(alignment: .top) {
-                            TextField("lbs", text: $draft.sets[i].weightText)
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.roundedBorder)
-                                .multilineTextAlignment(.center)
-                                .frame(width: 74)
-                                .focused($focusedField, equals: .weight(i))
-                            if let delta = cascadeIndicator[i] {
-                                Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(delta > 0 ? .green : .red)
-                                    .padding(.horizontal, 5).padding(.vertical, 1)
-                                    .background(.thinMaterial, in: Capsule())
-                                    .offset(y: -14)
-                                    .transition(.opacity)
+                    ZStack(alignment: .top) {
+                        Picker("Weight", selection: Binding(
+                            get: { nearestValue(draft.sets[i].weight ?? 0, in: weightValues) },
+                            set: { newValue in
+                                let old = draft.sets[i].weight ?? 0
+                                draft.sets[i].weightText = Formatters.trim(newValue)
+                                let delta = newValue - old
+                                if delta != 0 { cascadeDelta(delta, from: i) }
+                            })) {
+                            ForEach(weightValues, id: \.self) { v in
+                                Text(Formatters.trim(v)).tag(v)
                             }
                         }
-                        wheelButton { wheelTarget = WheelTarget(index: i, isWeight: true) }
+                        .pickerStyle(.wheel)
+                        .frame(width: 100, height: 90)
+                        .clipped()
+                        if let delta = cascadeIndicator[i] {
+                            Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                                .font(.caption2.bold())
+                                .foregroundStyle(delta > 0 ? .green : .red)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(.thinMaterial, in: Capsule())
+                                .transition(.opacity)
+                        }
                     }
 
                     Text("×").foregroundStyle(.secondary)
 
-                    HStack(spacing: 4) {
-                        TextField("reps", text: $draft.sets[i].repsText)
-                            .keyboardType(.numberPad)
-                            .textFieldStyle(.roundedBorder)
-                            .multilineTextAlignment(.center)
-                            .frame(width: 70)
-                            .focused($focusedField, equals: .reps(i))
-                        wheelButton { wheelTarget = WheelTarget(index: i, isWeight: false) }
+                    Picker("Reps", selection: Binding(
+                        get: { draft.sets[i].reps ?? 0 },
+                        set: { newValue in
+                            draft.sets[i].repsText = String(newValue)
+                            checkAutoCollapse()
+                        })) {
+                        ForEach(0...50, id: \.self) { v in
+                            Text("\(v)").tag(v)
+                        }
                     }
+                    .pickerStyle(.wheel)
+                    .frame(width: 80, height: 90)
+                    .clipped()
                 }
             }
             .animation(.easeInOut, value: cascadeIndicator[i])
-        }
-    }
-
-    /// Runs once editing a weight field actually finishes (it loses focus),
-    /// not on every keystroke — so typing "175" doesn't cascade on "1", "17",
-    /// then "175" in turn.
-    private func commitWeightEdit(at index: Int) {
-        let before = weightOnFocus.removeValue(forKey: index) ?? ""
-        let after = draft.sets[index].weightText
-        guard before != after else { return }
-
-        if before.isEmpty {
-            // First-ever entry with nothing to prefill from: smart-fill the
-            // other still-empty sets (same reps -> same weight, different
-            // reps -> Epley-estimated).
-            smartFillIfNeeded(from: index)
-        } else if let oldWeight = Double(before), let newWeight = Double(after) {
-            // Editing an existing weight: shift every LATER set that already
-            // has a weight by the same delta, preserving the gap between
-            // rep-groups (e.g. 165/165/185/185 -> edit set 1 to 175 ->
-            // 175/175/195/195). Earlier sets are never touched.
-            cascadeDelta(newWeight - oldWeight, from: index)
         }
     }
 
@@ -521,82 +472,8 @@ struct ExerciseDraftSection: View {
         }
     }
 
-    private func wheelButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "arrow.up.and.down.circle.fill")
-                .font(.system(size: 24))
-                .foregroundStyle(Color.accentColor)
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// The scrollable wheel for either a set's weight or its reps — values
-    /// step by the same increments the old +/- buttons used (smallest plate/
-    /// dumbbell increment for weight, 1 for reps). Weight changes cascade to
-    /// later sets immediately, same as before.
-    @ViewBuilder
-    private func wheelPickerContent(for target: WheelTarget) -> some View {
-        if target.isWeight {
-            let step = weightStep
-            let values = Array(stride(from: 0.0, through: 600.0, by: step))
-            VStack(spacing: 4) {
-                Text("Set \(target.index + 1) Weight").font(.headline)
-                Picker("Weight", selection: Binding(
-                    get: { nearestValue(draft.sets[target.index].weight ?? 0, in: values) },
-                    set: { newValue in
-                        let old = draft.sets[target.index].weight ?? 0
-                        draft.sets[target.index].weightText = Formatters.trim(newValue)
-                        let delta = newValue - old
-                        if delta != 0 { cascadeDelta(delta, from: target.index) }
-                    })) {
-                    ForEach(values, id: \.self) { v in
-                        Text(Formatters.trim(v)).tag(v)
-                    }
-                }
-                .pickerStyle(.wheel)
-            }
-            .padding()
-            .presentationDetents([.height(260)])
-            .presentationCompactAdaptation(.popover)
-        } else {
-            let values = Array(0...50)
-            VStack(spacing: 4) {
-                Text("Set \(target.index + 1) Reps").font(.headline)
-                Picker("Reps", selection: Binding(
-                    get: { draft.sets[target.index].reps ?? 0 },
-                    set: { newValue in
-                        draft.sets[target.index].repsText = String(newValue)
-                        checkAutoCollapse()
-                    })) {
-                    ForEach(values, id: \.self) { v in
-                        Text("\(v)").tag(v)
-                    }
-                }
-                .pickerStyle(.wheel)
-            }
-            .padding()
-            .presentationDetents([.height(260)])
-            .presentationCompactAdaptation(.popover)
-        }
-    }
-
     private func nearestValue(_ target: Double, in values: [Double]) -> Double {
         values.min(by: { abs($0 - target) < abs($1 - target) }) ?? 0
-    }
-
-    /// If there's no history/AI weight to prefill from, entering a weight for
-    /// one set fills the other still-empty sets: same target reps get the
-    /// same weight, different rep targets get an Epley-estimated weight.
-    private func smartFillIfNeeded(from sourceIndex: Int) {
-        guard draft.hadNoBaseline, let sourceWeight = draft.sets[sourceIndex].weight else { return }
-        let sourceReps = draft.targetReps[safe: sourceIndex] ?? 0
-        for j in draft.sets.indices where j != sourceIndex && draft.sets[j].weightText.isEmpty {
-            let targetRepsJ = draft.targetReps[safe: j] ?? sourceReps
-            let estimated = targetRepsJ == sourceReps
-                ? sourceWeight
-                : ProgressionEngine.estimatedWeight(from: sourceWeight, atReps: sourceReps, forReps: targetRepsJ)
-            draft.sets[j].weightText = Formatters.trim(estimated)
-        }
     }
 
     /// Compact summary of today's entered weights/reps, shown once the

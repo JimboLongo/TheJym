@@ -101,17 +101,6 @@ enum ProgressionEngine {
         (w / smallest).rounded() * smallest
     }
 
-    /// Estimates the equivalent weight for a different rep target, using the
-    /// Epley 1RM approximation (1RM = w * (1 + reps/30)) to scale between rep
-    /// counts. Used to smart-fill a set's weight from a sibling set with a
-    /// different target rep count when there's no history to go on yet.
-    static func estimatedWeight(from weight: Double, atReps sourceReps: Int, forReps targetReps: Int) -> Double {
-        guard weight > 0, sourceReps > 0, targetReps > 0 else { return weight }
-        let oneRepMax = weight * (1 + Double(sourceReps) / 30)
-        let estimate = oneRepMax / (1 + Double(targetReps) / 30)
-        return roundToPlate(estimate)
-    }
-
     // MARK: - Deload
 
     /// Where to put the deload cycle for a phase of `totalCycles`.
