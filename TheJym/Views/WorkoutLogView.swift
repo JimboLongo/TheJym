@@ -591,7 +591,7 @@ struct ExercisePageView: View {
                     }
 
                     if let goal = draft.targetReps[safe: i] {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 8) {
                             Text("\(goal)")
                                 .font(.caption.bold())
                                 .foregroundStyle(.white)
@@ -601,7 +601,7 @@ struct ExercisePageView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 7)
-                        .background(Color(red: 0.22, green: 0.38, blue: 0.16), in: Capsule())
+                        .background(Color(red: 0.10, green: 0.24, blue: 0.08), in: Capsule())
                         .overlay(Capsule().stroke(Color.white, lineWidth: 1))
                         .frame(width: 54, alignment: .center)
                         .offset(x: targetDragOffset[i] ?? 0)
