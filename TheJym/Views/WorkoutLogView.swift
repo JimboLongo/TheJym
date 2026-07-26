@@ -595,6 +595,8 @@ struct ExercisePageView: View {
                             Text("\(goal)")
                                 .font(.caption.bold())
                                 .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .fixedSize()
                             Image(systemName: "arrow.right")
                                 .font(.caption2.bold())
                                 .foregroundStyle(.white)
@@ -603,7 +605,8 @@ struct ExercisePageView: View {
                         .padding(.vertical, 7)
                         .background(Color(red: 0.10, green: 0.24, blue: 0.08), in: Capsule())
                         .overlay(Capsule().stroke(Color.white, lineWidth: 1))
-                        .frame(width: 54, alignment: .center)
+                        .fixedSize()
+                        .frame(minWidth: 54, alignment: .center)
                         .offset(x: targetDragOffset[i] ?? 0)
                         .animation(.interactiveSpring(), value: targetDragOffset[i])
                         .gesture(
