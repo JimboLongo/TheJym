@@ -594,15 +594,16 @@ struct ExercisePageView: View {
                         HStack(spacing: 3) {
                             Text("\(goal)")
                                 .font(.caption.bold())
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(.white)
                             Image(systemName: "arrow.right")
                                 .font(.caption2.bold())
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(.white)
                         }
-                        .padding(.horizontal, 13)
+                        .padding(.horizontal, 16)
                         .padding(.vertical, 7)
-                        .background(Color(red: 0.416, green: 0.573, blue: 0.259), in: Capsule())
-                        .frame(width: 44, alignment: .center)
+                        .background(Color(red: 0.22, green: 0.38, blue: 0.16), in: Capsule())
+                        .overlay(Capsule().stroke(Color.white, lineWidth: 1))
+                        .frame(width: 54, alignment: .center)
                         .offset(x: targetDragOffset[i] ?? 0)
                         .animation(.interactiveSpring(), value: targetDragOffset[i])
                         .gesture(
