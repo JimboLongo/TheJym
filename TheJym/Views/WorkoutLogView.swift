@@ -34,7 +34,7 @@ struct WorkoutLogView: View {
     @State private var currentPageID: String?
     @State private var showExerciseJumpList = false
     /// The calendar day this workout will be saved under — defaults to
-    /// today, but can be changed via the date picker in the top bar.
+    /// today, confirmed/changed via a date picker shown when finishing.
     @State private var loggedDate = Date()
     @State private var showDatePicker = false
     /// Last time the user touched anything in this workout — used to keep
@@ -164,7 +164,7 @@ struct WorkoutLogView: View {
         }
         .safeAreaInset(edge: .bottom) {
             Button {
-                finishWorkout()
+                showDatePicker = true
             } label: {
                 Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
                     .font(.headline)
@@ -175,26 +175,43 @@ struct WorkoutLogView: View {
             .padding()
             .background(.bar)
         }
+        .sheet(isPresented: $showDatePicker) {
+            NavigationStack {
+                VStack(spacing: 20) {
+                    Text("Log this workout to:")
+                        .font(.headline)
+                    DatePicker("Log workout to", selection: $loggedDate,
+                              in: ...Date(), displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                    Button {
+                        showDatePicker = false
+                        finishWorkout()
+                    } label: {
+                        Text("Save Workout")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+                .navigationTitle("Confirm Date")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showDatePicker = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium])
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 6) {
-                    Button {
-                        showDatePicker = true
-                    } label: {
-                        Text("\(Formatters.weekdayFull.string(from: loggedDate)), \(Formatters.shortMonthDate.string(from: loggedDate))")
-                            .font(.headline)
-                    }
-                    .popover(isPresented: $showDatePicker) {
-                        DatePicker("Log workout to", selection: $loggedDate,
-                                  in: ...Date(), displayedComponents: .date)
-                            .datePickerStyle(.graphical)
-                            .labelsHidden()
-                            .padding()
-                            .frame(minWidth: 320, minHeight: 360)
-                            .presentationCompactAdaptation(.popover)
-                    }
+                    Text("\(day.name) · Cycle \(phase.currentCycle)")
+                        .font(.headline)
                     if drafts.count > 1 {
                         Button {
                             showExerciseJumpList = true
