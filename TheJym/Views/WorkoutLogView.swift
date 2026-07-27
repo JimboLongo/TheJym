@@ -182,26 +182,6 @@ struct WorkoutLogView: View {
                 VStack(spacing: 2) {
                     Text("\(day.name) · Cycle \(phase.currentCycle)")
                         .font(.subheadline.bold())
-                    Button {
-                        showDatePicker = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(Formatters.weekdayDate.string(from: loggedDate))
-                                .font(.caption)
-                            Image(systemName: "calendar")
-                                .font(.caption2)
-                        }
-                        .foregroundStyle(.secondary)
-                    }
-                    .popover(isPresented: $showDatePicker) {
-                        DatePicker("Log workout to", selection: $loggedDate,
-                                  in: ...Date(), displayedComponents: .date)
-                            .datePickerStyle(.graphical)
-                            .labelsHidden()
-                            .padding()
-                            .frame(minWidth: 320, minHeight: 360)
-                            .presentationCompactAdaptation(.popover)
-                    }
                     if drafts.count > 1 {
                         Button {
                             showExerciseJumpList = true
@@ -249,6 +229,27 @@ struct WorkoutLogView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showDatePicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(Formatters.weekdayDate.string(from: loggedDate))
+                            .font(.caption)
+                        Image(systemName: "calendar")
+                            .font(.caption2)
+                    }
+                }
+                .popover(isPresented: $showDatePicker) {
+                    DatePicker("Log workout to", selection: $loggedDate,
+                              in: ...Date(), displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .padding()
+                        .frame(minWidth: 320, minHeight: 360)
+                        .presentationCompactAdaptation(.popover)
+                }
             }
         }
         .onAppear {
