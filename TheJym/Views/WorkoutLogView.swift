@@ -163,17 +163,20 @@ struct WorkoutLogView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            Button {
-                showDatePicker = true
-            } label: {
-                Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+            // Only appears once every exercise has been marked complete
+            // (collapsed), rather than just being disabled until then.
+            if !drafts.isEmpty, drafts.allSatisfy({ !$0.isExpanded }) {
+                Button {
+                    showDatePicker = true
+                } label: {
+                    Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .padding()
+                .background(.bar)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(drafts.allSatisfy { $0.sets.allSatisfy { !$0.isLogged } })
-            .padding()
-            .background(.bar)
         }
         .overlay {
             // A centered popup card (not a bottom sheet) so it reads as a
