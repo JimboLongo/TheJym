@@ -180,28 +180,30 @@ struct WorkoutLogView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
-                    Button {
-                        showDatePicker = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(Formatters.weekdayDate.string(from: loggedDate))
-                                .font(.subheadline.bold())
-                            Image(systemName: "calendar")
-                                .font(.caption2)
+                    HStack(spacing: 4) {
+                        Button {
+                            showDatePicker = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(Formatters.weekdayDate.string(from: loggedDate))
+                                    .font(.subheadline.bold())
+                                Image(systemName: "calendar")
+                                    .font(.caption2)
+                            }
                         }
+                        .popover(isPresented: $showDatePicker) {
+                            DatePicker("Log workout to", selection: $loggedDate,
+                                      in: ...Date(), displayedComponents: .date)
+                                .datePickerStyle(.graphical)
+                                .labelsHidden()
+                                .padding()
+                                .frame(minWidth: 320, minHeight: 360)
+                                .presentationCompactAdaptation(.popover)
+                        }
+                        Text("· \(day.name) · Cycle \(phase.currentCycle)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .popover(isPresented: $showDatePicker) {
-                        DatePicker("Log workout to", selection: $loggedDate,
-                                  in: ...Date(), displayedComponents: .date)
-                            .datePickerStyle(.graphical)
-                            .labelsHidden()
-                            .padding()
-                            .frame(minWidth: 320, minHeight: 360)
-                            .presentationCompactAdaptation(.popover)
-                    }
-                    Text("\(day.name) · Cycle \(phase.currentCycle)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     if drafts.count > 1 {
                         Button {
                             showExerciseJumpList = true
