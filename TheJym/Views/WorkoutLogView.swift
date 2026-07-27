@@ -180,8 +180,21 @@ struct WorkoutLogView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 6) {
-                    Text("\(day.name) · Cycle \(phase.currentCycle)")
-                        .font(.headline)
+                    Button {
+                        showDatePicker = true
+                    } label: {
+                        Text("\(Formatters.weekdayFull.string(from: loggedDate)), \(Formatters.shortMonthDate.string(from: loggedDate))")
+                            .font(.headline)
+                    }
+                    .popover(isPresented: $showDatePicker) {
+                        DatePicker("Log workout to", selection: $loggedDate,
+                                  in: ...Date(), displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+                            .padding()
+                            .frame(minWidth: 320, minHeight: 360)
+                            .presentationCompactAdaptation(.popover)
+                    }
                     if drafts.count > 1 {
                         Button {
                             showExerciseJumpList = true
@@ -229,26 +242,6 @@ struct WorkoutLogView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showDatePicker = true
-                } label: {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text(Formatters.weekdayFull.string(from: loggedDate))
-                        Text(Formatters.shortMonthDate.string(from: loggedDate))
-                    }
-                    .font(.subheadline)
-                }
-                .popover(isPresented: $showDatePicker) {
-                    DatePicker("Log workout to", selection: $loggedDate,
-                              in: ...Date(), displayedComponents: .date)
-                        .datePickerStyle(.graphical)
-                        .labelsHidden()
-                        .padding()
-                        .frame(minWidth: 320, minHeight: 360)
-                        .presentationCompactAdaptation(.popover)
-                }
             }
         }
         .onAppear {
