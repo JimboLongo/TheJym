@@ -175,36 +175,42 @@ struct WorkoutLogView: View {
             .padding()
             .background(.bar)
         }
-        .sheet(isPresented: $showDatePicker) {
-            NavigationStack {
-                VStack(spacing: 20) {
-                    Text("Log this workout to:")
-                        .font(.headline)
-                    DatePicker("Log workout to", selection: $loggedDate,
-                              in: ...Date(), displayedComponents: .date)
-                        .datePickerStyle(.graphical)
-                        .labelsHidden()
-                    Button {
-                        showDatePicker = false
-                        finishWorkout()
-                    } label: {
-                        Text("Save Workout")
+        .overlay {
+            // A centered popup card (not a bottom sheet) so it reads as a
+            // deliberate confirmation step in the middle of the screen.
+            if showDatePicker {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture { showDatePicker = false }
+                    VStack(spacing: 16) {
+                        Text("Log this workout to:")
                             .font(.headline)
-                            .frame(maxWidth: .infinity)
+                        DatePicker("Log workout to", selection: $loggedDate,
+                                  in: ...Date(), displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+                        HStack {
+                            Button("Cancel") { showDatePicker = false }
+                            Spacer()
+                            Button {
+                                showDatePicker = false
+                                finishWorkout()
+                            } label: {
+                                Text("Save Workout").font(.headline)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .padding(32)
+                    .shadow(radius: 20)
                 }
-                .padding()
-                .navigationTitle("Confirm Date")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { showDatePicker = false }
-                    }
-                }
+                .transition(.opacity)
             }
-            .presentationDetents([.medium])
         }
+        .animation(.easeInOut(duration: 0.2), value: showDatePicker)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
