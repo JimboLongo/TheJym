@@ -395,6 +395,12 @@ enum Formatters {
         f.dateStyle = .medium
         return f
     }()
+    /// Weekday + full month, e.g. "Sun July 26, 2026".
+    static let weekdayDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE MMMM d, yyyy"
+        return f
+    }()
     /// Compact numeric date for tight table columns, e.g. "1/5/26".
     static let shortDate: DateFormatter = {
         let f = DateFormatter()

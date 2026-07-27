@@ -24,7 +24,10 @@ struct StatsView: View {
 
     private var stats: TrainingStats {
         StatsEngine.compute(startDate: settings?.trainingStartDate ?? .now,
-                            sessionDates: sessions.map(\.date),
+                            // Excludes no-activity backfilled Rest Day
+                            // sessions — those shouldn't count as, or mask,
+                            // a genuinely missed training day.
+                            sessionDates: sessions.filter { !$0.exerciseLogs.isEmpty }.map(\.date),
                             restActivityDates: restActivities.map(\.date),
                             phaseSchedules: phases.map {
                                 StatsEngine.PhaseSchedule(startDate: $0.startDate, phase: $0)

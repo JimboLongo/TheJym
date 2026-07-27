@@ -33,6 +33,10 @@ struct WorkoutLogView: View {
     @State private var recapChoices: [String: Bool] = [:]
     @State private var currentPageID: String?
     @State private var showExerciseJumpList = false
+    /// The calendar day this workout will be saved under — defaults to
+    /// today, but can be changed via the date picker in the top bar.
+    @State private var loggedDate = Date()
+    @State private var showDatePicker = false
     /// Last time the user touched anything in this workout — used to keep
     /// the screen from auto-locking for up to 3 minutes of idle time.
     @State private var lastInteraction = Date()
@@ -176,6 +180,25 @@ struct WorkoutLogView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
+                    Button {
+                        showDatePicker = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(Formatters.weekdayDate.string(from: loggedDate))
+                                .font(.subheadline.bold())
+                            Image(systemName: "calendar")
+                                .font(.caption2)
+                        }
+                    }
+                    .popover(isPresented: $showDatePicker) {
+                        DatePicker("Log workout to", selection: $loggedDate,
+                                  in: ...Date(), displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+                            .padding()
+                            .frame(minWidth: 320, minHeight: 360)
+                            .presentationCompactAdaptation(.popover)
+                    }
                     Text("\(day.name) · Cycle \(phase.currentCycle)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -326,7 +349,7 @@ struct WorkoutLogView: View {
     // MARK: Saving + AI
 
     private func finishWorkout() {
-        let session = WorkoutSession(day: day, dayLabel: day.name,
+        let session = WorkoutSession(date: loggedDate, day: day, dayLabel: day.name,
                                      cycleNumber: phase.currentCycle,
                                      isDeload: isDeloadCycle)
         session.phase = phase

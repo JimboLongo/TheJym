@@ -26,6 +26,7 @@ struct ContentView: View {
     @Query private var settingsList: [AppSettings]
     @Query private var bars: [Bar]
     @Query private var exerciseDefs: [ExerciseDef]
+    @Query(sort: \WorkoutSession.date) private var allSessions: [WorkoutSession]
 
     var body: some View {
         TabView {
@@ -44,7 +45,33 @@ struct ContentView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
-        .onAppear { bootstrap() }
+        .onAppear {
+            bootstrap()
+            backfillRestDays()
+        }
+    }
+
+    /// Any past calendar day (from your earliest logged session through
+    /// yesterday) with no session at all gets a no-activity Rest Day entry,
+    /// so history never has an unexplained gap. Safe to re-run every launch —
+    /// only fills days that are still missing.
+    private func backfillRestDays() {
+        guard let earliest = allSessions.first?.date else { return }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        var existingDays = Set(allSessions.map { calendar.startOfDay(for: $0.date) })
+
+        var day = calendar.startOfDay(for: earliest)
+        while day < today {
+            if !existingDays.contains(day) {
+                let session = WorkoutSession(date: day, dayLabel: "Rest Day", cycleNumber: 0)
+                context.insert(session)
+                existingDays.insert(day)
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        try? context.save()
     }
 
     /// Create default settings, bars, dumbbells, and exercise library on first launch.
