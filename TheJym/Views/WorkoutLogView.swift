@@ -183,7 +183,6 @@ struct WorkoutLogView: View {
                     Text("\(day.name) · Cycle \(phase.currentCycle)")
                         .font(.headline)
                     if drafts.count > 1 {
-                        Divider()
                         Button {
                             showExerciseJumpList = true
                         } label: {
@@ -235,9 +234,9 @@ struct WorkoutLogView: View {
                 Button {
                     showDatePicker = true
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(Formatters.weekdayDate.string(from: loggedDate))
-                        Image(systemName: "calendar")
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(Formatters.weekdayFull.string(from: loggedDate))
+                        Text(Formatters.shortMonthDate.string(from: loggedDate))
                     }
                     .font(.subheadline)
                 }

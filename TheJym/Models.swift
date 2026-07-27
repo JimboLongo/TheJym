@@ -395,10 +395,18 @@ enum Formatters {
         f.dateStyle = .medium
         return f
     }()
-    /// Weekday + full month, e.g. "Sun July 26, 2026".
-    static let weekdayDate: DateFormatter = {
+    /// Full weekday name alone, e.g. "Sunday" — first line of the workout
+    /// log's two-line date button.
+    static let weekdayFull: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "EEE MMMM d, yyyy"
+        f.dateFormat = "EEEE"
+        return f
+    }()
+    /// Abbreviated month + day + year, e.g. "Jul 26, 2026" — second line of
+    /// the workout log's two-line date button.
+    static let shortMonthDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy"
         return f
     }()
     /// Compact numeric date for tight table columns, e.g. "1/5/26".
