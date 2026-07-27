@@ -180,32 +180,8 @@ struct WorkoutLogView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 6) {
-                    ZStack {
-                        Text("\(day.name) · Cycle \(phase.currentCycle)")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                        HStack {
-                            Spacer()
-                            Button {
-                                showDatePicker = true
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(Formatters.weekdayDate.string(from: loggedDate))
-                                    Image(systemName: "calendar")
-                                }
-                                .font(.headline)
-                            }
-                            .popover(isPresented: $showDatePicker) {
-                                DatePicker("Log workout to", selection: $loggedDate,
-                                          in: ...Date(), displayedComponents: .date)
-                                    .datePickerStyle(.graphical)
-                                    .labelsHidden()
-                                    .padding()
-                                    .frame(minWidth: 320, minHeight: 360)
-                                    .presentationCompactAdaptation(.popover)
-                            }
-                        }
-                    }
+                    Text("\(day.name) · Cycle \(phase.currentCycle)")
+                        .font(.headline)
                     if drafts.count > 1 {
                         Divider()
                         Button {
@@ -254,6 +230,26 @@ struct WorkoutLogView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showDatePicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(Formatters.weekdayDate.string(from: loggedDate))
+                        Image(systemName: "calendar")
+                    }
+                    .font(.subheadline)
+                }
+                .popover(isPresented: $showDatePicker) {
+                    DatePicker("Log workout to", selection: $loggedDate,
+                              in: ...Date(), displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .labelsHidden()
+                        .padding()
+                        .frame(minWidth: 320, minHeight: 360)
+                        .presentationCompactAdaptation(.popover)
+                }
             }
         }
         .onAppear {
