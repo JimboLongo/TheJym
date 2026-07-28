@@ -49,6 +49,7 @@ struct ContentView: View {
         .onAppear {
             bootstrap()
             backfillRestDays()
+            backfillBodyweightFlags()
         }
     }
 
@@ -71,6 +72,30 @@ struct ContentView: View {
             }
             guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
+        }
+        try? context.save()
+    }
+
+    /// Pre-isBodyweight installs have ExerciseDef/PlannedExercise rows for
+    /// library bodyweight movements (Pull-Up, Dips) created before the flag
+    /// existed, so they're stuck at the `false` default even though the
+    /// library itself tags them bodyweight — bootstrap() only seeds defs on
+    /// a totally empty library, so it never revisits them. Bring both in
+    /// line by name so the workout view picks up the BW stepper for them
+    /// going forward. Deliberately leaves already-logged ExerciseLog/SetLog
+    /// rows alone — they recorded the old-style full weight, and flipping
+    /// isBodyweight on them now would misread that as added weight instead.
+    private func backfillBodyweightFlags() {
+        let bodyweightNames = Set(ExerciseLibrary.grouped.flatMap(\.exercises).filter(\.isBodyweight).map(\.name))
+        guard !bodyweightNames.isEmpty else { return }
+
+        for def in exerciseDefs where bodyweightNames.contains(def.name) && !def.isBodyweight {
+            def.isBodyweight = true
+        }
+        if let plannedExercises = try? context.fetch(FetchDescriptor<PlannedExercise>()) {
+            for pe in plannedExercises where bodyweightNames.contains(pe.exerciseName) && !pe.isBodyweight {
+                pe.isBodyweight = true
+            }
         }
         try? context.save()
     }

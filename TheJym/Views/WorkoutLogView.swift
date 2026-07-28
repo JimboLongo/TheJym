@@ -401,7 +401,16 @@ struct WorkoutLogView: View {
 
     private func buildDrafts() {
         guard drafts.isEmpty else { return }
-        if let saved = loadDraftFromDisk(), !saved.isEmpty {
+        if var saved = loadDraftFromDisk(), !saved.isEmpty {
+            // A draft cached to disk from an in-progress workout can predate
+            // a change to the exercise's definition (e.g. just flagged
+            // bodyweight) — resync those structural flags from the current
+            // PlannedExercise so it doesn't stay stuck showing the old UI,
+            // without touching anything already entered.
+            for i in saved.indices {
+                guard let pe = plannedExercises(for: day).first(where: { $0.exerciseName == saved[i].name }) else { continue }
+                saved[i].isBodyweight = pe.isBodyweight
+            }
             drafts = saved
             return
         }
@@ -476,6 +485,7 @@ struct WorkoutLogView: View {
         for idx in drafts.indices {
             guard !drafts[idx].sets.contains(where: { $0.reps != nil }) else { continue }
             guard let pe = plannedExercises(for: day).first(where: { $0.exerciseName == drafts[idx].name }) else { continue }
+            drafts[idx].isBodyweight = pe.isBodyweight
             let logs = history(for: pe)
             let increment = roundingIncrement(for: pe.exerciseName)
 
