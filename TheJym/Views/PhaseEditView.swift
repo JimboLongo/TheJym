@@ -159,8 +159,15 @@ struct PhaseDayEditView: View {
     }
 
     private func addExercise(_ def: ExerciseDef, reps: [Int]) {
-        let pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
+        let pe: PlannedExercise
+        if def.isRepTotal {
+            pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
+                                 targetReps: [], isBodyweight: def.isBodyweight,
+                                 goalType: .repTotal(target: reps.first ?? 0))
+        } else {
+            pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
                                  targetReps: reps, isBodyweight: def.isBodyweight)
+        }
         pe.day = day
         context.insert(pe)
     }
@@ -182,18 +189,9 @@ struct PlannedExerciseRow: View {
             TextField("Exercise name", text: $pe.exerciseName)
                 .font(.headline)
 
-            Picker("Goal", selection: Binding(
-                get: { isRepTotal },
-                set: { newValue in
-                    pe.goalType = newValue
-                        ? .repTotal(target: Int(repTotalTargetText) ?? 0)
-                        : .fixedSets
-                })) {
-                Text("Fixed Sets").tag(false)
-                Text("Rep Total").tag(true)
-            }
-            .pickerStyle(.segmented)
-
+            // Goal kind (Fixed Sets vs. Rep Total) is set once on the
+            // exercise itself, in the Exercises tab — this row just shows
+            // whichever field that kind needs.
             if isRepTotal {
                 HStack {
                     Text("Target reps").font(.subheadline)

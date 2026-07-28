@@ -194,10 +194,13 @@ struct ExerciseEditView: View {
     @State private var notes = ""
     @State private var equipmentID: PersistentIdentifier?
     @State private var isBodyweight = false
+    @State private var isRepTotal = false
+    @State private var repTotalTargetText = ""
 
     private var reps: [Int] {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     }
+    private var repTotalTarget: Int? { Int(repTotalTargetText) }
 
     /// Only relevant when creating new — editing in place can't collide with itself.
     private var isDuplicateName: Bool {
@@ -206,12 +209,27 @@ struct ExerciseEditView: View {
         return allDefs.contains { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
+    private var canSave: Bool {
+        guard !name.trimmingCharacters(in: .whitespaces).isEmpty, !isDuplicateName else { return false }
+        guard def == nil else { return true }
+        return isRepTotal ? (repTotalTarget ?? 0) > 0 : !reps.isEmpty
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField("Exercise name", text: $name)
-                    if def == nil {
+                    Picker("Goal", selection: $isRepTotal) {
+                        Text("Fixed Sets").tag(false)
+                        Text("Rep Total").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if isRepTotal {
+                        TextField("Target reps e.g. 40", text: $repTotalTargetText)
+                            .keyboardType(.numberPad)
+                    } else if def == nil {
                         TextField("Starting set (reps) e.g. 5/5/5/3/3/3", text: $repsText)
                             .keyboardType(.numbersAndPunctuation)
                             .font(.system(.body, design: .monospaced))
@@ -221,6 +239,10 @@ struct ExerciseEditView: View {
                             .font(.caption).foregroundStyle(.orange)
                     }
                     Toggle("Bodyweight Exercise", isOn: $isBodyweight)
+                } footer: {
+                    if isRepTotal {
+                        Text("This exercise is programmed as a running rep total (e.g. \"23/40\") wherever it's added to a Phase day, instead of a fixed number of sets.")
+                    }
                 }
                 Section("Equipment") {
                     Picker("Equipment", selection: $equipmentID) {
@@ -243,8 +265,7 @@ struct ExerciseEditView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
-                                  || (def == nil && reps.isEmpty) || isDuplicateName)
+                        .disabled(!canSave)
                 }
             }
             .onAppear {
@@ -253,6 +274,8 @@ struct ExerciseEditView: View {
                 notes = def.notes
                 equipmentID = def.equipment?.persistentModelID
                 isBodyweight = def.isBodyweight
+                isRepTotal = def.isRepTotal
+                if def.defaultRepTotalTarget > 0 { repTotalTargetText = String(def.defaultRepTotalTarget) }
             }
         }
     }
@@ -267,7 +290,17 @@ struct ExerciseEditView: View {
             def.notes = notes
             def.equipment = equipment
             def.isBodyweight = isBodyweight
+            def.isRepTotal = isRepTotal
+            if let repTotalTarget, repTotalTarget > 0 { def.defaultRepTotalTarget = repTotalTarget }
             saved = def
+            syncPlannedExercises(for: def)
+        } else if isRepTotal {
+            guard let repTotalTarget, repTotalTarget > 0 else { return }
+            let newDef = ExerciseDef(name: trimmedName, notes: notes, equipment: equipment,
+                                     isBodyweight: isBodyweight, isRepTotal: true,
+                                     defaultRepTotalTarget: repTotalTarget)
+            context.insert(newDef)
+            saved = newDef
         } else {
             guard !reps.isEmpty else { return }
             let newDef = ExerciseDef(name: trimmedName, notes: notes, equipment: equipment,
@@ -278,6 +311,27 @@ struct ExerciseEditView: View {
         try? context.save()
         onSave?(saved)
         dismiss()
+    }
+
+    /// The Exercise page is the single source of truth for an exercise's
+    /// goal kind and bodyweight-ness — changing either here should take
+    /// effect wherever it's already planned into a Phase day, not just for
+    /// future additions. Logged history is left untouched; it's a record of
+    /// what actually happened, not a plan.
+    private func syncPlannedExercises(for def: ExerciseDef) {
+        let name = def.name
+        guard let planned = try? context.fetch(FetchDescriptor<PlannedExercise>(
+            predicate: #Predicate<PlannedExercise> { $0.exerciseName == name })) else { return }
+        for pe in planned {
+            pe.isBodyweight = def.isBodyweight
+            if def.isRepTotal {
+                pe.goalType = .repTotal(target: def.defaultRepTotalTarget > 0 ? def.defaultRepTotalTarget : 1)
+                pe.targetReps = []
+            } else if case .repTotal = pe.goalType {
+                pe.goalType = .fixedSets
+                if pe.targetReps.isEmpty { pe.targetReps = [8, 8, 8] }
+            }
+        }
     }
 }
 

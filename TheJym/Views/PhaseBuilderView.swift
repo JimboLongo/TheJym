@@ -373,10 +373,15 @@ struct DayEditorView: View {
     }
 
     private func addToDay(_ def: ExerciseDef, reps: [Int]) {
-        day.exercises.append(
-            PhaseBuilderView.DraftExercise(name: def.name,
-                                           repsText: reps.map(String.init).joined(separator: "/"),
-                                           weightsText: ""))
+        var draft = PhaseBuilderView.DraftExercise(name: def.name, repsText: "", weightsText: "")
+        if def.isRepTotal {
+            let target = reps.first ?? 0
+            draft.goalType = .repTotal(target: target)
+            draft.repTotalTargetText = String(target)
+        } else {
+            draft.repsText = reps.map(String.init).joined(separator: "/")
+        }
+        day.exercises.append(draft)
     }
 }
 
@@ -395,6 +400,10 @@ struct AddExerciseToDayView: View {
     @State private var newSetReps = ""
     @State private var searchText = ""
     @State private var selectedDef: ExerciseDef?
+    /// A repTotal exercise skips the rep-scheme dialog entirely — just ask
+    /// for this placement's target reps.
+    @State private var repTotalTarget: ExerciseDef?
+    @State private var repTotalTargetText = ""
 
     private var filteredDefs: [ExerciseDef] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
@@ -413,7 +422,12 @@ struct AddExerciseToDayView: View {
                 } else {
                     ForEach(filteredDefs, id: \.persistentModelID) { def in
                         Button {
-                            selectedDef = def
+                            if def.isRepTotal {
+                                repTotalTargetText = def.defaultRepTotalTarget > 0 ? String(def.defaultRepTotalTarget) : ""
+                                repTotalTarget = def
+                            } else {
+                                selectedDef = def
+                            }
                         } label: {
                             Text(def.name)
                                 .foregroundStyle(.primary)
@@ -431,7 +445,9 @@ struct AddExerciseToDayView: View {
             }
             .sheet(isPresented: $showingNewExerciseSheet) {
                 ExerciseEditView(def: nil, bars: bars) { newDef in
-                    onPick(newDef, newDef.repSchemes.first ?? [8, 8, 8])
+                    onPick(newDef, newDef.isRepTotal
+                           ? [newDef.defaultRepTotalTarget]
+                           : (newDef.repSchemes.first ?? [8, 8, 8]))
                     dismiss()
                 }
             }
@@ -467,6 +483,21 @@ struct AddExerciseToDayView: View {
                 }
                 Button("Cancel", role: .cancel) { newSetReps = ""; addSetTarget = nil }
             }
+            .alert("Target Reps for \(repTotalTarget?.name ?? "")",
+                   isPresented: Binding(get: { repTotalTarget != nil }, set: { if !$0 { repTotalTarget = nil } })) {
+                TextField("e.g. 40", text: $repTotalTargetText)
+                    .keyboardType(.numberPad)
+                Button("Add") {
+                    guard let def = repTotalTarget, let target = Int(repTotalTargetText), target > 0 else {
+                        repTotalTarget = nil
+                        return
+                    }
+                    onPick(def, [target])
+                    repTotalTarget = nil
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) { repTotalTarget = nil }
+            }
         }
     }
 }
@@ -484,18 +515,9 @@ struct DraftExerciseRow: View {
             TextField("Exercise name", text: $item.name)
                 .font(.headline)
 
-            Picker("Goal", selection: Binding(
-                get: { isRepTotal },
-                set: { newValue in
-                    item.goalType = newValue
-                        ? .repTotal(target: Int(item.repTotalTargetText) ?? 0)
-                        : .fixedSets
-                })) {
-                Text("Fixed Sets").tag(false)
-                Text("Rep Total").tag(true)
-            }
-            .pickerStyle(.segmented)
-
+            // Goal kind (Fixed Sets vs. Rep Total) is set once on the
+            // exercise itself, in the Exercises tab — this row just shows
+            // whichever field that kind needs.
             if isRepTotal {
                 HStack {
                     Text("Target reps").font(.subheadline)

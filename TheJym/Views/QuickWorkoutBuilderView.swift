@@ -75,10 +75,15 @@ struct QuickWorkoutBuilderView: View {
             }
             .sheet(isPresented: $showingAddExercise) {
                 AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps in
-                    exercises.append(PhaseBuilderView.DraftExercise(
-                        name: def.name,
-                        repsText: reps.map(String.init).joined(separator: "/"),
-                        weightsText: ""))
+                    var draft = PhaseBuilderView.DraftExercise(name: def.name, repsText: "", weightsText: "")
+                    if def.isRepTotal {
+                        let target = reps.first ?? 0
+                        draft.goalType = .repTotal(target: target)
+                        draft.repTotalTargetText = String(target)
+                    } else {
+                        draft.repsText = reps.map(String.init).joined(separator: "/")
+                    }
+                    exercises.append(draft)
                 }
             }
         }
