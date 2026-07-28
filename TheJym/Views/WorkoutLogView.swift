@@ -765,25 +765,35 @@ struct ExercisePageView: View {
     private let repTotalRowHeight: CGFloat = 70
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             header
 
-            if draft.isExpanded {
-                if draft.showingDetails {
-                    notesAndPlateCalc(exerciseDef)
-                }
-                switch draft.goalType {
-                case .fixedSets:
-                    setRows
-                case .repTotal:
-                    ScrollView {
-                        repTotalSetRows
+            // Tight against the header — the wheel pickers below already
+            // center their selected value within their own tall frame, so
+            // any extra spacing here on top of that just reads as a dead
+            // gap between the header and the first row.
+            Group {
+                if draft.isExpanded {
+                    if draft.showingDetails {
+                        notesAndPlateCalc(exerciseDef)
                     }
-                    .frame(maxHeight: 260)
+                    switch draft.goalType {
+                    case .fixedSets:
+                        setRows
+                    case .repTotal:
+                        ScrollView {
+                            repTotalSetRows
+                        }
+                        .frame(maxHeight: 260)
+                    }
+                } else {
+                    currentWorkoutRow
                 }
-            } else {
-                currentWorkoutRow
             }
+            // Matches setRows' own internal -8 overlap between rows, so the
+            // header-to-first-row transition looks the same as the
+            // transition between any two rows below it.
+            .padding(.top, -8)
 
             // Pace panel — always shows all three comparisons; any with no
             // prior data yet just says so instead of being omitted.
@@ -806,6 +816,7 @@ struct ExercisePageView: View {
             }
             .padding(10)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.top, 10)
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
