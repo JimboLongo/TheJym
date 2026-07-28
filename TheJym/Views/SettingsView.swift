@@ -13,8 +13,10 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @Query private var settingsList: [AppSettings]
     @Query private var sessions: [WorkoutSession]
+    @Query private var exerciseDefs: [ExerciseDef]
 
     @State private var showingDeleteHistoryConfirm = false
+    @State private var showingDeleteExercisesConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -81,6 +83,15 @@ struct SettingsView: View {
                 } footer: {
                     Text("Export saves every logged workout as a .csv file (same format the importer expects, so it doubles as a backup). Delete All History permanently deletes every logged workout — Phases, exercises, and equipment are untouched.")
                 }
+
+                Section {
+                    Button("Delete All Exercises", role: .destructive) {
+                        showingDeleteExercisesConfirm = true
+                    }
+                    .disabled(exerciseDefs.isEmpty)
+                } footer: {
+                    Text("Permanently deletes every exercise from the Exercises tab library (names, saved sets, equipment tags, bodyweight flags). Logged history and Phase plans are untouched — they'll just reference exercises no longer in the library.")
+                }
             }
             .navigationTitle("Settings")
             .confirmationDialog("Delete all \(sessions.count) logged workout\(sessions.count == 1 ? "" : "s")? This can't be undone.",
@@ -88,11 +99,21 @@ struct SettingsView: View {
                 Button("Delete All History", role: .destructive) { deleteAllHistory() }
                 Button("Cancel", role: .cancel) { }
             }
+            .confirmationDialog("Delete all \(exerciseDefs.count) exercise\(exerciseDefs.count == 1 ? "" : "s") from the library? This can't be undone.",
+                                isPresented: $showingDeleteExercisesConfirm, titleVisibility: .visible) {
+                Button("Delete All Exercises", role: .destructive) { deleteAllExercises() }
+                Button("Cancel", role: .cancel) { }
+            }
         }
     }
 
     private func deleteAllHistory() {
         for session in sessions { context.delete(session) }
+        try? context.save()
+    }
+
+    private func deleteAllExercises() {
+        for def in exerciseDefs { context.delete(def) }
         try? context.save()
     }
 
