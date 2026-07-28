@@ -6,7 +6,8 @@
 //  for the scenarios called out when the rest-bank model replaced the old
 //  schedule-walking streak: a perfectly-followed split, a travel-week gap
 //  that must survive, a stretch of missed days that must break, a no-phase
-//  user's own weekly setting, and a mid-history earn-rate change.
+//  user's own weekly setting, a mid-history earn-rate change, and a long
+//  dormant gap followed by a return that must start fresh.
 //
 
 import XCTest
@@ -86,9 +87,10 @@ final class RestBankEngineTests: XCTestCase {
 
     // MARK: - Three consecutive zero days
 
-    /// One credited day, then three days in a row with nothing logged —
-    /// the second uncredited day already drops the bank below 0, breaking
-    /// the streak back to 0.
+    /// One credited day, then three days in a row with nothing logged — the
+    /// second uncredited day already drops the bank below 0, breaking the
+    /// streak and closing the ledger, so the bank sits at a clean 0 rather
+    /// than continuing to accumulate debt through the third zero day.
     func testThreeZeroDaysBreaksStreak() {
         let rate = StatsEngine.earnRate(restDays: 1, trainingDays: 3)
         let credited = [day(1)]
@@ -97,7 +99,7 @@ final class RestBankEngineTests: XCTestCase {
 
         XCTAssertEqual(result.currentStreak, 0)
         XCTAssertEqual(result.maxStreak, 1)
-        XCTAssertLessThan(result.bankBalance, 0)
+        XCTAssertEqual(result.bankBalance, 0, accuracy: 1e-9)
     }
 
     // MARK: - No-phase user, 4 days/week
@@ -124,10 +126,11 @@ final class RestBankEngineTests: XCTestCase {
 
     // MARK: - Earn-rate change mid-history
 
-    /// Days 1-4 run under a stingy 0.15 rate (e.g. a 7-day/week setting)
-    /// and break by day 3. Day 5 onward switches to a generous 1.0 rate
-    /// (e.g. after lowering to a 3.5-day/week setting) — day 5's credited
-    /// addition must reflect the NEW rate applied from its effective date,
+    /// Days 1-4 run under a stingy 0.15 rate (e.g. a 7-day/week setting) and
+    /// break by day 3, closing that streak's ledger. Day 5 starts a brand
+    /// new streak (fresh at 1.0, per the ledger-closed rule) right as the
+    /// rate switches to a generous 1.0 (e.g. after lowering to a 3.5-day/
+    /// week setting) — day 6's credited addition must reflect the NEW rate,
     /// not a retroactive recompute of the whole history under one rate.
     func testEarnRateChangeMidHistoryAppliesForward() {
         let boundary = day(5)
@@ -138,11 +141,29 @@ final class RestBankEngineTests: XCTestCase {
         let credited = [day(1), day(5), day(6), day(8)]
         let result = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(8))
 
-        // Confirms day 5's credit used the new 1.0 rate (bank goes from
-        // -2.0 after day 4's uncredited stretch to exactly -1.0) rather
-        // than the old 0.15 rate (which would land at -1.85).
-        XCTAssertEqual(result.bankBalance, 0, accuracy: 1e-9)
-        XCTAssertEqual(result.currentStreak, 1)
-        XCTAssertEqual(result.maxStreak, 2)
+        // Day 6 adds the new 1.0 rate on top of day 5's fresh 1.0 start,
+        // reaching the 2.0 cap — that only happens if the new rate (not the
+        // old 0.15) is what's actually being applied from day 5 onward.
+        XCTAssertEqual(result.bankBalance, 2.0, accuracy: 1e-9)
+        XCTAssertEqual(result.currentStreak, 3)
+        XCTAssertEqual(result.maxStreak, 3)
+    }
+
+    // MARK: - 14-day gap then return
+
+    /// A long dormant stretch (14 uncredited days) breaks the streak almost
+    /// immediately and closes the ledger. When training resumes, the new
+    /// streak must start clean — 1 day, bank at 1.0 — not inherit the debt
+    /// that would have piled up over two weeks of misses.
+    func testFourteenDayGapThenReturnStartsFresh() {
+        let rate = StatsEngine.earnRate(restDays: 1, trainingDays: 3)
+        var credited: [Date] = [day(1), day(2)]
+        credited.append(day(17))   // 14 uncredited days (3...16) in between
+
+        let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
+        let result = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(17))
+
+        XCTAssertEqual(result.currentStreak, 1, "the new streak must start at 1, not inherit the old one")
+        XCTAssertEqual(result.bankBalance, 1.0, accuracy: 1e-9, "bank must reset to 1.0, not carry forward debt")
     }
 }

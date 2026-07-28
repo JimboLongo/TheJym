@@ -244,12 +244,15 @@ enum StatsEngine {
             .map { RatePeriod(start: cal.startOfDay(for: $0.date), earnRate: $0.rate) }
     }
 
-    /// Pure day-by-day walk of the rest-bank model. Bank starts at 1.0 on the
-    /// first credited day, capped at `bankCap`; each subsequent credited day
-    /// adds that day's earn rate, each uncredited day spends 1.0. The streak
-    /// (count of credited days since the last break) resets to 0 the moment
-    /// the bank drops below 0. Today is left pending — neither earned nor
-    /// spent — if nothing's logged yet, so it doesn't prematurely end things.
+    /// Pure day-by-day walk of the rest-bank model. A streak begins on a
+    /// credited day with the bank reset to 1.0 (capped at `bankCap`); every
+    /// other credited day within that same streak adds that day's earn
+    /// rate. Uncredited days spend 1.0 — but only while the streak is still
+    /// open. The moment the bank drops below 0, the streak ends right there
+    /// and the ledger closes: further uncredited days do nothing (no more
+    /// spending) until the next credited day starts a brand-new streak,
+    /// fresh at 1.0 rather than inheriting whatever debt was left. Today is
+    /// left pending — neither earned nor spent — if nothing's logged yet.
     static func computeRestBank(creditedDates: [Date],
                                 ratePeriods: [RatePeriod],
                                 now: Date = .now) -> RestBankResult {
@@ -267,7 +270,7 @@ enum StatsEngine {
         }
 
         var bank = 0.0
-        var started = false
+        var streakOpen = false
         var streak = 0
         var maxStreak = 0
         var day = firstDay
@@ -280,17 +283,22 @@ enum StatsEngine {
             if isToday && !isCredited { break }   // pending — stop without processing today
 
             if isCredited {
-                bank = started ? min(bankCap, bank + rate(on: day)) : 1.0
-                started = true
+                bank = streakOpen ? min(bankCap, bank + rate(on: day)) : 1.0
+                streakOpen = true
                 streak += 1
                 maxStreak = max(maxStreak, streak)
-            } else {
+            } else if streakOpen {
                 bank -= 1.0
                 // Epsilon guards against floating-point residue (e.g. a
                 // repeating-decimal earn rate landing at -1e-16 instead of
                 // exactly 0) spuriously tripping a break right at the edge.
-                if bank < -1e-9 { streak = 0 }
+                if bank < -1e-9 {
+                    streakOpen = false
+                    streak = 0
+                    bank = 0   // ledger closed — no meaningful balance until the next streak starts
+                }
             }
+            // else: ledger already closed, an uncredited day has no effect.
 
             guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
