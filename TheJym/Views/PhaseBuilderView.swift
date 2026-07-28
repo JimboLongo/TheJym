@@ -366,20 +366,20 @@ struct DayEditorView: View {
         }
         .navigationTitle(day.name)
         .sheet(isPresented: $showingAddExercise) {
-            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps in
-                addToDay(def, reps: reps)
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
+                addToDay(def, reps: reps, goalType: goalType)
             }
         }
     }
 
-    private func addToDay(_ def: ExerciseDef, reps: [Int]) {
+    private func addToDay(_ def: ExerciseDef, reps: [Int], goalType: GoalType) {
         var draft = PhaseBuilderView.DraftExercise(name: def.name, repsText: "", weightsText: "")
-        if def.isRepTotal {
-            let target = reps.first ?? 0
+        switch goalType {
+        case .fixedSets:
+            draft.repsText = reps.map(String.init).joined(separator: "/")
+        case .repTotal(let target):
             draft.goalType = .repTotal(target: target)
             draft.repTotalTargetText = String(target)
-        } else {
-            draft.repsText = reps.map(String.init).joined(separator: "/")
         }
         day.exercises.append(draft)
     }
@@ -393,17 +393,15 @@ struct AddExerciseToDayView: View {
     @Environment(\.dismiss) private var dismiss
     let exerciseDefs: [ExerciseDef]
     let bars: [Bar]
-    var onPick: (ExerciseDef, [Int]) -> Void
+    /// `GoalType` reflects the choice made in the Add Set sheet — reps only
+    /// carries values for `.fixedSets` (empty for `.repTotal`, whose target
+    /// is already inside the GoalType itself).
+    var onPick: (ExerciseDef, [Int], GoalType) -> Void
 
     @State private var showingNewExerciseSheet = false
     @State private var addSetTarget: ExerciseDef?
-    @State private var newSetReps = ""
     @State private var searchText = ""
     @State private var selectedDef: ExerciseDef?
-    /// A repTotal exercise skips the rep-scheme dialog entirely — just ask
-    /// for this placement's target reps.
-    @State private var repTotalTarget: ExerciseDef?
-    @State private var repTotalTargetText = ""
 
     private var filteredDefs: [ExerciseDef] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
@@ -422,12 +420,7 @@ struct AddExerciseToDayView: View {
                 } else {
                     ForEach(filteredDefs, id: \.persistentModelID) { def in
                         Button {
-                            if def.isRepTotal {
-                                repTotalTargetText = def.defaultRepTotalTarget > 0 ? String(def.defaultRepTotalTarget) : ""
-                                repTotalTarget = def
-                            } else {
-                                selectedDef = def
-                            }
+                            selectedDef = def
                         } label: {
                             Text(def.name)
                                 .foregroundStyle(.primary)
@@ -445,9 +438,7 @@ struct AddExerciseToDayView: View {
             }
             .sheet(isPresented: $showingNewExerciseSheet) {
                 ExerciseEditView(def: nil, bars: bars) { newDef in
-                    onPick(newDef, newDef.isRepTotal
-                           ? [newDef.defaultRepTotalTarget]
-                           : (newDef.repSchemes.first ?? [8, 8, 8]))
+                    onPick(newDef, newDef.repSchemes.first ?? [8, 8, 8], .fixedSets)
                     dismiss()
                 }
             }
@@ -457,7 +448,7 @@ struct AddExerciseToDayView: View {
                 if let def = selectedDef {
                     ForEach(def.repSchemes, id: \.self) { reps in
                         Button(reps.map(String.init).joined(separator: "/")) {
-                            onPick(def, reps)
+                            onPick(def, reps, .fixedSets)
                             dismiss()
                         }
                     }
@@ -468,35 +459,78 @@ struct AddExerciseToDayView: View {
                     Button("Cancel", role: .cancel) { selectedDef = nil }
                 }
             }
-            .alert("Add a Set to \(addSetTarget?.name ?? "")",
-                   isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
-                TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
-                Button("Add") {
-                    let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                    newSetReps = ""
-                    guard !reps.isEmpty, let def = addSetTarget else { addSetTarget = nil; return }
-                    def.addRepScheme(reps)
-                    try? context.save()
-                    onPick(def, reps)
-                    addSetTarget = nil
-                    dismiss()
-                }
-                Button("Cancel", role: .cancel) { newSetReps = ""; addSetTarget = nil }
-            }
-            .alert("Target Reps for \(repTotalTarget?.name ?? "")",
-                   isPresented: Binding(get: { repTotalTarget != nil }, set: { if !$0 { repTotalTarget = nil } })) {
-                TextField("e.g. 40", text: $repTotalTargetText)
-                    .keyboardType(.numberPad)
-                Button("Add") {
-                    guard let def = repTotalTarget, let target = Int(repTotalTargetText), target > 0 else {
-                        repTotalTarget = nil
-                        return
+            .sheet(isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
+                if let def = addSetTarget {
+                    AddSetSheet(exerciseName: def.name) { goalType, reps in
+                        if case .fixedSets = goalType {
+                            def.addRepScheme(reps)
+                            try? context.save()
+                        }
+                        onPick(def, reps, goalType)
+                        addSetTarget = nil
+                        dismiss()
                     }
-                    onPick(def, [target])
-                    repTotalTarget = nil
-                    dismiss()
                 }
-                Button("Cancel", role: .cancel) { repTotalTarget = nil }
+            }
+        }
+    }
+}
+
+/// Add a new set to an exercise — either a fixed rep scheme (e.g.
+/// "5/5/5/3/3/3") or, toggled on, a single rep-total target (e.g. "40") for
+/// exercises like Pull-Up where the goal is a running total, not fixed sets.
+struct AddSetSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let exerciseName: String
+    /// `reps` is only meaningful for `.fixedSets` — empty for `.repTotal`.
+    var onAdd: (GoalType, [Int]) -> Void
+
+    @State private var isRepTotal = false
+    @State private var repsText = ""
+    @State private var targetText = ""
+
+    private var reps: [Int] {
+        repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    }
+    private var target: Int? { Int(targetText) }
+    private var canAdd: Bool { isRepTotal ? (target ?? 0) > 0 : !reps.isEmpty }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Goal", selection: $isRepTotal) {
+                        Text("Fixed Sets").tag(false)
+                        Text("Rep Total").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if isRepTotal {
+                        TextField("Target reps e.g. 40", text: $targetText)
+                            .keyboardType(.numberPad)
+                    } else {
+                        TextField("Reps e.g. 5/5/5/3/3/3", text: $repsText)
+                            .keyboardType(.numbersAndPunctuation)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
+            }
+            .navigationTitle("Add a Set to \(exerciseName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        if isRepTotal {
+                            guard let target, target > 0 else { return }
+                            onAdd(.repTotal(target: target), [])
+                        } else {
+                            guard !reps.isEmpty else { return }
+                            onAdd(.fixedSets, reps)
+                        }
+                    }
+                    .disabled(!canAdd)
+                }
             }
         }
     }

@@ -152,21 +152,22 @@ struct PhaseDayEditView: View {
         }
         .navigationTitle(day.name)
         .sheet(isPresented: $showingAddExercise) {
-            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps in
-                addExercise(def, reps: reps)
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
+                addExercise(def, reps: reps, goalType: goalType)
             }
         }
     }
 
-    private func addExercise(_ def: ExerciseDef, reps: [Int]) {
+    private func addExercise(_ def: ExerciseDef, reps: [Int], goalType: GoalType) {
         let pe: PlannedExercise
-        if def.isRepTotal {
-            pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
-                                 targetReps: [], isBodyweight: def.isBodyweight,
-                                 goalType: .repTotal(target: reps.first ?? 0))
-        } else {
+        switch goalType {
+        case .fixedSets:
             pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
                                  targetReps: reps, isBodyweight: def.isBodyweight)
+        case .repTotal(let target):
+            pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
+                                 targetReps: [], isBodyweight: def.isBodyweight,
+                                 goalType: .repTotal(target: target))
         }
         pe.day = day
         context.insert(pe)

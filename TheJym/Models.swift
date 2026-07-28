@@ -119,24 +119,14 @@ final class ExerciseDef {
     /// Default for new plan slots created from this exercise (e.g. Pull-Up,
     /// Dip) — still overridable per PlannedExercise.
     var isBodyweight: Bool = false
-    /// The exercise's goal kind (fixed sets vs. a rep total to hit, e.g.
-    /// "40 pull-ups") — set once here rather than re-chosen every time the
-    /// exercise is placed into a Phase day.
-    var isRepTotal: Bool = false
-    /// Suggested starting target when this exercise is next added to a day
-    /// — the specific number can still be adjusted per placement.
-    var defaultRepTotalTarget: Int = 0
 
     init(name: String, notes: String = "",
-         equipment: Bar? = nil, repSchemes: [[Int]] = [], isBodyweight: Bool = false,
-         isRepTotal: Bool = false, defaultRepTotalTarget: Int = 0) {
+         equipment: Bar? = nil, repSchemes: [[Int]] = [], isBodyweight: Bool = false) {
         self.name = name
         self.notes = notes
         self.equipment = equipment
         self.repSchemes = repSchemes
         self.isBodyweight = isBodyweight
-        self.isRepTotal = isRepTotal
-        self.defaultRepTotalTarget = defaultRepTotalTarget
     }
 
     /// Adds `reps` as a saved set if it isn't already present.

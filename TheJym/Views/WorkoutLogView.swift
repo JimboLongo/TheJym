@@ -851,45 +851,47 @@ struct ExercisePageView: View {
                 }
             }
             if draft.isExpanded {
-                switch draft.goalType {
-                case .fixedSets:
-                    HStack(spacing: 12) {
-                        Text("Set").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .leading)
-                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: weightColumnWidth, alignment: .center)
-                        Text("Target").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .center)
-                        Text("Reps").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 100, alignment: .center)
-                        Text("+/-").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .center)
+                VStack(alignment: .leading, spacing: 2) {
+                    switch draft.goalType {
+                    case .fixedSets:
+                        HStack(spacing: 12) {
+                            Text("Set").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: 44, alignment: .leading)
+                            Text("Weight").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: weightColumnWidth, alignment: .center)
+                            Text("Target").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: 44, alignment: .center)
+                            Text("Reps").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: 100, alignment: .center)
+                            Text("+/-").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: 44, alignment: .center)
+                        }
+                        .lineLimit(1)
+                    case .repTotal:
+                        HStack(spacing: 12) {
+                            Text("Set").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: 44, alignment: .leading)
+                            Text("Weight").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: weightColumnWidth, alignment: .center)
+                            Text("Reps").font(.subheadline).foregroundStyle(.secondary)
+                                .frame(width: 100, alignment: .center)
+                            Spacer()
+                        }
+                        .lineLimit(1)
                     }
-                    .lineLimit(1)
-                case .repTotal:
-                    HStack(spacing: 12) {
-                        Text("Set").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 44, alignment: .leading)
-                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: weightColumnWidth, alignment: .center)
-                        Text("Reps").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 100, alignment: .center)
-                        Spacer()
+                    // The resolved bodyweight, shown once right under the
+                    // "Weight" header (not repeated on every set row below),
+                    // formatted the same as the column labels above it.
+                    if draft.isBodyweight {
+                        HStack(spacing: 12) {
+                            Color.clear.frame(width: 44)
+                            Text(bodyweightPrefixLabel).font(.subheadline).foregroundStyle(.white)
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                                .frame(width: weightColumnWidth, alignment: .center)
+                            Spacer()
+                        }
+                        .lineLimit(1)
                     }
-                    .lineLimit(1)
-                }
-                // The resolved bodyweight, shown once right under the
-                // "Weight" header (not repeated on every set row below),
-                // styled the same as the column labels above it.
-                if draft.isBodyweight {
-                    HStack(spacing: 12) {
-                        Color.clear.frame(width: 44)
-                        Text(bodyweightPrefixLabel).font(.subheadline).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.7)
-                            .frame(width: weightColumnWidth, alignment: .center)
-                        Spacer()
-                    }
-                    .lineLimit(1)
                 }
             }
         }
