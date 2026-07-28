@@ -744,6 +744,11 @@ struct ExercisePageView: View {
     private var weightValues: [Double] {
         Array(stride(from: 0.0, through: 600.0, by: weightStep))
     }
+    /// Selectable added-weight values for a bodyweight exercise's wheel —
+    /// always 2.5 lb increments regardless of the exercise's equipment.
+    private var addedWeightValues: [Double] {
+        Array(stride(from: 0.0, through: 200.0, by: 2.5))
+    }
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
     /// sets, plus the header and pace panel, fit within one page height.
     private var wheelHeight: CGFloat {
@@ -1044,23 +1049,36 @@ struct ExercisePageView: View {
     @ViewBuilder
     private func weightCell(for index: Int, height: CGFloat) -> some View {
         if draft.isBodyweight {
-            ZStack(alignment: .top) {
-                BodyweightAddedControl(addedWeight: Binding(
-                    get: { draft.sets[index].weight ?? 0 },
-                    set: { newValue in
-                        let old = draft.sets[index].weight ?? 0
-                        draft.sets[index].weightText = Formatters.trim(newValue)
-                        let delta = newValue - old
-                        if delta != 0 { cascadeDelta(delta, from: index) }
-                    }), bodyweight: currentBodyweight)
-                .frame(width: 100, height: height)
-                if let delta = cascadeIndicator[index] {
-                    Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
-                        .font(.caption2.bold())
-                        .foregroundStyle(delta > 0 ? .green : .red)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(.thinMaterial, in: Capsule())
-                        .transition(.opacity)
+            HStack(spacing: 4) {
+                Text(currentBodyweight.map { "\(Formatters.trim($0)) (BW) +" } ?? "BW +")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                ZStack(alignment: .top) {
+                    Picker("Added Weight", selection: Binding(
+                        get: { nearestValue(draft.sets[index].weight ?? 0, in: addedWeightValues) },
+                        set: { newValue in
+                            let old = draft.sets[index].weight ?? 0
+                            draft.sets[index].weightText = Formatters.trim(newValue)
+                            let delta = newValue - old
+                            if delta != 0 { cascadeDelta(delta, from: index) }
+                        })) {
+                        ForEach(addedWeightValues, id: \.self) { v in
+                            Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
+                        }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(width: 60, height: height)
+                    .clipped()
+                    if let delta = cascadeIndicator[index] {
+                        Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                            .font(.caption2.bold())
+                            .foregroundStyle(delta > 0 ? .green : .red)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(.thinMaterial, in: Capsule())
+                            .transition(.opacity)
+                    }
                 }
             }
         } else {
@@ -1398,69 +1416,6 @@ struct ExplosionBurst: View {
         let angle = (Double(index) / Double(particleCount)) * 2 * .pi
         let radius: Double = 34
         return CGSize(width: cos(angle) * radius, height: sin(angle) * radius)
-    }
-}
-
-// MARK: - Bodyweight "BW + n" added-weight stepper
-
-/// Compact stepper for a bodyweight exercise's added weight — +/- buttons in
-/// 2.5 lb increments plus a directly-editable numeric field, with a live hint
-/// showing the resolved effective load once a bodyweight is known.
-struct BodyweightAddedControl: View {
-    @Binding var addedWeight: Double
-    let bodyweight: Double?
-
-    @State private var text: String = ""
-    private let step: Double = 2.5
-
-    var body: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                Button { setValue(addedWeight - step) } label: {
-                    Image(systemName: "minus.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .imageScale(.small)
-
-                Text("BW+")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
-                TextField("0", text: $text)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.center)
-                    .font(.caption.weight(.semibold))
-                    .frame(width: 32)
-                    .onChange(of: text) { _, new in
-                        if let v = Double(new) { addedWeight = max(0, v) }
-                    }
-
-                Button { setValue(addedWeight + step) } label: {
-                    Image(systemName: "plus.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .imageScale(.small)
-            }
-            if let bodyweight {
-                Text("→ \(Formatters.trim(bodyweight + addedWeight)) lb")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-            }
-        }
-        .onAppear { text = Formatters.trim(addedWeight) }
-        // Reflects external changes (e.g. a cascade from an earlier set)
-        // without fighting the user's own in-progress typing — only pushes
-        // in when the formatted value has actually drifted from what's shown.
-        .onChange(of: addedWeight) { _, new in
-            let formatted = Formatters.trim(new)
-            if text != formatted { text = formatted }
-        }
-    }
-
-    private func setValue(_ v: Double) {
-        addedWeight = max(0, v)
-        text = Formatters.trim(addedWeight)
     }
 }
 
