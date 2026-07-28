@@ -46,12 +46,6 @@ struct StatsView: View {
                             defaultTrainingDaysPerWeek: settings?.trainingDaysPerWeek ?? 3)
     }
 
-    private func setTrainingDaysPerWeek(_ value: Int) {
-        settings?.trainingDaysPerWeek = value
-        context.insert(TrainingDaysPerWeekChange(trainingDaysPerWeek: value))
-        try? context.save()
-    }
-
     var body: some View {
         NavigationStack {
             List {
@@ -75,14 +69,6 @@ struct StatsView: View {
                     }
                     if let adherence = stats.adherencePercent {
                         statRow("Adherence", String(format: "%.0f%%", adherence))
-                    }
-
-                    if activePhase == nil {
-                        Stepper("Training days per week: \(settings?.trainingDaysPerWeek ?? 3)",
-                               value: Binding(
-                                   get: { settings?.trainingDaysPerWeek ?? 3 },
-                                   set: { setTrainingDaysPerWeek($0) }),
-                               in: 1...7)
                     }
                 }
 

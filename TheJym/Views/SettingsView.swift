@@ -14,9 +14,18 @@ struct SettingsView: View {
     @Query private var settingsList: [AppSettings]
     @Query private var sessions: [WorkoutSession]
     @Query private var exerciseDefs: [ExerciseDef]
+    @Query private var phases: [Phase]
 
     @State private var showingDeleteHistoryConfirm = false
     @State private var showingDeleteExercisesConfirm = false
+
+    private var activePhase: Phase? { phases.first(where: \.isActive) }
+
+    private func setTrainingDaysPerWeek(_ value: Int) {
+        settingsList.first?.trainingDaysPerWeek = value
+        context.insert(TrainingDaysPerWeekChange(trainingDaysPerWeek: value))
+        try? context.save()
+    }
 
     var body: some View {
         NavigationStack {
@@ -64,6 +73,21 @@ struct SettingsView: View {
                         } footer: {
                             Text("Optional. Free key from aistudio.google.com. Without it, the built-in on-device planner is used (no network, no cost).")
                         }
+                    }
+                }
+
+                if activePhase == nil, let s = settingsList.first {
+                    Section {
+                        Picker("Training Days Per Week", selection: Binding(
+                            get: { s.trainingDaysPerWeek },
+                            set: { setTrainingDaysPerWeek($0) })) {
+                            ForEach(1...7, id: \.self) { n in
+                                Text("\(n)").tag(n)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    } footer: {
+                        Text("Used to pace the rest-bank streak when no Phase is active — a Phase's own split determines this automatically once one is running.")
                     }
                 }
 
