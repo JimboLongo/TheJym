@@ -740,19 +740,13 @@ struct ExercisePageView: View {
     private var addedWeightValues: [Double] {
         Array(stride(from: 0.0, through: 200.0, by: 2.5))
     }
-    /// The weight column's header label — the resolved bodyweight prefix
-    /// for a bodyweight exercise (e.g. "181 (BW) +"), shown once here rather
-    /// than repeated on every set row.
-    private var weightColumnLabel: String {
-        guard draft.isBodyweight else { return "Weight" }
-        return currentBodyweight.map { "\(Formatters.trim($0)) (BW) +" } ?? "BW +"
+    /// The resolved bodyweight prefix shown once, on its own line right
+    /// under the "Weight" header, for a bodyweight exercise (e.g.
+    /// "181 (BW) +") — not repeated on every set row.
+    private var bodyweightPrefixLabel: String {
+        currentBodyweight.map { "\(Formatters.trim($0)) (BW) +" } ?? "BW +"
     }
-    /// A bodyweight exercise's label needs more room than the plain
-    /// "Weight" header, so its column (header + every row's wheel) widens
-    /// to fit it without wrapping.
-    private var weightColumnWidth: CGFloat {
-        draft.isBodyweight ? 130 : 100
-    }
+    private let weightColumnWidth: CGFloat = 100
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
     /// sets, plus the header and pace panel, fit within one page height.
     private var wheelHeight: CGFloat {
@@ -862,8 +856,7 @@ struct ExercisePageView: View {
                     HStack(spacing: 12) {
                         Text("Set").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .leading)
-                        Text(weightColumnLabel).font(.subheadline).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.7)
+                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: weightColumnWidth, alignment: .center)
                         Text("Target").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .center)
@@ -877,11 +870,23 @@ struct ExercisePageView: View {
                     HStack(spacing: 12) {
                         Text("Set").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .leading)
-                        Text(weightColumnLabel).font(.subheadline).foregroundStyle(.secondary)
-                            .lineLimit(1).minimumScaleFactor(0.7)
+                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: weightColumnWidth, alignment: .center)
                         Text("Reps").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 100, alignment: .center)
+                        Spacer()
+                    }
+                    .lineLimit(1)
+                }
+                // The resolved bodyweight, shown once right under the
+                // "Weight" header (not repeated on every set row below),
+                // styled the same as the column labels above it.
+                if draft.isBodyweight {
+                    HStack(spacing: 12) {
+                        Color.clear.frame(width: 44)
+                        Text(bodyweightPrefixLabel).font(.subheadline).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                            .frame(width: weightColumnWidth, alignment: .center)
                         Spacer()
                     }
                     .lineLimit(1)
