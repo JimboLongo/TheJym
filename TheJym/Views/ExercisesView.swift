@@ -22,8 +22,8 @@ struct ExercisesView: View {
     @State private var selectedDef: ExerciseDef?
     @State private var editTarget: ExerciseDef?
     @State private var addSetTarget: ExerciseDef?
-    @State private var newSetReps = ""
     @State private var historyTarget: SetHistoryTarget?
+    @State private var repTotalHistoryTarget: RepTotalHistoryTarget?
     @State private var selectedIDs: Set<PersistentIdentifier> = []
     @State private var showingBulkDeleteConfirm = false
     @State private var showingLibraryPicker = false
@@ -40,6 +40,11 @@ struct ExercisesView: View {
     struct SetHistoryTarget: Hashable {
         let defID: PersistentIdentifier
         let reps: [Int]
+    }
+
+    struct RepTotalHistoryTarget: Hashable {
+        let defID: PersistentIdentifier
+        let target: Int
     }
 
     var body: some View {
@@ -133,6 +138,12 @@ struct ExercisesView: View {
                             selectedDef = nil
                         }
                     }
+                    ForEach(def.repTotalTargets, id: \.self) { target in
+                        Button("\(target) total reps") {
+                            repTotalHistoryTarget = RepTotalHistoryTarget(defID: def.persistentModelID, target: target)
+                            selectedDef = nil
+                        }
+                    }
                     Button("Add Set…") {
                         addSetTarget = def
                         selectedDef = nil
@@ -144,22 +155,28 @@ struct ExercisesView: View {
                     Button("Cancel", role: .cancel) { selectedDef = nil }
                 }
             }
-            .alert("Add a Set to \(addSetTarget?.name ?? "")",
-                   isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
-                TextField("e.g. 5/5/5/3/3/3", text: $newSetReps)
-                Button("Add") {
-                    let reps = newSetReps.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                    newSetReps = ""
-                    guard !reps.isEmpty, let def = addSetTarget else { addSetTarget = nil; return }
-                    def.addRepScheme(reps)
-                    try? context.save()
-                    addSetTarget = nil
+            .sheet(isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
+                if let def = addSetTarget {
+                    AddSetSheet(exerciseName: def.name) { goalType, reps in
+                        switch goalType {
+                        case .fixedSets:
+                            def.addRepScheme(reps)
+                        case .repTotal(let target):
+                            def.addRepTotalTarget(target)
+                        }
+                        try? context.save()
+                        addSetTarget = nil
+                    }
                 }
-                Button("Cancel", role: .cancel) { newSetReps = ""; addSetTarget = nil }
             }
             .navigationDestination(item: $historyTarget) { target in
                 if let def = exerciseDefs.first(where: { $0.persistentModelID == target.defID }) {
                     ExerciseSetHistoryView(def: def, reps: target.reps, allLogs: allLogs)
+                }
+            }
+            .navigationDestination(item: $repTotalHistoryTarget) { target in
+                if let def = exerciseDefs.first(where: { $0.persistentModelID == target.defID }) {
+                    ExerciseRepTotalHistoryView(def: def, target: target.target, allLogs: allLogs)
                 }
             }
         }
@@ -328,6 +345,68 @@ struct ExerciseSetHistoryView: View {
                 Button(role: .destructive) {
                     if let idx = def.repSchemes.firstIndex(of: reps) {
                         def.repSchemes.remove(at: idx)
+                        try? context.save()
+                    }
+                    dismiss()
+                } label: {
+                    Image(systemName: "trash")
+                }
+            }
+        }
+    }
+}
+
+/// History for one exact exercise/rep-total combo, most recent first —
+/// repTotal's counterpart to ExerciseSetHistoryView.
+struct ExerciseRepTotalHistoryView: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    let def: ExerciseDef
+    let target: Int
+    let allLogs: [ExerciseLog]
+
+    private var history: [ExerciseLog] {
+        let planKey = "\(def.name)|\(target) total"
+        return allLogs
+            .filter { $0.planKey == planKey && !$0.sets.isEmpty }
+            .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
+    }
+
+    var body: some View {
+        List {
+            if !def.notes.isEmpty || def.equipment != nil {
+                Section("Details") {
+                    if let eq = def.equipment {
+                        LabeledContent("Equipment", value: eq.name)
+                    }
+                    if !def.notes.isEmpty {
+                        Text(def.notes).font(.subheadline)
+                    }
+                }
+            }
+            if history.isEmpty {
+                ContentUnavailableView("No History Yet", systemImage: "clock",
+                                       description: Text("Log this set in a workout and it'll show up here."))
+            } else {
+                ForEach(history, id: \.persistentModelID) { log in
+                    Section(Formatters.date.string(from: log.session?.date ?? .distantPast)) {
+                        LabeledContent("Total", value: "\(log.repTotalSoFar)/\(target) reps in \(log.sortedSets.count) set\(log.sortedSets.count == 1 ? "" : "s")")
+                            .font(.system(.subheadline, design: .monospaced))
+                        ForEach(log.sortedSets, id: \.persistentModelID) { s in
+                            LabeledContent("Set \(s.index + 1)",
+                                           value: "\(Formatters.trim(s.weight)) lbs × \(s.reps) reps")
+                                .font(.system(.subheadline, design: .monospaced))
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("\(target) total reps")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(role: .destructive) {
+                    if let idx = def.repTotalTargets.firstIndex(of: target) {
+                        def.repTotalTargets.remove(at: idx)
                         try? context.save()
                     }
                     dismiss()

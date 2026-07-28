@@ -116,16 +116,22 @@ final class ExerciseDef {
     var notes: String = ""
     var equipment: Bar?
     var repSchemes: [[Int]] = []   // saved sets, e.g. [[5,5,5,3,3,3], [8,8,8]]
+    /// Saved rep-total targets, e.g. [30, 40] — the repTotal-goal counterpart
+    /// to repSchemes, for exercises like Pull-Up where a saved "set" is a
+    /// single running total instead of a fixed rep scheme.
+    var repTotalTargets: [Int] = []
     /// Default for new plan slots created from this exercise (e.g. Pull-Up,
     /// Dip) — still overridable per PlannedExercise.
     var isBodyweight: Bool = false
 
     init(name: String, notes: String = "",
-         equipment: Bar? = nil, repSchemes: [[Int]] = [], isBodyweight: Bool = false) {
+         equipment: Bar? = nil, repSchemes: [[Int]] = [], repTotalTargets: [Int] = [],
+         isBodyweight: Bool = false) {
         self.name = name
         self.notes = notes
         self.equipment = equipment
         self.repSchemes = repSchemes
+        self.repTotalTargets = repTotalTargets
         self.isBodyweight = isBodyweight
     }
 
@@ -133,6 +139,12 @@ final class ExerciseDef {
     func addRepScheme(_ reps: [Int]) {
         guard !reps.isEmpty, !repSchemes.contains(reps) else { return }
         repSchemes.append(reps)
+    }
+
+    /// Adds `target` as a saved rep-total if it isn't already present.
+    func addRepTotalTarget(_ target: Int) {
+        guard target > 0, !repTotalTargets.contains(target) else { return }
+        repTotalTargets.append(target)
     }
 
     /// Ensures `name` exists in the library, and that `targetReps` is one of
