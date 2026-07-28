@@ -14,7 +14,6 @@ struct TodayView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
     @Query private var settingsList: [AppSettings]
-    @Query(sort: \RestDayActivity.date, order: .reverse) private var restActivities: [RestDayActivity]
     /// Standalone workout templates not tied to any Phase — "Upper Day"
     /// style quick workouts you can start anytime or reuse.
     @Query(filter: #Predicate<PhaseDay> { $0.phase == nil }, sort: \PhaseDay.name)
@@ -22,9 +21,6 @@ struct TodayView: View {
 
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
-    @State private var newActivityText = ""
-    @State private var newActivityDistanceText = ""
-    @State private var newActivityDistanceUnit = "mi"
     @State private var quickJumpDay: PhaseDay?
     @State private var expandedDayIDs: Set<PersistentIdentifier> = []
     @State private var startingQuickWorkout: PhaseDay?
@@ -33,10 +29,6 @@ struct TodayView: View {
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
-
-    private var todaysActivities: [RestDayActivity] {
-        restActivities.filter { Calendar.current.isDateInToday($0.date) }
-    }
 
     var body: some View {
         NavigationStack {
@@ -52,7 +44,6 @@ struct TodayView: View {
                 }
 
                 quickWorkoutsSection
-                restDayActivitySection
             }
             .navigationTitle("Train")
             .sheet(isPresented: $showingPhaseSetup) {
@@ -292,52 +283,6 @@ struct TodayView: View {
         }
     }
 
-    @ViewBuilder
-    private var restDayActivitySection: some View {
-        Section("Rest Day Activity Quick Add") {
-            Text("Log a walk or something light on an off day — it counts toward your streak, but skipping it on an actual rest day won't break one.")
-                .font(.caption).foregroundStyle(.secondary)
-            TextField("e.g. Walk, Yoga, Bike Ride", text: $newActivityText)
-            HStack {
-                TextField("Distance (optional)", text: $newActivityDistanceText)
-                    .keyboardType(.decimalPad)
-                Picker("Unit", selection: $newActivityDistanceUnit) {
-                    Text("mi").tag("mi")
-                    Text("km").tag("km")
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 120)
-                Button("Log") { logActivity() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(newActivityText.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            ForEach(todaysActivities, id: \.persistentModelID) { activity in
-                HStack {
-                    Text(activity.name)
-                    Spacer()
-                    if let d = activity.distance, d > 0 {
-                        Text("\(Formatters.trim(d)) \(activity.distanceUnit)")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .onDelete { idx in
-                for i in idx { context.delete(todaysActivities[i]) }
-                try? context.save()
-            }
-        }
-    }
-
-    private func logActivity() {
-        let trimmed = newActivityText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        context.insert(RestDayActivity(name: trimmed,
-                                       distance: Double(newActivityDistanceText),
-                                       distanceUnit: newActivityDistanceUnit))
-        try? context.save()
-        newActivityText = ""
-        newActivityDistanceText = ""
-    }
 }
 
 /// Log a specific scheduled Rest day: an ad hoc exercise (any name/sets, not
@@ -451,9 +396,25 @@ struct RestDayLogView: View {
     private func logActivity() {
         let trimmed = activityName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        context.insert(RestDayActivity(name: trimmed,
-                                       distance: Double(distanceText),
-                                       distanceUnit: distanceUnit))
+        let distance = Double(distanceText)
+        context.insert(RestDayActivity(name: trimmed, distance: distance, distanceUnit: distanceUnit))
+
+        // Also show up in History — folds the distance into the exercise
+        // name since ExerciseLog/SetLog don't have a distance field of
+        // their own. Same "no Phase" pattern as ad hoc exercises: this
+        // shouldn't shift where the training cycle thinks you are.
+        let displayName = distance.map { "\(trimmed) (\(Formatters.trim($0)) \(distanceUnit))" } ?? trimmed
+        let session = WorkoutSession(day: day, dayLabel: day.name, cycleNumber: 0)
+        context.insert(session)
+        let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
+        log.session = session
+        context.insert(log)
+        let set = SetLog(index: 0, weight: 0, reps: 1)
+        set.exerciseLog = log
+        context.insert(set)
+        var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
+        ExerciseDef.ensureAnyVariantExists(name: displayName, knownDefs: &knownDefs, context: context)
+
         try? context.save()
         activityName = ""
         distanceText = ""
