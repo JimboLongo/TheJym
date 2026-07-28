@@ -123,6 +123,26 @@ struct TodayView: View {
         }
     }
 
+    /// One checkmark/circle + short name per training-day slot in the cycle
+    /// currently in progress — replaces the raw "N sessions logged" count so
+    /// it's clear exactly which days are done vs. still open this cycle.
+    private func cycleSlotChecklist(_ phase: Phase) -> some View {
+        HStack(spacing: 12) {
+            ForEach(phase.trainingDays, id: \.persistentModelID) { day in
+                let done = phase.isSlotFilled(for: day)
+                VStack(spacing: 2) {
+                    Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(done ? .green : .secondary)
+                    Text(day.name)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+        }
+    }
+
     @ViewBuilder
     private func activePhaseSections(_ phase: Phase) -> some View {
         Section {
@@ -135,7 +155,7 @@ struct TodayView: View {
                         .padding(.horizontal, 8).padding(.vertical, 4)
                         .background(.thinMaterial, in: Capsule())
                 }
-                ProgressView(value: Double(phase.completedSessionCount),
+                ProgressView(value: Double(phase.filledSlotCount),
                              total: Double(phase.trainingDaysPerCycle * phase.totalCycles))
                 HStack {
                     Text("Cycle \(phase.currentCycle) of \(phase.totalCycles)")
@@ -144,10 +164,9 @@ struct TodayView: View {
                             .foregroundStyle(.orange)
                     }
                     Spacer()
-                    Text("\(phase.completedSessionCount) sessions logged")
-                        .foregroundStyle(.secondary)
                 }
                 .font(.caption)
+                cycleSlotChecklist(phase)
             }
             .padding(.vertical, 4)
         }

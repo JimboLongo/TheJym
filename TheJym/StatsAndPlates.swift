@@ -315,7 +315,7 @@ enum StatsEngine {
             from: cal.startOfDay(for: phase.startDate), to: cal.startOfDay(for: now)).day ?? 0) + 1)
         let pace = Double(phase.trainingDaysPerCycle) / Double(max(phase.orderedDays.count, 1))
         let expected = Int(floor(Double(daysElapsed) * pace))
-        return phase.completedSessionCount - expected
+        return phase.filledSlotCount - expected
     }
 
     /// Sessions logged ÷ sessions scheduled to date (same "scheduled to
@@ -326,7 +326,7 @@ enum StatsEngine {
             from: cal.startOfDay(for: phase.startDate), to: cal.startOfDay(for: now)).day ?? 0) + 1)
         let pace = Double(phase.trainingDaysPerCycle) / Double(max(phase.orderedDays.count, 1))
         let expected = max(1, Int(floor(Double(daysElapsed) * pace)))
-        return Double(phase.completedSessionCount) / Double(expected) * 100
+        return Double(phase.filledSlotCount) / Double(expected) * 100
     }
 }
 

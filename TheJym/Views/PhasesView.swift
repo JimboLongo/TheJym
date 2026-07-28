@@ -41,7 +41,7 @@ struct PhasesView: View {
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                             }
-                            Text("Cycle \(phase.currentCycle) of \(phase.totalCycles) · \(phase.completedSessionCount) sessions logged")
+                            Text("Cycle \(phase.currentCycle) of \(phase.totalCycles) · \(phase.filledSlotCount) sessions logged")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }

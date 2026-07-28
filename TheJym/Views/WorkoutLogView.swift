@@ -304,10 +304,14 @@ struct WorkoutLogView: View {
     // MARK: Setup
 
     /// This exercise's logs, same plan key, any phase (progression looks at
-    /// your whole training history, not just the current block).
+    /// your whole training history, not just the current block). Excludes
+    /// bonus sessions (an extra session logged after that cycle's slot for
+    /// the day was already filled) so the AI progression math still sees
+    /// exactly one log per cycle per exercise, same as before slots existed.
     private func history(for pe: PlannedExercise) -> [ExerciseLog] {
         allExerciseLogs
-            .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty && $0.session?.isDeload != true }
+            .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty
+                     && $0.session?.isDeload != true && $0.session?.isBonusSession != true }
             .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
     }
 
@@ -378,9 +382,12 @@ struct WorkoutLogView: View {
     // MARK: Saving + AI
 
     private func finishWorkout() {
+        // Must be read BEFORE the new session is linked to the phase, since
+        // it reflects slot-fill state as of right now.
+        let isBonus = !day.isRest && (phase?.isSlotFilled(for: day) ?? false)
         let session = WorkoutSession(date: loggedDate, day: day, dayLabel: day.name,
                                      cycleNumber: phase?.currentCycle ?? 0,
-                                     isDeload: isDeloadCycle)
+                                     isDeload: isDeloadCycle, isBonusSession: isBonus)
         session.phase = phase
         context.insert(session)
 

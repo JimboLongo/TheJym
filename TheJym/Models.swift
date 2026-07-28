@@ -206,33 +206,79 @@ final class Phase {
         day.plannedExercises.sorted { $0.order < $1.order }
     }
 
-    /// How many completed (non-rest) sessions logged; used to figure out where we are.
-    var completedSessionCount: Int { sessions.count }
-
     /// The number of training days in one full pass of the cycle.
     var trainingDaysPerCycle: Int { trainingDays.count }
 
-    /// Current cycle number (1-based) based on sessions logged.
-    var currentCycle: Int {
-        guard trainingDaysPerCycle > 0 else { return 1 }
-        return min(totalCycles, completedSessionCount / trainingDaysPerCycle + 1)
+    // MARK: - Slot-based cycle tracking
+    //
+    // Each cycle has one "slot" per PhaseDay in trainingDays (in order).
+    // Logging a session for a training day fills its slot for whichever
+    // cycle is currently in progress; logging another session for a day
+    // whose slot this cycle is already filled doesn't fill anything or
+    // advance the cycle — it's a "bonus" session (still real history, still
+    // counted for pace comparisons and the rest-bank streak, just not for
+    // cycle progression). Always recomputed fresh from `sessions` rather
+    // than trusting any stored flag, so edits/backdating a session's date
+    // can't leave the cycle state stale.
+
+    private struct CycleWalkResult {
+        var currentCycle: Int
+        var completedCycles: Int
+        var filledSlotIDs: Set<PersistentIdentifier>
     }
 
-    /// Index into the cycle's *training* days for the next session (0-based).
-    var nextTrainingDayIndex: Int {
-        guard trainingDaysPerCycle > 0 else { return 0 }
-        return completedSessionCount % trainingDaysPerCycle
+    private var cycleWalk: CycleWalkResult {
+        let slots = trainingDays
+        guard !slots.isEmpty else {
+            return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [])
+        }
+        let relevant = sessions
+            .filter { $0.day != nil && $0.day!.isRest == false }
+            .sorted { $0.date < $1.date }
+
+        var filled: Set<PersistentIdentifier> = []
+        var completedCycles = 0
+        for session in relevant {
+            guard let dayID = session.day?.persistentModelID else { continue }
+            if filled.contains(dayID) { continue }   // bonus — already filled this cycle
+            filled.insert(dayID)
+            if filled.count == slots.count {
+                completedCycles += 1
+                filled = []
+            }
+        }
+        return CycleWalkResult(currentCycle: min(totalCycles, completedCycles + 1),
+                               completedCycles: completedCycles,
+                               filledSlotIDs: filled)
     }
 
-    /// The day you're "supposed" to do next according to the cycle.
+    /// True if `day`'s slot for the cycle currently in progress is already
+    /// filled — logging another session for it right now would be a bonus
+    /// session rather than filling a slot.
+    func isSlotFilled(for day: PhaseDay) -> Bool {
+        cycleWalk.filledSlotIDs.contains(day.persistentModelID)
+    }
+
+    /// Total slots filled across all history (bonus sessions don't count) —
+    /// a monotonic progress counter, same role the old raw session count
+    /// played, just slot-aware now.
+    var filledSlotCount: Int {
+        cycleWalk.completedCycles * trainingDaysPerCycle + cycleWalk.filledSlotIDs.count
+    }
+
+    /// Current cycle number (1-based), based on how many full cycles' worth
+    /// of slots have been filled.
+    var currentCycle: Int { cycleWalk.currentCycle }
+
+    /// The first not-yet-filled training day slot in the cycle currently in
+    /// progress, in pattern order — the day you're "supposed" to do next.
     var nextDay: PhaseDay? {
-        let t = trainingDays
-        guard !t.isEmpty else { return nil }
-        return t[nextTrainingDayIndex]
+        let filled = cycleWalk.filledSlotIDs
+        return trainingDays.first { !filled.contains($0.persistentModelID) }
     }
 
     var isComplete: Bool {
-        completedSessionCount >= trainingDaysPerCycle * totalCycles
+        cycleWalk.completedCycles >= totalCycles
     }
 
     /// This phase's own rest-bank earn rate, derived from its split pattern
@@ -299,16 +345,24 @@ final class WorkoutSession {
     var dayLabel: String      // display name at log time — survives the day being renamed/deleted
     var cycleNumber: Int
     var isDeload: Bool
+    /// Set at creation time if this training day's slot for its cycle was
+    /// already filled — still real history (shows in History, pace
+    /// comparisons, and streak credit), just didn't advance the cycle.
+    /// Cycle math itself never trusts this after the fact (Phase.cycleWalk
+    /// always recomputes from scratch); this is a display-only snapshot.
+    var isBonusSession: Bool = false
 
     @Relationship(deleteRule: .cascade, inverse: \ExerciseLog.session)
     var exerciseLogs: [ExerciseLog] = []
 
-    init(date: Date = .now, day: PhaseDay? = nil, dayLabel: String, cycleNumber: Int, isDeload: Bool = false) {
+    init(date: Date = .now, day: PhaseDay? = nil, dayLabel: String, cycleNumber: Int,
+         isDeload: Bool = false, isBonusSession: Bool = false) {
         self.date = date
         self.day = day
         self.dayLabel = dayLabel
         self.cycleNumber = cycleNumber
         self.isDeload = isDeload
+        self.isBonusSession = isBonusSession
     }
 
     var totalWeightMoved: Double {
