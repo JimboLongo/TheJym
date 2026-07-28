@@ -50,6 +50,7 @@ struct ContentView: View {
             bootstrap()
             backfillRestDays()
             backfillBodyweightFlags()
+            syncPlannedExerciseBodyweightFlags()
         }
     }
 
@@ -76,15 +77,16 @@ struct ContentView: View {
         try? context.save()
     }
 
-    /// Pre-isBodyweight installs have ExerciseDef/PlannedExercise rows for
-    /// library bodyweight movements (Pull-Up, Dips) created before the flag
+    /// Pre-isBodyweight installs have ExerciseDef rows for library
+    /// bodyweight movements (Pull-Up, Dips) created before the flag
     /// existed, so they're stuck at the `false` default even though the
     /// library itself tags them bodyweight — bootstrap() only seeds defs on
-    /// a totally empty library, so it never revisits them. Bring both in
-    /// line by name so the workout view picks up the BW stepper for them
-    /// going forward. Deliberately leaves already-logged ExerciseLog/SetLog
-    /// rows alone — they recorded the old-style full weight, and flipping
-    /// isBodyweight on them now would misread that as added weight instead.
+    /// a totally empty library, so it never revisits them. Bring the def in
+    /// line by name; syncPlannedExerciseBodyweightFlags() below propagates
+    /// it from there to any already-placed PlannedExercise. Deliberately
+    /// leaves already-logged ExerciseLog/SetLog rows alone — they recorded
+    /// the old-style full weight, and flipping isBodyweight on them now
+    /// would misread that as added weight instead.
     private func backfillBodyweightFlags() {
         let bodyweightNames = Set(ExerciseLibrary.grouped.flatMap(\.exercises).filter(\.isBodyweight).map(\.name))
         guard !bodyweightNames.isEmpty else { return }
@@ -92,12 +94,26 @@ struct ContentView: View {
         for def in exerciseDefs where bodyweightNames.contains(def.name) && !def.isBodyweight {
             def.isBodyweight = true
         }
-        if let plannedExercises = try? context.fetch(FetchDescriptor<PlannedExercise>()) {
-            for pe in plannedExercises where bodyweightNames.contains(pe.exerciseName) && !pe.isBodyweight {
-                pe.isBodyweight = true
-            }
-        }
         try? context.save()
+    }
+
+    /// The Exercises tab is the source of truth for isBodyweight, but
+    /// PlannedExercise keeps its own copy (set once when it was added to a
+    /// day) so toggling the flag there only affects future placements
+    /// unless something syncs existing ones back. Runs on every launch so
+    /// flipping Bodyweight on an exercise already placed into a Phase day
+    /// takes effect there too, without removing and re-adding it. Never
+    /// touches ExerciseLog/SetLog history — same reasoning as above.
+    private func syncPlannedExerciseBodyweightFlags() {
+        let defsByName = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
+        guard let plannedExercises = try? context.fetch(FetchDescriptor<PlannedExercise>()) else { return }
+        var changed = false
+        for pe in plannedExercises {
+            guard let def = defsByName[pe.exerciseName], def.isBodyweight != pe.isBodyweight else { continue }
+            pe.isBodyweight = def.isBodyweight
+            changed = true
+        }
+        if changed { try? context.save() }
     }
 
     /// Create default settings, bars, dumbbells, and exercise library on first launch.
