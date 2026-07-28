@@ -884,13 +884,19 @@ struct ExercisePageView: View {
                     // formatted the same as the column labels above it.
                     if draft.isBodyweight {
                         HStack(spacing: 12) {
-                            Color.clear.frame(width: 44)
+                            // A plain Text (not Color.clear) so this spacer
+                            // hugs the row's natural text height instead of
+                            // expanding to fill whatever vertical space is
+                            // available, which was stretching the whole row.
+                            Text("").font(.subheadline)
+                                .frame(width: 44, alignment: .leading)
                             Text(bodyweightPrefixLabel).font(.subheadline).foregroundStyle(.white)
                                 .lineLimit(1).minimumScaleFactor(0.7)
                                 .frame(width: weightColumnWidth, alignment: .center)
                             Spacer()
                         }
                         .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
