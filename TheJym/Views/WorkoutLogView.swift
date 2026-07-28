@@ -24,7 +24,9 @@ struct WorkoutLogView: View {
     @Query private var allExerciseLogs: [ExerciseLog]
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
 
-    let phase: Phase
+    /// Nil for a standalone "quick workout" not tied to any Phase — cycle/
+    /// deload math and next-cycle weight suggestions just don't apply then.
+    let phase: Phase?
     let day: PhaseDay
 
     @State private var drafts: [ExerciseDraft] = []
@@ -43,7 +45,14 @@ struct WorkoutLogView: View {
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
-        settings?.deloadWeeksEnabled == true && phase.deloadCycle == phase.currentCycle
+        guard let phase else { return false }
+        return settings?.deloadWeeksEnabled == true && phase.deloadCycle == phase.currentCycle
+    }
+
+    /// This day's planned exercises, in order — works whether or not the day
+    /// belongs to a Phase (a standalone "quick workout" day has phase nil).
+    private func plannedExercises(for day: PhaseDay) -> [PlannedExercise] {
+        day.plannedExercises.sorted { $0.order < $1.order }
     }
 
     // MARK: Draft state — Codable so in-progress work can be persisted to disk.
@@ -219,7 +228,7 @@ struct WorkoutLogView: View {
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 6) {
-                    Text("\(day.name) · Cycle \(phase.currentCycle)")
+                    Text(phase.map { "\(day.name) · Cycle \($0.currentCycle)" } ?? day.name)
                         .font(.headline)
                     if drafts.count > 1 {
                         Button {
@@ -322,7 +331,7 @@ struct WorkoutLogView: View {
         let aiOn = settings?.aiAssistantEnabled == true
         let agg = settings?.aiAggressiveness ?? .moderate
 
-        for pe in phase.plan(for: day) {
+        for pe in plannedExercises(for: day) {
             let logs = history(for: pe)
             let increment = roundingIncrement(for: pe.exerciseName)
             // AI on: what the AI Assistant thinks is the right goal from history.
@@ -348,7 +357,8 @@ struct WorkoutLogView: View {
     // MARK: Draft persistence (survives tab switches / app close)
 
     private var draftStorageKey: String {
-        "workoutDraft_\(phase.number)_\(day.name)_\(phase.currentCycle)"
+        guard let phase else { return "workoutDraft_quick_\(day.name)" }
+        return "workoutDraft_\(phase.number)_\(day.name)_\(phase.currentCycle)"
     }
 
     private func saveDraftToDisk() {
@@ -369,7 +379,7 @@ struct WorkoutLogView: View {
 
     private func finishWorkout() {
         let session = WorkoutSession(date: loggedDate, day: day, dayLabel: day.name,
-                                     cycleNumber: phase.currentCycle,
+                                     cycleNumber: phase?.currentCycle ?? 0,
                                      isDeload: isDeloadCycle)
         session.phase = phase
         context.insert(session)
@@ -381,7 +391,7 @@ struct WorkoutLogView: View {
             let logged = d.sets.filter(\.isLogged)
             guard !logged.isEmpty else { continue }
 
-            let pe = phase.plan(for: day).first { $0.exerciseName == d.name }
+            let pe = plannedExercises(for: day).first { $0.exerciseName == d.name }
             let priorLogs = pe.map(history) ?? []
 
             let log = ExerciseLog(exerciseName: d.name, targetReps: d.targetReps, order: order)
@@ -395,8 +405,9 @@ struct WorkoutLogView: View {
 
             // Recap + next-cycle progression — skip during a deload (weights
             // are intentionally cut, so progression math doesn't apply) or
-            // once the phase is over (no next cycle to jump into).
-            if !isDeloadCycle, !phase.isComplete {
+            // once the phase is over (no next cycle to jump into). A
+            // standalone quick workout has no phase, so it's never "over".
+            if !isDeloadCycle, !(phase?.isComplete ?? false) {
                 let increment = roundingIncrement(for: d.name)
                 let combinedHistory = priorLogs + [log]
                 let streak = ProgressionEngine.currentStreak(targetReps: d.targetReps, history: combinedHistory)
@@ -430,7 +441,7 @@ struct WorkoutLogView: View {
     private func applyRecapChoices() {
         for entry in recapEntries {
             guard let suggestion = entry.suggestion, recapChoices[entry.exerciseName] == true,
-                  let pe = phase.plan(for: day).first(where: { $0.exerciseName == entry.exerciseName }) else { continue }
+                  let pe = plannedExercises(for: day).first(where: { $0.exerciseName == entry.exerciseName }) else { continue }
             pe.suggestedWeights = suggestion
         }
         try? context.save()

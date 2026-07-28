@@ -15,6 +15,10 @@ struct TodayView: View {
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
     @Query private var settingsList: [AppSettings]
     @Query(sort: \RestDayActivity.date, order: .reverse) private var restActivities: [RestDayActivity]
+    /// Standalone workout templates not tied to any Phase — "Upper Day"
+    /// style quick workouts you can start anytime or reuse.
+    @Query(filter: #Predicate<PhaseDay> { $0.phase == nil }, sort: \PhaseDay.name)
+    private var quickWorkoutDays: [PhaseDay]
 
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
@@ -23,6 +27,9 @@ struct TodayView: View {
     @State private var newActivityDistanceUnit = "mi"
     @State private var quickJumpDay: PhaseDay?
     @State private var expandedDayIDs: Set<PersistentIdentifier> = []
+    @State private var startingQuickWorkout: PhaseDay?
+    @State private var showingNewQuickWorkout = false
+    @State private var editingQuickWorkout: PhaseDay?
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
@@ -44,6 +51,7 @@ struct TodayView: View {
                     noPhaseSection
                 }
 
+                quickWorkoutsSection
                 restDayActivitySection
             }
             .navigationTitle("Train")
@@ -55,6 +63,12 @@ struct TodayView: View {
                     NextPhasePlannerView(previousPhase: phase)
                 }
             }
+            .sheet(isPresented: $showingNewQuickWorkout) {
+                QuickWorkoutBuilderView()
+            }
+            .sheet(item: $editingQuickWorkout) { day in
+                QuickWorkoutBuilderView(existingDay: day)
+            }
             .navigationDestination(item: $quickJumpDay) { day in
                 if let phase = activePhase {
                     if day.isRest {
@@ -63,6 +77,43 @@ struct TodayView: View {
                         WorkoutLogView(phase: phase, day: day)
                     }
                 }
+            }
+            .navigationDestination(item: $startingQuickWorkout) { day in
+                WorkoutLogView(phase: nil, day: day)
+            }
+        }
+    }
+
+    /// Standalone "Upper Day"-style workouts you can start or reuse without
+    /// an active Phase — start any time, edit, or delete.
+    @ViewBuilder
+    private var quickWorkoutsSection: some View {
+        Section("Quick Workouts") {
+            ForEach(quickWorkoutDays, id: \.persistentModelID) { day in
+                Button {
+                    startingQuickWorkout = day
+                } label: {
+                    Text(day.name).foregroundStyle(.primary)
+                }
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        context.delete(day)
+                        try? context.save()
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    Button {
+                        editingQuickWorkout = day
+                    } label: {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    .tint(.blue)
+                }
+            }
+            Button {
+                showingNewQuickWorkout = true
+            } label: {
+                Label("New Workout…", systemImage: "plus.circle")
             }
         }
     }
