@@ -740,6 +740,19 @@ struct ExercisePageView: View {
     private var addedWeightValues: [Double] {
         Array(stride(from: 0.0, through: 200.0, by: 2.5))
     }
+    /// The weight column's header label — the resolved bodyweight prefix
+    /// for a bodyweight exercise (e.g. "181 (BW) +"), shown once here rather
+    /// than repeated on every set row.
+    private var weightColumnLabel: String {
+        guard draft.isBodyweight else { return "Weight" }
+        return currentBodyweight.map { "\(Formatters.trim($0)) (BW) +" } ?? "BW +"
+    }
+    /// A bodyweight exercise's label needs more room than the plain
+    /// "Weight" header, so its column (header + every row's wheel) widens
+    /// to fit it without wrapping.
+    private var weightColumnWidth: CGFloat {
+        draft.isBodyweight ? 130 : 100
+    }
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
     /// sets, plus the header and pace panel, fit within one page height.
     private var wheelHeight: CGFloat {
@@ -849,8 +862,9 @@ struct ExercisePageView: View {
                     HStack(spacing: 12) {
                         Text("Set").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .leading)
-                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 100, alignment: .center)
+                        Text(weightColumnLabel).font(.subheadline).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                            .frame(width: weightColumnWidth, alignment: .center)
                         Text("Target").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .center)
                         Text("Reps").font(.subheadline).foregroundStyle(.secondary)
@@ -863,8 +877,9 @@ struct ExercisePageView: View {
                     HStack(spacing: 12) {
                         Text("Set").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .leading)
-                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
-                            .frame(width: 100, alignment: .center)
+                        Text(weightColumnLabel).font(.subheadline).foregroundStyle(.secondary)
+                            .lineLimit(1).minimumScaleFactor(0.7)
+                            .frame(width: weightColumnWidth, alignment: .center)
                         Text("Reps").font(.subheadline).foregroundStyle(.secondary)
                             .frame(width: 100, alignment: .center)
                         Spacer()
@@ -1040,36 +1055,31 @@ struct ExercisePageView: View {
     @ViewBuilder
     private func weightCell(for index: Int, height: CGFloat) -> some View {
         if draft.isBodyweight {
-            HStack(spacing: 4) {
-                Text(currentBodyweight.map { "\(Formatters.trim($0)) (BW) +" } ?? "BW +")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                ZStack(alignment: .top) {
-                    Picker("Added Weight", selection: Binding(
-                        get: { nearestValue(draft.sets[index].weight ?? 0, in: addedWeightValues) },
-                        set: { newValue in
-                            let old = draft.sets[index].weight ?? 0
-                            draft.sets[index].weightText = Formatters.trim(newValue)
-                            let delta = newValue - old
-                            if delta != 0 { cascadeDelta(delta, from: index) }
-                        })) {
-                        ForEach(addedWeightValues, id: \.self) { v in
-                            Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
-                        }
+            // The "181 (BW) +" label lives once in the column header, not
+            // repeated per row — this is just the wheel, aligned under it.
+            ZStack(alignment: .top) {
+                Picker("Added Weight", selection: Binding(
+                    get: { nearestValue(draft.sets[index].weight ?? 0, in: addedWeightValues) },
+                    set: { newValue in
+                        let old = draft.sets[index].weight ?? 0
+                        draft.sets[index].weightText = Formatters.trim(newValue)
+                        let delta = newValue - old
+                        if delta != 0 { cascadeDelta(delta, from: index) }
+                    })) {
+                    ForEach(addedWeightValues, id: \.self) { v in
+                        Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
                     }
-                    .pickerStyle(.wheel)
-                    .frame(width: 60, height: height)
-                    .clipped()
-                    if let delta = cascadeIndicator[index] {
-                        Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
-                            .font(.caption2.bold())
-                            .foregroundStyle(delta > 0 ? .green : .red)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(.thinMaterial, in: Capsule())
-                            .transition(.opacity)
-                    }
+                }
+                .pickerStyle(.wheel)
+                .frame(width: weightColumnWidth, height: height)
+                .clipped()
+                if let delta = cascadeIndicator[index] {
+                    Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                        .font(.caption2.bold())
+                        .foregroundStyle(delta > 0 ? .green : .red)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.thinMaterial, in: Capsule())
+                        .transition(.opacity)
                 }
             }
         } else {
