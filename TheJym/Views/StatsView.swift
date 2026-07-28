@@ -21,7 +21,6 @@ struct StatsView: View {
     @Query private var phases: [Phase]
 
     @State private var newWeightText = ""
-    @State private var newActiveRecoveryType = ActiveRecoveryType.walk
 
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -45,11 +44,6 @@ struct StatsView: View {
                             activePhase: activePhase,
                             trainingDaysPerWeekChanges: tdpwChanges.map { (date: $0.date, value: $0.trainingDaysPerWeek) },
                             defaultTrainingDaysPerWeek: settings?.trainingDaysPerWeek ?? 3)
-    }
-
-    private func logActiveRecovery() {
-        context.insert(ActiveRecovery(type: newActiveRecoveryType))
-        try? context.save()
     }
 
     private func setTrainingDaysPerWeek(_ value: Int) {
@@ -89,18 +83,6 @@ struct StatsView: View {
                                    get: { settings?.trainingDaysPerWeek ?? 3 },
                                    set: { setTrainingDaysPerWeek($0) }),
                                in: 1...7)
-                    }
-
-                    HStack {
-                        Picker("Type", selection: $newActiveRecoveryType) {
-                            ForEach(ActiveRecoveryType.allCases) { type in
-                                Text(type.label).tag(type)
-                            }
-                        }
-                        .labelsHidden()
-                        Spacer()
-                        Button("Log Active Recovery") { logActiveRecovery() }
-                            .buttonStyle(.borderedProminent)
                     }
                 }
 
