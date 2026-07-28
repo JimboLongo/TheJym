@@ -27,6 +27,12 @@
 //  This becomes a saved rep-total target on the exercise (alongside its
 //  saved rep schemes), matching however it's set up in the Exercises tab.
 //
+//  For a bodyweight exercise (already flagged as such in the Exercises tab
+//  — the import format has no column of its own for it), Weights means
+//  ADDED weight, same as live logging: each set's weight is resolved as
+//  the most recent BodyWeightEntry on or before that row's date, plus the
+//  added weight given. Write 0 for no added weight beyond bodyweight.
+//
 //  Phase is that phase's number; Day is the day's name (e.g. "Push A"),
 //  matched case-insensitively against that phase's days. If either is
 //  missing or doesn't match an existing Phase/PhaseDay, the row still
@@ -144,6 +150,15 @@ enum ImportEngine {
         let existingDefs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
         var knownDefs = Dictionary(uniqueKeysWithValues: existingDefs.map { ($0.name, $0) })
         let existingPhases = (try? context.fetch(FetchDescriptor<Phase>())) ?? []
+        let bodyWeights = ((try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? [])
+            .sorted { $0.date < $1.date }
+
+        /// Most recent BodyWeightEntry on or before `date` — same resolution
+        /// rule live logging uses, so an imported bodyweight row lines up
+        /// with whatever was actually logged as of that date.
+        func resolvedBodyweight(asOf date: Date) -> Double? {
+            bodyWeights.last { $0.date <= date }?.weight
+        }
 
         struct GroupKey: Hashable {
             let day: Date
@@ -171,13 +186,27 @@ enum ImportEngine {
             sessionsCreated += 1
 
             for (order, entry) in dayRows.enumerated() {
+                // isBodyweight only comes from an already-existing exercise
+                // (the import format has no such column of its own) —
+                // there's nothing else to derive it from for a brand-new name.
+                let isBW = knownDefs[entry.exerciseName]?.isBodyweight ?? false
                 let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: entry.targetReps,
-                                      order: order, goalType: entry.goalType)
+                                      order: order, isBodyweight: isBW, goalType: entry.goalType)
                 log.session = session
                 context.insert(log)
 
+                // For a bodyweight exercise, Weights is ADDED weight (same
+                // convention as live logging) — resolved against whatever
+                // BodyWeightEntry was on record as of this row's date.
+                let bw = isBW ? resolvedBodyweight(asOf: key.day) : nil
                 for (i, pair) in zip(entry.weights, entry.reps).enumerated() {
-                    let set = SetLog(index: i, weight: pair.0, reps: pair.1)
+                    let set: SetLog
+                    if isBW {
+                        set = SetLog(index: i, weight: pair.0 + (bw ?? 0), reps: pair.1,
+                                    addedWeight: pair.0, bodyweightAtLog: bw)
+                    } else {
+                        set = SetLog(index: i, weight: pair.0, reps: pair.1)
+                    }
                     set.exerciseLog = log
                     context.insert(set)
                     setsImported += 1

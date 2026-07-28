@@ -311,6 +311,8 @@ struct CSVFormatHelpView: View {
                           systemImage: "target")
                     Label("Weights and Reps are what you actually lifted, and must have the same number of slash-separated values as each other.",
                           systemImage: "checkmark.circle")
+                    Label("For an exercise already flagged Bodyweight in the Exercises tab, Weights means ADDED weight, not total load — it's resolved against whatever body weight was on record as of that row's date. Write 0 for no added weight.",
+                          systemImage: "figure.strengthtraining.functional")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
                           systemImage: "questionmark.circle")
                     Label("Phase is that phase's number; Day is the day's name (e.g. \"Push A\"), matched case-insensitively. If given and matched, the imported workout is attributed to that real Phase/Day, just like one logged live. Leave them out (or leave them unmatched) and the row still imports fine as a generic \"Imported\" entry.",
