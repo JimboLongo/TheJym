@@ -272,7 +272,9 @@ enum ImportEngine {
         // SetLog, so it shows up in History and counts toward the rest-bank
         // streak — mirrors live logging (RestDayLogView.logActivity()).
         // Phase is intentionally left nil so it never shifts the training
-        // cycle, even when Day matched a real Rest day.
+        // cycle, even when Day matched a real Rest day. Deliberately does
+        // NOT touch the Exercises tab — a rest activity isn't an exercise
+        // in the import file, so it shouldn't show up as one there.
         for entry in restRows {
             guard case .restActivity(let distance, let unit) = entry.kind else { continue }
             context.insert(RestDayActivity(date: entry.date, name: entry.exerciseName,
@@ -291,7 +293,6 @@ enum ImportEngine {
             set.exerciseLog = log
             context.insert(set)
             setsImported += 1
-            ExerciseDef.ensureAnyVariantExists(name: displayName, knownDefs: &knownDefs, context: context)
         }
 
         try? context.save()
