@@ -206,34 +206,44 @@ struct TodayView: View {
     }
 
     /// Any other day in the cycle: just its name, with a disclosure to
-    /// expand/collapse a preview of its exercises and a way to start it.
+    /// expand/collapse a preview of its exercises and a way to start it. A
+    /// Rest day has no exercise list to preview, so it just shows its name
+    /// and the log button on one line instead of needing to expand.
     @ViewBuilder
     private func collapsibleDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
-        let isExpanded = expandedDayIDs.contains(day.persistentModelID)
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation {
-                    if isExpanded { expandedDayIDs.remove(day.persistentModelID) }
-                    else { expandedDayIDs.insert(day.persistentModelID) }
+        if day.isRest {
+            HStack {
+                Label(day.name, systemImage: "moon.zzz").foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    quickJumpDay = day
+                } label: {
+                    Label("Log Rest Day Activity", systemImage: "figure.walk")
+                        .font(.subheadline)
                 }
-            } label: {
-                HStack {
-                    if day.isRest {
-                        Label(day.name, systemImage: "moon.zzz").foregroundStyle(.secondary)
-                    } else {
-                        Text(day.name)
-                    }
-                    Spacer()
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .padding(.vertical, 2)
+        } else {
+            let isExpanded = expandedDayIDs.contains(day.persistentModelID)
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    withAnimation {
+                        if isExpanded { expandedDayIDs.remove(day.persistentModelID) }
+                        else { expandedDayIDs.insert(day.persistentModelID) }
+                    }
+                } label: {
+                    HStack {
+                        Text(day.name)
+                        Spacer()
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
 
-            if isExpanded {
-                if !day.isRest {
+                if isExpanded {
                     let plan = phase.plan(for: day)
                     if plan.isEmpty {
                         Text("No exercises planned for \(day.name).")
@@ -250,18 +260,16 @@ struct TodayView: View {
                             .foregroundStyle(.secondary)
                         }
                     }
+                    Button {
+                        quickJumpDay = day
+                    } label: {
+                        Label("Start \(day.name) Workout", systemImage: "play.fill")
+                            .font(.subheadline)
+                    }
                 }
-                Button {
-                    quickJumpDay = day
-                } label: {
-                    Label(day.isRest ? "Log \(day.name)" : "Start \(day.name) Workout",
-                          systemImage: day.isRest ? "figure.walk" : "play.fill")
-                        .font(.subheadline)
-                }
-                .padding(.top, day.isRest ? 6 : 0)
             }
+            .padding(.vertical, 2)
         }
-        .padding(.vertical, 2)
     }
 
     @ViewBuilder
