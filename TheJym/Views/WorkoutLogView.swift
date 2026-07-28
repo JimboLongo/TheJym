@@ -153,13 +153,12 @@ struct WorkoutLogView: View {
     }
 
     /// Active (still-expanded) exercises each get their own page, in plan
-    /// order; any collapsed/completed ones are gathered onto one trailing
-    /// summary page instead of each taking a full screen.
+    /// order; the completed-exercises summary is always the trailing page
+    /// (even with nothing completed yet), so the workout's finish/save
+    /// action always has a permanent home to swipe to.
     private var pages: [WorkoutPage] {
         var result: [WorkoutPage] = drafts.indices.filter { drafts[$0].isExpanded }.map { .exercise($0) }
-        if drafts.contains(where: { !$0.isExpanded }) {
-            result.append(.completedSummary)
-        }
+        result.append(.completedSummary)
         return result
     }
 
@@ -200,6 +199,9 @@ struct WorkoutLogView: View {
             // strong swipe.
             .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
             .scrollPosition(id: $currentPageID, anchor: .top)
+            .refreshable {
+                refreshDrafts()
+            }
         }
         .safeAreaInset(edge: .top) {
             if isDeloadCycle {
@@ -213,17 +215,21 @@ struct WorkoutLogView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            // Only appears once every exercise has been marked complete
-            // (collapsed), rather than just being disabled until then.
-            if !drafts.isEmpty, drafts.allSatisfy({ !$0.isExpanded }) {
+            // Always available (not gated on finishing everything) — the
+            // label/tint flips once every exercise is actually checked off,
+            // so it's clear whether you're ending the workout early or not.
+            if !drafts.isEmpty {
+                let allDone = drafts.allSatisfy { !$0.isExpanded }
                 Button {
                     showDatePicker = true
                 } label: {
-                    Label("Finish & Save Workout", systemImage: "checkmark.circle.fill")
+                    Label(allDone ? "Finish & Save Workout" : "Complete & Save Unfinished Workout",
+                          systemImage: allDone ? "checkmark.circle.fill" : "exclamationmark.circle")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(allDone ? .accentColor : .orange)
                 .padding()
                 .background(.bar)
             }
@@ -471,6 +477,63 @@ struct WorkoutLogView: View {
                                             sets: sets,
                                             goalType: .repTotal(target: effectiveTarget),
                                             isBodyweight: pe.isBodyweight))
+            }
+        }
+    }
+
+    /// Pull-to-refresh: re-pulls suggested/last-time weights from history for
+    /// any exercise that hasn't been started yet (no set with a logged rep),
+    /// so a change made in the History tab while this workout was open
+    /// (edited a past log, corrected a weight, etc.) is picked up without
+    /// losing anything already entered. An exercise with any rep already
+    /// logged is left completely alone — its weights aren't second-guessed
+    /// mid-set.
+    private func refreshDrafts() {
+        let aiOn = settings?.aiAssistantEnabled == true
+        let agg = settings?.aiAggressiveness ?? .moderate
+
+        for idx in drafts.indices {
+            guard !drafts[idx].sets.contains(where: { $0.reps != nil }) else { continue }
+            guard let pe = plannedExercises(for: day).first(where: { $0.exerciseName == drafts[idx].name }) else { continue }
+            let logs = history(for: pe)
+            let increment = roundingIncrement(for: pe.exerciseName)
+
+            switch drafts[idx].goalType {
+            case .fixedSets:
+                var weights = aiOn
+                    ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
+                                                            aggressiveness: agg, roundingIncrement: increment,
+                                                            isBodyweight: pe.isBodyweight)
+                       ?? pe.suggestedWeights)
+                    : (logs.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+                       ?? pe.suggestedWeights)
+                if isDeloadCycle, !weights.isEmpty {
+                    weights = ProgressionEngine.deloadWeights(from: weights)
+                }
+                for i in drafts[idx].sets.indices where i < weights.count {
+                    drafts[idx].sets[i].weightText = Formatters.trim(weights[i])
+                }
+
+            case .repTotal:
+                var startWeight = pe.suggestedWeights.first ?? 0
+                var effectiveTarget: Int? = nil
+                if aiOn, let suggestion = ProgressionEngine.suggestRepTotalProgression(
+                    history: logs, aggressiveness: agg, progressesReps: pe.repTotalProgressesReps,
+                    roundingIncrement: increment) {
+                    if let newTarget = suggestion.newTarget { effectiveTarget = newTarget }
+                    if let newWeight = suggestion.newAddedWeight { startWeight = newWeight }
+                } else if !aiOn, let lastSet = logs.last?.sortedSets.last {
+                    startWeight = pe.isBodyweight ? (lastSet.addedWeight ?? 0) : lastSet.weight
+                }
+                if isDeloadCycle, startWeight > 0 {
+                    startWeight = ProgressionEngine.deloadWeights(from: [startWeight]).first ?? startWeight
+                }
+                if !drafts[idx].sets.isEmpty {
+                    drafts[idx].sets[0].weightText = Formatters.trim(startWeight)
+                }
+                if let effectiveTarget {
+                    drafts[idx].goalType = .repTotal(target: effectiveTarget)
+                }
             }
         }
     }
@@ -1621,8 +1684,14 @@ struct CompletedSummaryPageView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Completed")
                     .font(.title2.bold())
-                ForEach(completedIndices, id: \.self) { i in
-                    row(for: i)
+                if completedIndices.isEmpty {
+                    Text("Nothing checked off yet — swipe back to an exercise and finish it, or save now to end the workout early.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(completedIndices, id: \.self) { i in
+                        row(for: i)
+                    }
                 }
             }
             .padding()
