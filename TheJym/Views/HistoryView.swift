@@ -307,7 +307,7 @@ struct CSVFormatHelpView: View {
                 Section("Rest-Day Activity Example") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Date,Phase,Day,Exercise,Sets,Weights,Reps")
-                        Text("2026-01-06,,,Walk,rest,3.1mi,")
+                        Text("2026-01-06,,Rest,Walk,,,3.1mi")
                     }
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
@@ -324,7 +324,7 @@ struct CSVFormatHelpView: View {
                           systemImage: "figure.strengthtraining.functional")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
                           systemImage: "questionmark.circle")
-                    Label("Write Sets as \"rest\" for a rest-day activity instead of an exercise — Exercise becomes the activity's name, Weights optionally holds a distance (e.g. \"3.1mi\"), Reps is unused. Counts toward the rest-bank streak, same as logging it live.",
+                    Label("Write Day as \"Rest\" for a rest-day activity instead of an exercise (requires a Day column) — Exercise becomes the activity's name, Reps optionally holds a distance (e.g. \"3.1mi\"), Sets/Weights are unused. Counts toward the rest-bank streak, same as logging it live.",
                           systemImage: "figure.walk")
                     Label("Phase is that phase's number; Day is the day's name (e.g. \"Push A\"), matched case-insensitively. If given and matched, the imported workout is attributed to that real Phase/Day, just like one logged live. Leave them out (or leave them unmatched) and the row still imports fine as a generic \"Imported\" entry.",
                           systemImage: "calendar.badge.checkmark")

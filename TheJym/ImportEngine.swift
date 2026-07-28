@@ -34,11 +34,11 @@
 //  added weight given. Write 0 for no added weight beyond bodyweight.
 //
 //  For a rest-day activity (a walk, yoga, etc. — not a logged exercise),
-//  write Sets as "rest". Exercise becomes the activity's name; Weights
-//  optionally holds a distance (e.g. "3.1mi", "5 km" — plain "mi" if left
-//  as just a number); Reps is unused:
+//  write Day as "Rest" (requires a Day column). Exercise becomes the
+//  activity's name; Reps optionally holds a distance (e.g. "3.1mi", "5 km"
+//  — plain "mi" if left as just a number); Sets/Weights are unused:
 //
-//    2026-01-06 |       |        | Walk        | rest      | 3.1mi                |
+//    2026-01-06 |       | Rest   | Walk        |           |                      | 3.1mi
 //
 //  This creates both a standalone rest-day activity entry and a matching
 //  History entry, and counts toward the rest-bank streak, same as logging
@@ -131,12 +131,12 @@ enum ImportEngine {
             let phaseNumber = phaseStr.flatMap { Int($0) }
             let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
 
-            // "rest" (case-insensitive) in Sets marks a rest-day activity
-            // row instead of an exercise — Exercise is the activity's name,
-            // Weights optionally holds a distance (e.g. "3.1mi"), Reps is
-            // unused.
-            if setsStr.trimmingCharacters(in: .whitespaces).lowercased() == "rest" {
-                let (distance, unit) = parseDistance(weightsStr)
+            // "Rest" (case-insensitive) in Day marks a rest-day activity row
+            // instead of an exercise — Exercise is the activity's name,
+            // Reps optionally holds a distance (e.g. "3.1mi"), Sets/Weights
+            // are unused. Requires a Day column in the header.
+            if dayStr?.lowercased() == "rest" {
+                let (distance, unit) = parseDistance(repsStr)
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),
                                          phaseNumber: phaseNumber, dayLabel: matchedDayLabel))
@@ -359,7 +359,7 @@ enum ImportEngine {
         return target
     }
 
-    /// Parses a rest-activity row's optional Weights-column distance, e.g.
+    /// Parses a rest-activity row's optional Reps-column distance, e.g.
     /// "3", "3.1mi", "5 km" — a leading number plus an optional unit suffix
     /// (defaults to "mi" if no unit, or if the whole field is blank).
     private static func parseDistance(_ raw: String) -> (Double?, String) {
