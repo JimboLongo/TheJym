@@ -23,6 +23,7 @@ struct WorkoutLogView: View {
     @Query private var settingsList: [AppSettings]
     @Query private var allExerciseLogs: [ExerciseLog]
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
+    @Query(sort: \BodyWeightEntry.date) private var allBodyWeights: [BodyWeightEntry]
 
     /// Nil for a standalone "quick workout" not tied to any Phase — cycle/
     /// deload math and next-cycle weight suggestions just don't apply then.
@@ -39,6 +40,11 @@ struct WorkoutLogView: View {
     /// today, confirmed/changed via a date picker shown when finishing.
     @State private var loggedDate = Date()
     @State private var showDatePicker = false
+    /// Shown after date confirmation, before saving, only if a bodyweight
+    /// exercise was logged with sets and no BodyWeightEntry exists yet for
+    /// that date to resolve its effective weight against.
+    @State private var showBodyWeightPrompt = false
+    @State private var bodyWeightPromptText = ""
     /// Last time the user touched anything in this workout — used to keep
     /// the screen from auto-locking for up to 3 minutes of idle time.
     @State private var lastInteraction = Date()
@@ -55,6 +61,24 @@ struct WorkoutLogView: View {
         day.plannedExercises.sorted { $0.order < $1.order }
     }
 
+    /// Most recent BodyWeightEntry on or before `date` — used to resolve a
+    /// bodyweight exercise's effective weight. Nil if none exists yet.
+    private func resolvedBodyweight(asOf date: Date) -> Double? {
+        allBodyWeights.last { $0.date <= date }?.weight
+    }
+
+    /// Live approximation (today's date) for the "BW + n -> lb" hint shown
+    /// while logging — the actual save resolves against `loggedDate` instead.
+    private var currentBodyweight: Double? { resolvedBodyweight(asOf: Date()) }
+
+    /// True if a bodyweight exercise has logged sets but there's no
+    /// BodyWeightEntry on or before `loggedDate` to resolve them against —
+    /// the save flow needs to prompt for one before finishing.
+    private var needsBodyWeightPrompt: Bool {
+        guard resolvedBodyweight(asOf: loggedDate) == nil else { return false }
+        return drafts.contains { $0.isBodyweight && $0.sets.contains(where: \.isLogged) }
+    }
+
     // MARK: Draft state — Codable so in-progress work can be persisted to disk.
 
     struct SetDraft: Identifiable, Codable, Equatable {
@@ -69,7 +93,7 @@ struct WorkoutLogView: View {
     struct ExerciseDraft: Identifiable, Codable, Equatable {
         var id = UUID()
         var name: String
-        var targetReps: [Int]
+        var targetReps: [Int]      // empty for repTotal
         var sets: [SetDraft]
         /// False once every set is logged and it's auto-collapsed to a summary.
         var isExpanded: Bool = true
@@ -79,8 +103,24 @@ struct WorkoutLogView: View {
         /// Notes / plate-calculator panel toggle, lifted up here (instead of
         /// local view state) so the sticky section header can drive it too.
         var showingDetails: Bool = false
-        var loggedTotal: Double {
-            sets.reduce(0) { $0 + (Double($1.reps ?? 0) * ($1.weight ?? 0)) }
+        var goalType: GoalType = .fixedSets
+        /// When true, each set's weightText holds ADDED weight (not total
+        /// load) — the resolved effective weight is only computed at save
+        /// time against a BodyWeightEntry.
+        var isBodyweight: Bool = false
+        /// Effective total weight moved so far. For a bodyweight exercise,
+        /// each set's weight is ADDED weight — resolve it against `bodyweight`
+        /// (nil if not yet known) to get the real per-rep load.
+        func loggedTotal(bodyweight: Double? = nil) -> Double {
+            sets.reduce(0) { total, s in
+                guard let reps = s.reps, let w = s.weight else { return total }
+                let effective = isBodyweight ? w + (bodyweight ?? 0) : w
+                return total + Double(reps) * effective
+            }
+        }
+        /// repTotal only: running total reps logged across all sets so far.
+        var repTotalSoFar: Int {
+            sets.reduce(0) { $0 + ($1.reps ?? 0) }
         }
     }
 
@@ -140,7 +180,8 @@ struct WorkoutLogView: View {
                                 ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
                                                 exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
                                                 plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
-                                                pageHeight: geo.size.height, currentPageID: $currentPageID)
+                                                pageHeight: geo.size.height, currentBodyweight: currentBodyweight,
+                                                currentPageID: $currentPageID)
                                     .id("ex-\(drafts[i].id)")
                             case .completedSummary:
                                 CompletedSummaryPageView(drafts: $drafts, pageHeight: geo.size.height,
@@ -207,7 +248,12 @@ struct WorkoutLogView: View {
                             Spacer()
                             Button {
                                 showDatePicker = false
-                                finishWorkout()
+                                if needsBodyWeightPrompt {
+                                    bodyWeightPromptText = currentBodyweight.map(Formatters.trim) ?? ""
+                                    showBodyWeightPrompt = true
+                                } else {
+                                    finishWorkout()
+                                }
                             } label: {
                                 Text("Save Workout").font(.headline)
                             }
@@ -222,7 +268,48 @@ struct WorkoutLogView: View {
                 .transition(.opacity)
             }
         }
+        .overlay {
+            if showBodyWeightPrompt {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Text("What's your body weight today?")
+                            .font(.headline)
+                        Text("Needed to resolve the load for a bodyweight exercise you logged.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        TextField("Body weight (lb)", text: $bodyWeightPromptText)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.center)
+                        HStack {
+                            Button("Cancel") { showBodyWeightPrompt = false }
+                            Spacer()
+                            Button {
+                                if let w = Double(bodyWeightPromptText), w > 0 {
+                                    context.insert(BodyWeightEntry(date: loggedDate, weight: w))
+                                }
+                                showBodyWeightPrompt = false
+                                finishWorkout()
+                            } label: {
+                                Text("Continue").font(.headline)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(Double(bodyWeightPromptText) == nil)
+                        }
+                    }
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .padding(32)
+                    .shadow(radius: 20)
+                }
+                .transition(.opacity)
+            }
+        }
         .animation(.easeInOut(duration: 0.2), value: showDatePicker)
+        .animation(.easeInOut(duration: 0.2), value: showBodyWeightPrompt)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -338,23 +425,53 @@ struct WorkoutLogView: View {
         for pe in plannedExercises(for: day) {
             let logs = history(for: pe)
             let increment = roundingIncrement(for: pe.exerciseName)
-            // AI on: what the AI Assistant thinks is the right goal from history.
-            // AI off: exactly what was lifted last time.
-            var weights = aiOn
-                ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
-                                                        aggressiveness: agg, roundingIncrement: increment)
-                   ?? pe.suggestedWeights)
-                : (logs.last?.sortedSets.map(\.weight) ?? pe.suggestedWeights)
-            if isDeloadCycle, !weights.isEmpty {
-                weights = ProgressionEngine.deloadWeights(from: weights)
+
+            switch pe.goalType {
+            case .fixedSets:
+                // AI on: what the AI Assistant thinks is the right goal from history.
+                // AI off: exactly what was lifted last time. For a bodyweight
+                // exercise, every weight here is ADDED weight, not total load.
+                var weights = aiOn
+                    ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
+                                                            aggressiveness: agg, roundingIncrement: increment,
+                                                            isBodyweight: pe.isBodyweight)
+                       ?? pe.suggestedWeights)
+                    : (logs.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+                       ?? pe.suggestedWeights)
+                if isDeloadCycle, !weights.isEmpty {
+                    weights = ProgressionEngine.deloadWeights(from: weights)
+                }
+                let sets = pe.targetReps.enumerated().map { i, _ in
+                    SetDraft(weightText: i < weights.count ? Formatters.trim(weights[i]) : "",
+                             repsText: "")
+                }
+                drafts.append(ExerciseDraft(name: pe.exerciseName,
+                                            targetReps: pe.targetReps,
+                                            sets: sets,
+                                            goalType: .fixedSets,
+                                            isBodyweight: pe.isBodyweight))
+
+            case .repTotal(let target):
+                var effectiveTarget = target
+                var startWeight = pe.suggestedWeights.first ?? 0
+                if aiOn, let suggestion = ProgressionEngine.suggestRepTotalProgression(
+                    history: logs, aggressiveness: agg, progressesReps: pe.repTotalProgressesReps,
+                    roundingIncrement: increment) {
+                    if let newTarget = suggestion.newTarget { effectiveTarget = newTarget }
+                    if let newWeight = suggestion.newAddedWeight { startWeight = newWeight }
+                } else if !aiOn, let lastSet = logs.last?.sortedSets.last {
+                    startWeight = pe.isBodyweight ? (lastSet.addedWeight ?? 0) : lastSet.weight
+                }
+                if isDeloadCycle, startWeight > 0 {
+                    startWeight = ProgressionEngine.deloadWeights(from: [startWeight]).first ?? startWeight
+                }
+                let sets = [SetDraft(weightText: Formatters.trim(startWeight), repsText: "")]
+                drafts.append(ExerciseDraft(name: pe.exerciseName,
+                                            targetReps: [],
+                                            sets: sets,
+                                            goalType: .repTotal(target: effectiveTarget),
+                                            isBodyweight: pe.isBodyweight))
             }
-            let sets = pe.targetReps.enumerated().map { i, _ in
-                SetDraft(weightText: i < weights.count ? Formatters.trim(weights[i]) : "",
-                         repsText: "")
-            }
-            drafts.append(ExerciseDraft(name: pe.exerciseName,
-                                        targetReps: pe.targetReps,
-                                        sets: sets))
         }
     }
 
@@ -393,6 +510,10 @@ struct WorkoutLogView: View {
 
         let agg = settings?.aiAggressiveness ?? .moderate
         var entries: [RecapEntry] = []
+        // Resolved once per save, against the confirmed log date — a BW set
+        // logged just now (or the prompt above) may have just created the
+        // entry this depends on.
+        let bodyweight = resolvedBodyweight(asOf: loggedDate)
 
         for (order, d) in drafts.enumerated() {
             let logged = d.sets.filter(\.isLogged)
@@ -401,11 +522,19 @@ struct WorkoutLogView: View {
             let pe = plannedExercises(for: day).first { $0.exerciseName == d.name }
             let priorLogs = pe.map(history) ?? []
 
-            let log = ExerciseLog(exerciseName: d.name, targetReps: d.targetReps, order: order)
+            let log = ExerciseLog(exerciseName: d.name, targetReps: d.targetReps, order: order,
+                                  isBodyweight: d.isBodyweight, goalType: d.goalType)
             log.session = session
             context.insert(log)
             for (i, s) in logged.enumerated() {
-                let set = SetLog(index: i, weight: s.weight ?? 0, reps: s.reps ?? 0)
+                let addedWeight = s.weight ?? 0
+                let set: SetLog
+                if d.isBodyweight {
+                    set = SetLog(index: i, weight: addedWeight + (bodyweight ?? 0), reps: s.reps ?? 0,
+                                 addedWeight: addedWeight, bodyweightAtLog: bodyweight)
+                } else {
+                    set = SetLog(index: i, weight: addedWeight, reps: s.reps ?? 0)
+                }
                 set.exerciseLog = log
                 context.insert(set)
             }
@@ -414,14 +543,17 @@ struct WorkoutLogView: View {
             // are intentionally cut, so progression math doesn't apply) or
             // once the phase is over (no next cycle to jump into). A
             // standalone quick workout has no phase, so it's never "over".
-            if !isDeloadCycle, !(phase?.isComplete ?? false) {
-                let increment = roundingIncrement(for: d.name)
-                let combinedHistory = priorLogs + [log]
+            guard !isDeloadCycle, !(phase?.isComplete ?? false) else { continue }
+            let increment = roundingIncrement(for: d.name)
+            let combinedHistory = priorLogs + [log]
+
+            switch d.goalType {
+            case .fixedSets:
                 let streak = ProgressionEngine.currentStreak(targetReps: d.targetReps, history: combinedHistory)
                 let suggestion = ProgressionEngine.suggestNextWeights(
                     targetReps: d.targetReps, history: combinedHistory,
-                    aggressiveness: agg, roundingIncrement: increment)
-                let currentWeights = log.sortedSets.map(\.weight)
+                    aggressiveness: agg, roundingIncrement: increment, isBodyweight: d.isBodyweight)
+                let currentWeights = log.sortedSets.map { d.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
                 entries.append(RecapEntry(exerciseName: d.name,
                                           previousTotal: priorLogs.last?.totalWeightMoved,
                                           todayTotal: log.totalWeightMoved,
@@ -429,6 +561,21 @@ struct WorkoutLogView: View {
                                           requiredStreak: ProgressionEngine.requiredStreak(for: agg),
                                           suggestion: (suggestion != currentWeights) ? suggestion : nil,
                                           currentWeights: currentWeights))
+
+            case .repTotal:
+                // repTotal progression is applied automatically (no interactive
+                // recap step for this goal type) — mirrors suggestion straight
+                // onto the plan for next cycle.
+                if let pe, let suggestion = ProgressionEngine.suggestRepTotalProgression(
+                    history: combinedHistory, aggressiveness: agg,
+                    progressesReps: pe.repTotalProgressesReps, roundingIncrement: increment) {
+                    if let newTarget = suggestion.newTarget {
+                        pe.goalType = .repTotal(target: newTarget)
+                    }
+                    if let newWeight = suggestion.newAddedWeight {
+                        pe.suggestedWeights = [newWeight]
+                    }
+                }
             }
         }
         try? context.save()
@@ -470,6 +617,11 @@ struct ExercisePageView: View {
     /// from the name down through the pace panel must fit inside it so a
     /// vertical swipe moves cleanly to the next exercise instead of scrolling.
     let pageHeight: CGFloat
+    /// Most recent BodyWeightEntry resolved as of today — used for the live
+    /// "BW + n -> lb" hint shown next to the stepper while logging a
+    /// bodyweight exercise. The actual save resolves against the confirmed
+    /// log date instead, which may differ from this approximation.
+    let currentBodyweight: Double?
     /// Redirected to the shared completed-exercises page when this one
     /// collapses (manually or via the delayed auto-collapse), since its own
     /// page disappears from the paging list at that point.
@@ -497,7 +649,15 @@ struct ExercisePageView: View {
         PaceEngine.comparisons(for: draft.name,
                                targetReps: draft.targetReps,
                                currentWeights: draft.sets.map { $0.weight ?? 0 },
+                               isBodyweight: draft.isBodyweight,
                                allLogs: allLogs)
+    }
+    private func repTotalComparisons(target: Int) -> [PaceEngine.RepTotalComparisonTarget] {
+        let weightsKey = draft.isBodyweight
+            ? draft.sets.map { "BW+\(Formatters.trim($0.weight ?? 0))" }.joined(separator: "/")
+            : draft.sets.map { Formatters.trim($0.weight ?? 0) }.joined(separator: "/")
+        return PaceEngine.repTotalComparisons(for: draft.name, target: target,
+                                              currentWeightsKey: weightsKey, allLogs: allLogs)
     }
     /// Weights for sets not yet logged (reps missing), using entered weight or 0.
     private var remainingWeights: [Double] {
@@ -508,7 +668,7 @@ struct ExercisePageView: View {
     private var avgWeightPerRep: Double {
         let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)
         guard totalReps > 0 else { return 0 }
-        return draft.loggedTotal / Double(totalReps)
+        return draft.loggedTotal(bodyweight: currentBodyweight) / Double(totalReps)
     }
     /// The +/- step for this exercise's weight fields: the smallest plate
     /// you own for barbell/plate work, or the finest dumbbell increment
@@ -532,6 +692,11 @@ struct ExercisePageView: View {
         // peeks through above and below the selected value.
         return min(100, max(60, perSet))
     }
+    /// Fixed (not page-height-derived) row height for repTotal sets, since
+    /// the set count there is open-ended (grows via "Add Set") rather than
+    /// fixed up front — the rows scroll internally instead of being sized to
+    /// guarantee everything fits on one screen.
+    private let repTotalRowHeight: CGFloat = 70
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -541,7 +706,15 @@ struct ExercisePageView: View {
                 if draft.showingDetails {
                     notesAndPlateCalc(exerciseDef)
                 }
-                setRows
+                switch draft.goalType {
+                case .fixedSets:
+                    setRows
+                case .repTotal:
+                    ScrollView {
+                        repTotalSetRows
+                    }
+                    .frame(maxHeight: 260)
+                }
             } else {
                 currentWorkoutRow
             }
@@ -549,11 +722,20 @@ struct ExercisePageView: View {
             // Pace panel — always shows all three comparisons; any with no
             // prior data yet just says so instead of being omitted.
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(comparisons) { c in
-                    PaceRow(target: c,
-                            loggedSoFar: draft.loggedTotal,
-                            remainingWeights: remainingWeights,
-                            avgWeightPerRep: avgWeightPerRep)
+                switch draft.goalType {
+                case .fixedSets:
+                    ForEach(comparisons) { c in
+                        PaceRow(target: c,
+                                loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
+                                remainingWeights: remainingWeights,
+                                avgWeightPerRep: avgWeightPerRep)
+                    }
+                case .repTotal(let target):
+                    ForEach(repTotalComparisons(target: target)) { c in
+                        RepTotalPaceRow(target: c,
+                                       setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
+                                       loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                    }
                 }
             }
             .padding(10)
@@ -569,6 +751,11 @@ struct ExercisePageView: View {
             HStack {
                 Text(draft.name)
                     .font(.title2.bold())
+                if case .repTotal(let target) = draft.goalType {
+                    Text("\(draft.repTotalSoFar)/\(target)")
+                        .font(.title3.bold())
+                        .foregroundStyle(draft.repTotalSoFar >= target ? .green : .secondary)
+                }
                 Spacer()
                 if draft.isExpanded {
                     Button {
@@ -598,19 +785,33 @@ struct ExercisePageView: View {
                 }
             }
             if draft.isExpanded {
-                HStack(spacing: 12) {
-                    Text("Set").font(.subheadline).foregroundStyle(.secondary)
-                        .frame(width: 44, alignment: .leading)
-                    Text("Weight").font(.subheadline).foregroundStyle(.secondary)
-                        .frame(width: 100, alignment: .center)
-                    Text("Target").font(.subheadline).foregroundStyle(.secondary)
-                        .frame(width: 44, alignment: .center)
-                    Text("Reps").font(.subheadline).foregroundStyle(.secondary)
-                        .frame(width: 100, alignment: .center)
-                    Text("+/-").font(.subheadline).foregroundStyle(.secondary)
-                        .frame(width: 44, alignment: .center)
+                switch draft.goalType {
+                case .fixedSets:
+                    HStack(spacing: 12) {
+                        Text("Set").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .leading)
+                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 100, alignment: .center)
+                        Text("Target").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .center)
+                        Text("Reps").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 100, alignment: .center)
+                        Text("+/-").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .center)
+                    }
+                    .lineLimit(1)
+                case .repTotal:
+                    HStack(spacing: 12) {
+                        Text("Set").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .leading)
+                        Text("Weight").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 100, alignment: .center)
+                        Text("Reps").font(.subheadline).foregroundStyle(.secondary)
+                            .frame(width: 100, alignment: .center)
+                        Spacer()
+                    }
+                    .lineLimit(1)
                 }
-                .lineLimit(1)
             }
         }
     }
@@ -624,31 +825,7 @@ struct ExercisePageView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .leading)
 
-                    ZStack(alignment: .top) {
-                        Picker("Weight", selection: Binding(
-                            get: { nearestValue(draft.sets[i].weight ?? 0, in: weightValues) },
-                            set: { newValue in
-                                let old = draft.sets[i].weight ?? 0
-                                draft.sets[i].weightText = Formatters.trim(newValue)
-                                let delta = newValue - old
-                                if delta != 0 { cascadeDelta(delta, from: i) }
-                            })) {
-                            ForEach(weightValues, id: \.self) { v in
-                                Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
-                            }
-                        }
-                        .pickerStyle(.wheel)
-                        .frame(width: 100, height: wheelHeight)
-                        .clipped()
-                        if let delta = cascadeIndicator[i] {
-                            Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
-                                .font(.caption2.bold())
-                                .foregroundStyle(delta > 0 ? .green : .red)
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(.thinMaterial, in: Capsule())
-                                .transition(.opacity)
-                        }
-                    }
+                    weightCell(for: i, height: wheelHeight)
 
                     if let goal = draft.targetReps[safe: i] {
                         HStack(spacing: 8) {
@@ -770,20 +947,150 @@ struct ExercisePageView: View {
         }
     }
 
+    /// fixedSets: every set logged. repTotal: the total's been reached and
+    /// the last set (the one that pushed it there) is logged.
+    private var isReadyToAutoCollapse: Bool {
+        switch draft.goalType {
+        case .fixedSets:
+            return draft.sets.allSatisfy(\.isLogged)
+        case .repTotal(let target):
+            return (draft.sets.last?.isLogged ?? false) && draft.repTotalSoFar >= target
+        }
+    }
+
     /// Only auto-collapses if the exercise hasn't been manually reopened
     /// since the last time it collapsed. Waits 3 seconds before collapsing so
     /// the last entry doesn't vanish out from under you — and bails if
     /// anything's changed (re-opened, un-logged, or superseded) by the time
     /// it fires.
     private func checkAutoCollapse() {
-        guard draft.autoCollapseEnabled, draft.sets.allSatisfy(\.isLogged) else { return }
+        guard draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
         collapseGeneration += 1
         let generation = collapseGeneration
         Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard generation == collapseGeneration,
-                  draft.autoCollapseEnabled, draft.sets.allSatisfy(\.isLogged) else { return }
+                  draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
             withAnimation { draft.isExpanded = false; currentPageID = "summary" }
+        }
+    }
+
+    /// Shared weight-entry cell for one set — a plate/dumbbell wheel picker
+    /// normally, or a "BW + n" added-weight stepper for a bodyweight exercise
+    /// (suggested/AI weights already represent added load in that case).
+    @ViewBuilder
+    private func weightCell(for index: Int, height: CGFloat) -> some View {
+        if draft.isBodyweight {
+            ZStack(alignment: .top) {
+                BodyweightAddedControl(addedWeight: Binding(
+                    get: { draft.sets[index].weight ?? 0 },
+                    set: { newValue in
+                        let old = draft.sets[index].weight ?? 0
+                        draft.sets[index].weightText = Formatters.trim(newValue)
+                        let delta = newValue - old
+                        if delta != 0 { cascadeDelta(delta, from: index) }
+                    }), bodyweight: currentBodyweight)
+                .frame(width: 100, height: height)
+                if let delta = cascadeIndicator[index] {
+                    Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                        .font(.caption2.bold())
+                        .foregroundStyle(delta > 0 ? .green : .red)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.thinMaterial, in: Capsule())
+                        .transition(.opacity)
+                }
+            }
+        } else {
+            ZStack(alignment: .top) {
+                Picker("Weight", selection: Binding(
+                    get: { nearestValue(draft.sets[index].weight ?? 0, in: weightValues) },
+                    set: { newValue in
+                        let old = draft.sets[index].weight ?? 0
+                        draft.sets[index].weightText = Formatters.trim(newValue)
+                        let delta = newValue - old
+                        if delta != 0 { cascadeDelta(delta, from: index) }
+                    })) {
+                    ForEach(weightValues, id: \.self) { v in
+                        Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
+                    }
+                }
+                .pickerStyle(.wheel)
+                .frame(width: 100, height: height)
+                .clipped()
+                if let delta = cascadeIndicator[index] {
+                    Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
+                        .font(.caption2.bold())
+                        .foregroundStyle(delta > 0 ? .green : .red)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.thinMaterial, in: Capsule())
+                        .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    /// repTotal logging: open-ended set list (no fixed target per set) with
+    /// an "Add Set" button, and a delete affordance once there's more than
+    /// one set (so an accidental extra Add Set isn't a dead end).
+    private var repTotalSetRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
+                HStack(spacing: 12) {
+                    Text("Set \(i + 1)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .leading)
+
+                    weightCell(for: i, height: repTotalRowHeight)
+
+                    ZStack(alignment: .top) {
+                        Picker("Reps", selection: Binding(
+                            get: { draft.sets[i].reps ?? 0 },
+                            set: { newValue in
+                                draft.sets[i].repsText = String(newValue)
+                                checkAutoCollapse()
+                            })) {
+                            ForEach(0...50, id: \.self) { v in
+                                Text("\(v)")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(repsExplosion[i] == true ? Color.green : Color.primary)
+                                    .tag(v)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(width: 100, height: repTotalRowHeight)
+                        .clipped()
+                        if repsExplosion[i] == true {
+                            ExplosionBurst()
+                                .frame(width: 100, height: repTotalRowHeight)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                    Spacer()
+
+                    if draft.sets.count > 1 {
+                        Button {
+                            draft.sets.remove(at: i)
+                            checkAutoCollapse()
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
+                    }
+                }
+            }
+
+            Button {
+                let carryWeight = draft.sets.last?.weightText ?? ""
+                draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
+            } label: {
+                Label("Add Set", systemImage: "plus.circle.fill")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.bordered)
+            .padding(.top, 4)
         }
     }
 
@@ -803,11 +1110,20 @@ struct ExercisePageView: View {
     /// Compact summary of today's entered weights/reps, shown once the
     /// exercise auto-collapses (mirrors the historical pace-calc rows).
     private var currentWorkoutRow: some View {
-        let weights = draft.sets.map { $0.weightText.isEmpty ? "—" : $0.weightText }.joined(separator: "/")
+        let weights = draft.sets
+            .map { $0.weightText.isEmpty ? "—" : (draft.isBodyweight ? "BW+\($0.weightText)" : $0.weightText) }
+            .joined(separator: "/")
         let reps = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }.joined(separator: "/")
+        let totalLine: String? = {
+            guard case .repTotal(let target) = draft.goalType else { return nil }
+            return "\(draft.repTotalSoFar)/\(target) reps"
+        }()
 
         return VStack(alignment: .leading, spacing: 2) {
             Text("Current Workout").font(.caption.bold())
+            if let totalLine {
+                Text(totalLine).font(.caption2.bold()).foregroundStyle(.blue)
+            }
             Text("\(reps) reps @ \(weights) lbs")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
@@ -1022,6 +1338,134 @@ struct ExplosionBurst: View {
     }
 }
 
+// MARK: - Bodyweight "BW + n" added-weight stepper
+
+/// Compact stepper for a bodyweight exercise's added weight — +/- buttons in
+/// 2.5 lb increments plus a directly-editable numeric field, with a live hint
+/// showing the resolved effective load once a bodyweight is known.
+struct BodyweightAddedControl: View {
+    @Binding var addedWeight: Double
+    let bodyweight: Double?
+
+    @State private var text: String = ""
+    private let step: Double = 2.5
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Button { setValue(addedWeight - step) } label: {
+                    Image(systemName: "minus.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .imageScale(.small)
+
+                Text("BW+")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
+                TextField("0", text: $text)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.center)
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 32)
+                    .onChange(of: text) { _, new in
+                        if let v = Double(new) { addedWeight = max(0, v) }
+                    }
+
+                Button { setValue(addedWeight + step) } label: {
+                    Image(systemName: "plus.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .imageScale(.small)
+            }
+            if let bodyweight {
+                Text("→ \(Formatters.trim(bodyweight + addedWeight)) lb")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+        }
+        .onAppear { text = Formatters.trim(addedWeight) }
+        // Reflects external changes (e.g. a cascade from an earlier set)
+        // without fighting the user's own in-progress typing — only pushes
+        // in when the formatted value has actually drifted from what's shown.
+        .onChange(of: addedWeight) { _, new in
+            let formatted = Formatters.trim(new)
+            if text != formatted { text = formatted }
+        }
+    }
+
+    private func setValue(_ v: Double) {
+        addedWeight = max(0, v)
+        text = Formatters.trim(addedWeight)
+    }
+}
+
+// MARK: - repTotal pace row (sets-to-complete, not reps-to-beat)
+
+struct RepTotalPaceRow: View {
+    let target: PaceEngine.RepTotalComparisonTarget
+    let setsLoggedSoFar: Int
+    let loggedTotal: Double
+
+    private var noDataMessage: String {
+        switch target.kind {
+        case .lastLogged: return "First time logging this exercise — set the baseline. 💪"
+        case .bestAtTheseWeights: return "First time at this exact weight — set the baseline. 💪"
+        case .bestForExercise: return "No logs yet for this rep total — set the baseline. 💪"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(target.kind.rawValue).font(.caption.bold())
+                Spacer()
+                if let date = target.date {
+                    Text(Formatters.date.string(from: date))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            if target.hasData {
+                Text(target.setsSummary)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                comparisonLine
+            } else {
+                Text(noDataMessage)
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var comparisonLine: some View {
+        if let setsToComplete = target.setsToComplete {
+            if target.kind == .lastLogged {
+                Text("Finished in \(setsToComplete) set\(setsToComplete == 1 ? "" : "s"), first set \(target.firstSetReps ?? 0) reps")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if let room = PaceEngine.repTotalPRRoom(setsLoggedSoFar: setsLoggedSoFar, bestSetsToComplete: setsToComplete) {
+                Label("Finish in \(room) more set\(room == 1 ? "" : "s") for a PR", systemImage: "target")
+                    .font(.caption).foregroundStyle(.orange)
+            } else if setsLoggedSoFar >= setsToComplete {
+                Label("Matched or beat the \(setsToComplete)-set record 🔥", systemImage: "flame.fill")
+                    .font(.caption).foregroundStyle(.green)
+            } else {
+                Text("Best: \(setsToComplete) set\(setsToComplete == 1 ? "" : "s") to finish, first set \(target.firstSetReps ?? 0) reps")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } else if loggedTotal > target.totalWeightMoved {
+            // That log never actually reached its total — the only
+            // meaningful comparison left is total weight moved.
+            Label("Beaten on total weight moved 🔥", systemImage: "flame.fill")
+                .font(.caption).foregroundStyle(.green)
+        } else {
+            Text("Unfinished last time — \(Formatters.trim(target.totalWeightMoved)) lbs moved")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct PaceRow: View {
     let target: ComparisonTarget
     let loggedSoFar: Double
@@ -1188,7 +1632,9 @@ struct CompletedSummaryPageView: View {
 
     private func row(for i: Int) -> some View {
         let draft = drafts[i]
-        let weights = draft.sets.map { $0.weightText.isEmpty ? "—" : $0.weightText }.joined(separator: "/")
+        let weights = draft.sets
+            .map { $0.weightText.isEmpty ? "—" : (draft.isBodyweight ? "BW+\($0.weightText)" : $0.weightText) }
+            .joined(separator: "/")
         let reps = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }.joined(separator: "/")
         return VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -1207,6 +1653,11 @@ struct CompletedSummaryPageView: View {
                 }
                 .buttonStyle(.plain)
                 .font(.caption)
+            }
+            if case .repTotal(let target) = draft.goalType {
+                Text("\(draft.repTotalSoFar)/\(target) reps")
+                    .font(.caption.bold())
+                    .foregroundStyle(.blue)
             }
             Text("\(reps) reps @ \(weights) lbs")
                 .font(.system(.caption, design: .monospaced))

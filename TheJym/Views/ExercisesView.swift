@@ -193,6 +193,7 @@ struct ExerciseEditView: View {
     @State private var repsText = "8/8/8"
     @State private var notes = ""
     @State private var equipmentID: PersistentIdentifier?
+    @State private var isBodyweight = false
 
     private var reps: [Int] {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -219,6 +220,7 @@ struct ExerciseEditView: View {
                         Label("An exercise with this name already exists.", systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.orange)
                     }
+                    Toggle("Bodyweight Exercise", isOn: $isBodyweight)
                 }
                 Section("Equipment") {
                     Picker("Equipment", selection: $equipmentID) {
@@ -250,6 +252,7 @@ struct ExerciseEditView: View {
                 name = def.name
                 notes = def.notes
                 equipmentID = def.equipment?.persistentModelID
+                isBodyweight = def.isBodyweight
             }
         }
     }
@@ -263,11 +266,12 @@ struct ExerciseEditView: View {
             def.name = trimmedName
             def.notes = notes
             def.equipment = equipment
+            def.isBodyweight = isBodyweight
             saved = def
         } else {
             guard !reps.isEmpty else { return }
-            let newDef = ExerciseDef(name: trimmedName,
-                                     notes: notes, equipment: equipment, repSchemes: [reps])
+            let newDef = ExerciseDef(name: trimmedName, notes: notes, equipment: equipment,
+                                     repSchemes: [reps], isBodyweight: isBodyweight)
             context.insert(newDef)
             saved = newDef
         }

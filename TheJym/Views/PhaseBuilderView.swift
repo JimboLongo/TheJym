@@ -64,8 +64,11 @@ struct PhaseBuilderView: View {
     struct DraftExercise: Identifiable {
         let id = UUID()
         var name: String
-        var repsText: String        // "5/5/5/3/3/3"
+        var repsText: String        // "5/5/5/3/3/3" — fixedSets only
         var weightsText: String     // optional "135/135/135/145/145/145"
+        var goalType: GoalType = .fixedSets
+        var repTotalTargetText: String = ""   // repTotal only, e.g. "40"
+        var repTotalProgressesReps: Bool = false
     }
 
     struct DayDraft: Identifiable {
@@ -306,16 +309,30 @@ struct PhaseBuilderView: View {
 
             guard !dayDraft.isRest else { continue }
             for (i, d) in dayDraft.exercises.enumerated() {
-                let reps = d.repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
                 let weights = d.weightsText.split(separator: "/").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-                guard !reps.isEmpty else { continue }
-                let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: reps,
-                                         suggestedWeights: weights)
-                pe.day = day
-                context.insert(pe)
+                let isBW = knownDefs[d.name]?.isBodyweight ?? false
 
-                ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps,
-                                                knownDefs: &knownDefs, context: context)
+                switch d.goalType {
+                case .fixedSets:
+                    let reps = d.repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                    guard !reps.isEmpty else { continue }
+                    let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: reps,
+                                             suggestedWeights: weights, isBodyweight: isBW, goalType: .fixedSets)
+                    pe.day = day
+                    context.insert(pe)
+                    ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps,
+                                                    knownDefs: &knownDefs, context: context)
+
+                case .repTotal(let target):
+                    guard target > 0 else { continue }
+                    let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: [],
+                                             suggestedWeights: weights, isBodyweight: isBW,
+                                             goalType: .repTotal(target: target),
+                                             repTotalProgressesReps: d.repTotalProgressesReps)
+                    pe.day = day
+                    context.insert(pe)
+                    ExerciseDef.ensureAnyVariantExists(name: d.name, knownDefs: &knownDefs, context: context)
+                }
             }
         }
         try? context.save()
@@ -457,13 +474,46 @@ struct AddExerciseToDayView: View {
 struct DraftExerciseRow: View {
     @Binding var item: PhaseBuilderView.DraftExercise
 
+    private var isRepTotal: Bool {
+        if case .repTotal = item.goalType { return true }
+        return false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField("Exercise name", text: $item.name)
                 .font(.headline)
-            TextField("Reps e.g. 5/5/5/3/3/3", text: $item.repsText)
-                .font(.system(.caption, design: .monospaced))
-                .keyboardType(.numbersAndPunctuation)
+
+            Picker("Goal", selection: Binding(
+                get: { isRepTotal },
+                set: { newValue in
+                    item.goalType = newValue
+                        ? .repTotal(target: Int(item.repTotalTargetText) ?? 0)
+                        : .fixedSets
+                })) {
+                Text("Fixed Sets").tag(false)
+                Text("Rep Total").tag(true)
+            }
+            .pickerStyle(.segmented)
+
+            if isRepTotal {
+                HStack {
+                    Text("Target reps").font(.subheadline)
+                    TextField("e.g. 40", text: $item.repTotalTargetText)
+                        .keyboardType(.numberPad)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
+                        .onChange(of: item.repTotalTargetText) { _, new in
+                            item.goalType = .repTotal(target: Int(new) ?? 0)
+                        }
+                }
+                Toggle("AI progresses rep total instead of weight", isOn: $item.repTotalProgressesReps)
+                    .font(.caption)
+            } else {
+                TextField("Reps e.g. 5/5/5/3/3/3", text: $item.repsText)
+                    .font(.system(.caption, design: .monospaced))
+                    .keyboardType(.numbersAndPunctuation)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -472,7 +522,7 @@ struct DraftExerciseRow: View {
 // MARK: - Built-in exercise library (used to seed the Exercises tab on first launch)
 
 enum ExerciseLibrary {
-    struct Entry { let name: String; let defaultReps: String }
+    struct Entry { let name: String; let defaultReps: String; var isBodyweight: Bool = false }
     struct Group { let group: String; let exercises: [Entry] }
 
     static let grouped: [Group] = [
@@ -480,7 +530,7 @@ enum ExerciseLibrary {
             Entry(name: "Bench Press", defaultReps: "5/5/5/3/3/3"),
             Entry(name: "Incline DB Press", defaultReps: "8/8/8/8"),
             Entry(name: "Overhead Press", defaultReps: "5/5/5/5"),
-            Entry(name: "Dips", defaultReps: "10/10/10"),
+            Entry(name: "Dips", defaultReps: "10/10/10", isBodyweight: true),
             Entry(name: "Cable Fly", defaultReps: "12/12/12"),
             Entry(name: "Lateral Raise", defaultReps: "15/15/15"),
             Entry(name: "Triceps Pushdown", defaultReps: "12/12/12"),
@@ -490,7 +540,7 @@ enum ExerciseLibrary {
             Entry(name: "Deadlift", defaultReps: "5/5/3/3"),
             Entry(name: "Barbell Row", defaultReps: "8/8/8/8"),
             Entry(name: "Seal Row", defaultReps: "8/8/8/8"),
-            Entry(name: "Pull-Up", defaultReps: "8/8/8"),
+            Entry(name: "Pull-Up", defaultReps: "8/8/8", isBodyweight: true),
             Entry(name: "Lat Pulldown", defaultReps: "10/10/10"),
             Entry(name: "Face Pull", defaultReps: "15/15/15"),
             Entry(name: "Band Pull-Apart", defaultReps: "20/20/20"),

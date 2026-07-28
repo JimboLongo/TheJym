@@ -91,7 +91,7 @@ struct ContentView: View {
             for group in ExerciseLibrary.grouped {
                 for e in group.exercises {
                     let reps = e.defaultReps.split(separator: "/").compactMap { Int($0) }
-                    context.insert(ExerciseDef(name: e.name, repSchemes: [reps]))
+                    context.insert(ExerciseDef(name: e.name, repSchemes: [reps], isBodyweight: e.isBodyweight))
                 }
             }
         }

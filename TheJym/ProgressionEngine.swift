@@ -22,12 +22,21 @@ enum ProgressionEngine {
     /// just the current block). The most recent entry is "today's" workout.
     /// `roundingIncrement` is the finest weight jump achievable with the
     /// equipment on hand (e.g. 1.25/2.5 lb with a dumbbell attachment).
+    /// `isBodyweight`: when true, progression is computed on ADDED weight
+    /// (SetLog.addedWeight) instead of the resolved effective weight, since
+    /// bodyweight itself can drift independently of training progress —
+    /// suggestions should only ever move the added load, never bodyweight.
+    /// Every other caller (the vast majority — non-bodyweight exercises)
+    /// leaves this at its default and sees byte-identical behavior.
     static func suggestNextWeights(targetReps: [Int],
                                    history: [ExerciseLog],
                                    aggressiveness: AIAggressiveness,
-                                   roundingIncrement: Double = 2.5) -> [Double]? {
+                                   roundingIncrement: Double = 2.5,
+                                   isBodyweight: Bool = false) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
-        let latestWeights = latest.sortedSets.map(\.weight)
+        let latestWeights = isBodyweight
+            ? latest.sortedSets.map { $0.addedWeight ?? 0 }
+            : latest.sortedSets.map(\.weight)
         let streak = currentStreak(targetReps: targetReps, history: history)
 
         let smallJump: Double = 2.5
@@ -117,6 +126,43 @@ enum ProgressionEngine {
         case .moderate: return 2
         case .aggressive: return 1
         }
+    }
+
+    // MARK: - repTotal progression
+
+    struct RepTotalSuggestion {
+        /// Set only when progressing the rep total itself (repTotalProgressesReps).
+        var newTarget: Int?
+        /// Set only when progressing added weight (the default).
+        var newAddedWeight: Double?
+    }
+
+    /// For a repTotal exercise: if the latest session actually reached its
+    /// target in <= "suggestedSets" sets, it's efficient enough to progress.
+    /// Reuses requiredStreak's conservative/moderate/aggressive thresholds
+    /// (3/2/1) here as "sets it took" rather than "consecutive cycles" —
+    /// aggressive demands finishing in a single set to earn a bump,
+    /// conservative allows up to 3. Bumps either added weight (+2.5-5 lb,
+    /// bigger jump if finished in just 1 set) or the rep total (+5),
+    /// depending on the exercise's own toggle (default: weight).
+    static func suggestRepTotalProgression(history: [ExerciseLog],
+                                           aggressiveness: AIAggressiveness,
+                                           progressesReps: Bool,
+                                           roundingIncrement: Double = 2.5) -> RepTotalSuggestion? {
+        guard let latest = history.last, latest.repTotalReached else { return nil }
+        let setsTaken = latest.sortedSets.count
+        guard setsTaken <= requiredStreak(for: aggressiveness) else { return nil }
+
+        if progressesReps {
+            guard case .repTotal(let target) = latest.goalType else { return nil }
+            return RepTotalSuggestion(newTarget: target + 5, newAddedWeight: nil)
+        }
+        let latestWeight = latest.isBodyweight
+            ? (latest.sortedSets.last?.addedWeight ?? 0)
+            : (latest.sortedSets.last?.weight ?? 0)
+        let bump: Double = setsTaken <= 1 ? 5 : 2.5
+        let newWeight = roundToPlate(latestWeight + bump, smallest: roundingIncrement)
+        return RepTotalSuggestion(newTarget: nil, newAddedWeight: newWeight)
     }
 
     static func roundToPlate(_ w: Double, smallest: Double = 2.5) -> Double {

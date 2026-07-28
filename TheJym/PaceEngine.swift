@@ -37,9 +37,14 @@ enum PaceEngine {
     static func comparisons(for exerciseName: String,
                             targetReps: [Int],
                             currentWeights: [Double],
+                            isBodyweight: Bool = false,
                             allLogs: [ExerciseLog]) -> [ComparisonTarget] {
         let planKey = "\(exerciseName)|\(targetReps.map(String.init).joined(separator: "/"))"
-        let weightsKey = currentWeights.map { Formatters.trim($0) }.joined(separator: "/")
+        // For a bodyweight exercise, currentWeights holds ADDED weight, so
+        // the key must match ExerciseLog.weightsKey's "BW+n" format.
+        let weightsKey = isBodyweight
+            ? currentWeights.map { "BW+\(Formatters.trim($0))" }.joined(separator: "/")
+            : currentWeights.map { Formatters.trim($0) }.joined(separator: "/")
 
         let byName = allLogs
             .filter { $0.exerciseName == exerciseName && !$0.sets.isEmpty }
@@ -66,11 +71,100 @@ enum PaceEngine {
         }
         let sortedSets = log.sortedSets
         let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
-        let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
-                                setsSummary: "\(reps) reps @ \(weights) lbs")
+                                setsSummary: "\(reps) reps @ \(weightsSummaryString(for: log))")
+    }
+
+    /// "135/135/135 lbs" for a normal log, or "BW+25/BW+25/BW+25 (172 BW)
+    /// lbs" for a bodyweight one — shows both the added load and the
+    /// bodyweight it was resolved against, since the resolved total alone
+    /// wouldn't reveal whether a change was from added weight or bodyweight.
+    static func weightsSummaryString(for log: ExerciseLog) -> String {
+        let sortedSets = log.sortedSets
+        guard log.isBodyweight else {
+            return sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/") + " lbs"
+        }
+        let addedSeq = sortedSets.map { "BW+\(Formatters.trim($0.addedWeight ?? 0))" }.joined(separator: "/")
+        let bw = sortedSets.first?.bodyweightAtLog.map { Formatters.trim($0) } ?? "?"
+        return "\(addedSeq) (\(bw) BW) lbs"
+    }
+
+    // MARK: - repTotal comparisons (sets-to-complete, not reps-to-beat)
+
+    struct RepTotalComparisonTarget: Identifiable {
+        let id = UUID()
+        let kind: ComparisonTarget.Kind
+        let date: Date?
+        /// Nil if that log never actually reached its rep total (an
+        /// interrupted/incomplete session) — falls back to comparing total
+        /// weight moved instead, since "sets to complete" isn't meaningful
+        /// for a session that never finished.
+        let setsToComplete: Int?
+        let firstSetReps: Int?
+        let totalWeightMoved: Double
+        let setsSummary: String
+        var hasData: Bool { date != nil }
+    }
+
+    /// Same three kinds as `comparisons`, but for a repTotal exercise: shows
+    /// sets-to-complete + first-set reps instead of total-weight reps-to-
+    /// beat math. `currentWeightsKey` should already be BW-aware (built the
+    /// same way ExerciseLog.weightsKey is) if this exercise is bodyweight.
+    static func repTotalComparisons(for exerciseName: String,
+                                    target: Int,
+                                    currentWeightsKey: String,
+                                    allLogs: [ExerciseLog]) -> [RepTotalComparisonTarget] {
+        let planKey = "\(exerciseName)|\(target) total"
+        let byName = allLogs
+            .filter { $0.exerciseName == exerciseName && !$0.sets.isEmpty }
+            .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
+
+        let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
+        let atWeights = currentWeightsKey.isEmpty ? [] : byName.filter { $0.weightsKey == currentWeightsKey }
+        let bestAtWeights = bestRepTotalLog(among: atWeights)
+        let bestOverall = bestRepTotalLog(among: byName.filter { $0.planKey == planKey })
+
+        return [
+            repTotalTarget(.lastLogged, from: last),
+            repTotalTarget(.bestAtTheseWeights, from: bestAtWeights),
+            repTotalTarget(.bestForExercise, from: bestOverall),
+        ]
+    }
+
+    /// Prefers whichever log reached the target in the fewest sets; if none
+    /// reached it yet, falls back to the best attempt by total weight moved.
+    private static func bestRepTotalLog(among logs: [ExerciseLog]) -> ExerciseLog? {
+        let reached = logs.filter(\.repTotalReached)
+        if let best = reached.min(by: { $0.sortedSets.count < $1.sortedSets.count }) {
+            return best
+        }
+        return logs.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
+    }
+
+    private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> RepTotalComparisonTarget {
+        guard let log else {
+            return RepTotalComparisonTarget(kind: kind, date: nil, setsToComplete: nil,
+                                            firstSetReps: nil, totalWeightMoved: 0, setsSummary: "")
+        }
+        let sortedSets = log.sortedSets
+        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
+        return RepTotalComparisonTarget(kind: kind,
+                                        date: log.session?.date ?? .distantPast,
+                                        setsToComplete: log.repTotalReached ? sortedSets.count : nil,
+                                        firstSetReps: sortedSets.first?.reps,
+                                        totalWeightMoved: log.totalWeightMoved,
+                                        setsSummary: "\(reps) reps @ \(weightsSummaryString(for: log))")
+    }
+
+    /// "Finish in N more sets for a PR" — how many sets of room are left
+    /// before merely tying (not beating) the fewest-sets record. Nil once
+    /// there's no room left, or there's no record yet to chase.
+    static func repTotalPRRoom(setsLoggedSoFar: Int, bestSetsToComplete: Int?) -> Int? {
+        guard let best = bestSetsToComplete else { return nil }
+        let room = best - 1 - setsLoggedSoFar
+        return room >= 1 ? room : nil
     }
 
     // MARK: Reps-to-beat math

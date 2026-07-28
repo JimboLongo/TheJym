@@ -160,7 +160,7 @@ struct PhaseDayEditView: View {
 
     private func addExercise(_ def: ExerciseDef, reps: [Int]) {
         let pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
-                                 targetReps: reps)
+                                 targetReps: reps, isBodyweight: def.isBodyweight)
         pe.day = day
         context.insert(pe)
     }
@@ -170,21 +170,56 @@ struct PlannedExerciseRow: View {
     @Bindable var pe: PlannedExercise
 
     @State private var repsText = ""
+    @State private var repTotalTargetText = ""
+
+    private var isRepTotal: Bool {
+        if case .repTotal = pe.goalType { return true }
+        return false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField("Exercise name", text: $pe.exerciseName)
                 .font(.headline)
-            TextField("Reps e.g. 5/5/5/3/3/3", text: $repsText)
-                .font(.system(.caption, design: .monospaced))
-                .keyboardType(.numbersAndPunctuation)
-                .onChange(of: repsText) { _, new in
-                    pe.targetReps = new.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+
+            Picker("Goal", selection: Binding(
+                get: { isRepTotal },
+                set: { newValue in
+                    pe.goalType = newValue
+                        ? .repTotal(target: Int(repTotalTargetText) ?? 0)
+                        : .fixedSets
+                })) {
+                Text("Fixed Sets").tag(false)
+                Text("Rep Total").tag(true)
+            }
+            .pickerStyle(.segmented)
+
+            if isRepTotal {
+                HStack {
+                    Text("Target reps").font(.subheadline)
+                    TextField("e.g. 40", text: $repTotalTargetText)
+                        .keyboardType(.numberPad)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
+                        .onChange(of: repTotalTargetText) { _, new in
+                            pe.goalType = .repTotal(target: Int(new) ?? 0)
+                        }
                 }
+                Toggle("AI progresses rep total instead of weight", isOn: $pe.repTotalProgressesReps)
+                    .font(.caption)
+            } else {
+                TextField("Reps e.g. 5/5/5/3/3/3", text: $repsText)
+                    .font(.system(.caption, design: .monospaced))
+                    .keyboardType(.numbersAndPunctuation)
+                    .onChange(of: repsText) { _, new in
+                        pe.targetReps = new.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                    }
+            }
         }
         .padding(.vertical, 2)
         .onAppear {
             repsText = pe.targetReps.map(String.init).joined(separator: "/")
+            if case .repTotal(let target) = pe.goalType { repTotalTargetText = String(target) }
         }
     }
 }

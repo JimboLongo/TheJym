@@ -116,13 +116,17 @@ final class ExerciseDef {
     var notes: String = ""
     var equipment: Bar?
     var repSchemes: [[Int]] = []   // saved sets, e.g. [[5,5,5,3,3,3], [8,8,8]]
+    /// Default for new plan slots created from this exercise (e.g. Pull-Up,
+    /// Dip) — still overridable per PlannedExercise.
+    var isBodyweight: Bool = false
 
     init(name: String, notes: String = "",
-         equipment: Bar? = nil, repSchemes: [[Int]] = []) {
+         equipment: Bar? = nil, repSchemes: [[Int]] = [], isBodyweight: Bool = false) {
         self.name = name
         self.notes = notes
         self.equipment = equipment
         self.repSchemes = repSchemes
+        self.isBodyweight = isBodyweight
     }
 
     /// Adds `reps` as a saved set if it isn't already present.
@@ -314,25 +318,80 @@ final class PhaseDay {
     }
 }
 
+// MARK: - Goal types
+//
+// An exercise's goal is either a fixed set/rep scheme (the original, still-
+// default behavior) or a single rep-total target reached over however many
+// sets it takes. Shared by PlannedExercise and ExerciseLog; stored on each
+// @Model as decomposed raw fields (goalKindRaw/repTotalTarget) — matching
+// this codebase's existing convention for storing enums in SwiftData
+// (see AIAggressiveness/AppSettings) — with `goalType` as the computed
+// get/set wrapper callers actually use.
+
+enum GoalType: Codable, Equatable {
+    case fixedSets
+    case repTotal(target: Int)
+}
+
 /// One exercise slot inside a specific PhaseDay's plan.
 @Model
 final class PlannedExercise {
     var day: PhaseDay?
     var order: Int
     var exerciseName: String
-    var targetReps: [Int]          // e.g. [5,5,5,3,3,3] — user can override
-    var suggestedWeights: [Double] // per-set suggestion (AI or manual); empty = none yet
+    var targetReps: [Int]          // e.g. [5,5,5,3,3,3] — user can override; unused (empty) for repTotal
+    var suggestedWeights: [Double] // per-set suggestion (AI or manual); empty = none yet. For a
+                                    // bodyweight exercise these represent ADDED weight, not total load.
+    var isBodyweight: Bool = false
+    var goalKindRaw: Int = 0       // 0 = fixedSets, 1 = repTotal
+    var repTotalTarget: Int = 0    // meaningful only when goalKindRaw == 1
+    /// repTotal only: which direction AI progression bumps when the target
+    /// is reached quickly enough — added weight (default) or the rep total
+    /// itself.
+    var repTotalProgressesReps: Bool = false
 
     init(order: Int, exerciseName: String,
-         targetReps: [Int], suggestedWeights: [Double] = []) {
+         targetReps: [Int], suggestedWeights: [Double] = [],
+         isBodyweight: Bool = false, goalType: GoalType = .fixedSets,
+         repTotalProgressesReps: Bool = false) {
         self.order = order
         self.exerciseName = exerciseName
         self.targetReps = targetReps
         self.suggestedWeights = suggestedWeights
+        self.isBodyweight = isBodyweight
+        self.repTotalProgressesReps = repTotalProgressesReps
+        switch goalType {
+        case .fixedSets:
+            self.goalKindRaw = 0
+        case .repTotal(let target):
+            self.goalKindRaw = 1
+            self.repTotalTarget = target
+        }
     }
 
-    /// Stable key for "same plan" comparisons: name + target rep scheme.
-    var planKey: String { "\(exerciseName)|\(targetReps.map(String.init).joined(separator: "/"))" }
+    var goalType: GoalType {
+        get { goalKindRaw == 1 ? .repTotal(target: repTotalTarget) : .fixedSets }
+        set {
+            switch newValue {
+            case .fixedSets:
+                goalKindRaw = 0
+            case .repTotal(let target):
+                goalKindRaw = 1
+                repTotalTarget = target
+            }
+        }
+    }
+
+    /// Stable key for "same plan" comparisons: name + target rep scheme (or,
+    /// for repTotal, name + the total target — e.g. "Farmer's Carry|40 total").
+    var planKey: String {
+        switch goalType {
+        case .fixedSets:
+            return "\(exerciseName)|\(targetReps.map(String.init).joined(separator: "/"))"
+        case .repTotal(let target):
+            return "\(exerciseName)|\(target) total"
+        }
+    }
 }
 
 // MARK: - Logged workouts
@@ -374,44 +433,111 @@ final class WorkoutSession {
 final class ExerciseLog {
     var session: WorkoutSession?
     var exerciseName: String
-    var targetReps: [Int]          // the plan used that day
+    var targetReps: [Int]          // the plan used that day; empty for repTotal
     var order: Int
+    var isBodyweight: Bool = false
+    var goalKindRaw: Int = 0       // 0 = fixedSets, 1 = repTotal
+    var repTotalTarget: Int = 0    // meaningful only when goalKindRaw == 1
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
     var sets: [SetLog] = []
 
-    init(exerciseName: String, targetReps: [Int], order: Int) {
+    init(exerciseName: String, targetReps: [Int], order: Int,
+         isBodyweight: Bool = false, goalType: GoalType = .fixedSets) {
         self.exerciseName = exerciseName
         self.targetReps = targetReps
         self.order = order
+        self.isBodyweight = isBodyweight
+        switch goalType {
+        case .fixedSets:
+            self.goalKindRaw = 0
+        case .repTotal(let target):
+            self.goalKindRaw = 1
+            self.repTotalTarget = target
+        }
+    }
+
+    var goalType: GoalType {
+        get { goalKindRaw == 1 ? .repTotal(target: repTotalTarget) : .fixedSets }
+        set {
+            switch newValue {
+            case .fixedSets:
+                goalKindRaw = 0
+            case .repTotal(let target):
+                goalKindRaw = 1
+                repTotalTarget = target
+            }
+        }
     }
 
     var sortedSets: [SetLog] { sets.sorted { $0.index < $1.index } }
 
-    /// e.g. (6+6+5)*135 + (4+4+3)*145 = 3,890
+    /// e.g. (6+6+5)*135 + (4+4+3)*145 = 3,890. Uses `weight`, which for a
+    /// bodyweight set already holds the resolved effective weight
+    /// (bodyweight + added, frozen at log time) — never re-derived later.
     var totalWeightMoved: Double {
         sets.reduce(0) { $0 + Double($1.reps) * $1.weight }
     }
 
-    /// "135/135/135/145/145/145" — used to find "best at these same weights".
+    /// "135/135/135/145/145/145" — used to find "best at these same
+    /// weights". For a bodyweight exercise, uses the ADDED-weight sequence
+    /// instead (e.g. "BW+0/BW+0/BW+0") so sessions match across bodyweight
+    /// changes rather than across the (constantly shifting) resolved total.
     var weightsKey: String {
-        sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
+        if isBodyweight {
+            return sortedSets.map { "BW+\(Formatters.trim($0.addedWeight ?? 0))" }.joined(separator: "/")
+        }
+        return sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
     }
 
-    var planKey: String { "\(exerciseName)|\(targetReps.map(String.init).joined(separator: "/"))" }
+    /// "Farmer's Carry|40 total" for repTotal, matching PlannedExercise.planKey.
+    var planKey: String {
+        switch goalType {
+        case .fixedSets:
+            return "\(exerciseName)|\(targetReps.map(String.init).joined(separator: "/"))"
+        case .repTotal(let target):
+            return "\(exerciseName)|\(target) total"
+        }
+    }
+
+    /// repTotal only: total reps logged so far across all sets.
+    var repTotalSoFar: Int { sets.reduce(0) { $0 + $1.reps } }
+
+    /// repTotal only: did this session actually reach its target? Past logs
+    /// that didn't (an interrupted/incomplete session) fall back to a
+    /// total-weight-moved comparison instead of sets-to-complete, since
+    /// "sets to complete" isn't meaningful for a session that never finished.
+    var repTotalReached: Bool {
+        guard case .repTotal(let target) = goalType else { return false }
+        return repTotalSoFar >= target
+    }
 }
 
 @Model
 final class SetLog {
     var exerciseLog: ExerciseLog?
     var index: Int
+    /// The effective weight moved: for a normal set, the literal weight
+    /// lifted (unchanged); for a bodyweight set, the resolved total
+    /// (bodyweightAtLog + addedWeight), frozen at log time — used everywhere
+    /// (totalWeightMoved, pace math) exactly like a normal weight, so none
+    /// of that code needs to know or care a set was bodyweight-based.
     var weight: Double
     var reps: Int
+    /// Bodyweight sets only — the added load beyond bodyweight (e.g. a
+    /// weighted-vest/dip-belt add-on, or negative for an assisted variant).
+    var addedWeight: Double?
+    /// Bodyweight sets only — the resolved BodyWeightEntry as of the
+    /// session's date. Frozen forever once logged; never re-resolved even if
+    /// later BodyWeightEntry edits would change what "as of that date" means.
+    var bodyweightAtLog: Double?
 
-    init(index: Int, weight: Double, reps: Int) {
+    init(index: Int, weight: Double, reps: Int, addedWeight: Double? = nil, bodyweightAtLog: Double? = nil) {
         self.index = index
         self.weight = weight
         self.reps = reps
+        self.addedWeight = addedWeight
+        self.bodyweightAtLog = bodyweightAtLog
     }
 }
 

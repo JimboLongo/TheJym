@@ -157,10 +157,17 @@ struct HistoryView: View {
     private func exerciseRow(_ log: ExerciseLog) -> some View {
         let showGoal = !log.targetReps.isEmpty
         return VStack(alignment: .leading, spacing: 4) {
-            Text(log.exerciseName).font(.subheadline.weight(.semibold))
+            HStack(spacing: 6) {
+                Text(log.exerciseName).font(.subheadline.weight(.semibold))
+                if case .repTotal(let target) = log.goalType {
+                    Text("\(log.repTotalSoFar)/\(target) reps")
+                        .font(.caption.bold())
+                        .foregroundStyle(log.repTotalReached ? .green : .secondary)
+                }
+            }
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("lbs")
+                    Text(log.isBodyweight ? "added" : "lbs")
                     if showGoal { Text("target") }
                     Text("reps")
                 }
@@ -168,6 +175,10 @@ struct HistoryView: View {
                 .foregroundStyle(.secondary.opacity(0.7))
 
                 liftsGrid(log)
+            }
+            if log.isBodyweight, let bw = log.sortedSets.first?.bodyweightAtLog {
+                Text("Bodyweight: \(Formatters.trim(bw)) lb")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)
@@ -186,7 +197,7 @@ struct HistoryView: View {
         return Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
             GridRow {
                 ForEach(0..<columnCount, id: \.self) { idx in
-                    Text(idx < sortedSets.count ? Formatters.trim(sortedSets[idx].weight) : "")
+                    Text(idx < sortedSets.count ? weightLabel(sortedSets[idx], isBodyweight: log.isBodyweight) : "")
                     if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
                     }
@@ -213,6 +224,13 @@ struct HistoryView: View {
         }
         .font(.system(.caption, design: .monospaced))
         .foregroundStyle(.secondary)
+    }
+
+    /// Added weight for a bodyweight set (the resolved effective weight
+    /// isn't meaningful to display per-set, since bodyweight can drift
+    /// between sessions — the added load is what's actually comparable).
+    private func weightLabel(_ set: SetLog, isBodyweight: Bool) -> String {
+        isBodyweight ? Formatters.trim(set.addedWeight ?? 0) : Formatters.trim(set.weight)
     }
 
     private func handleImport(_ result: Result<URL, Error>) {
@@ -318,9 +336,12 @@ struct SessionDetailView: View {
                     if !log.targetReps.isEmpty {
                         LabeledContent("Target", value: log.targetReps.map(String.init).joined(separator: "/"))
                             .font(.caption).foregroundStyle(.secondary)
+                    } else if case .repTotal(let target) = log.goalType {
+                        LabeledContent("Target", value: "\(log.repTotalSoFar)/\(target) reps")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(log.sortedSets, id: \.persistentModelID) { set in
-                        SetEditRow(set: set)
+                        SetEditRow(set: set, isBodyweight: log.isBodyweight)
                     }
                     .onDelete { idx in
                         let sorted = log.sortedSets
@@ -346,7 +367,16 @@ struct SessionDetailView: View {
     }
 
     private func addSet(to log: ExerciseLog) {
-        let s = SetLog(index: log.sets.count, weight: 0, reps: 0)
+        let s: SetLog
+        if log.isBodyweight {
+            // Inherit the bodyweight already resolved for this log's other
+            // sets, so a manually-added set doesn't end up with no
+            // bodyweight to add its weight to.
+            let bw = log.sortedSets.first?.bodyweightAtLog ?? 0
+            s = SetLog(index: log.sets.count, weight: bw, reps: 0, addedWeight: 0, bodyweightAtLog: bw)
+        } else {
+            s = SetLog(index: log.sets.count, weight: 0, reps: 0)
+        }
         s.exerciseLog = log
         context.insert(s)
         try? context.save()
@@ -355,12 +385,26 @@ struct SessionDetailView: View {
 
 private struct SetEditRow: View {
     @Bindable var set: SetLog
+    let isBodyweight: Bool
 
     var body: some View {
         HStack {
             Text("Set \(set.index + 1)").foregroundStyle(.secondary).frame(width: 56, alignment: .leading)
-            TextField("Weight", value: $set.weight, format: .number)
-                .keyboardType(.decimalPad)
+            if isBodyweight {
+                // Edits added weight only — bodyweightAtLog stays frozen at
+                // whatever it resolved to when this set was originally
+                // logged, and the effective weight is re-derived from it.
+                TextField("Added", value: Binding(
+                    get: { set.addedWeight ?? 0 },
+                    set: { new in
+                        set.addedWeight = new
+                        set.weight = new + (set.bodyweightAtLog ?? 0)
+                    }), format: .number)
+                    .keyboardType(.decimalPad)
+            } else {
+                TextField("Weight", value: $set.weight, format: .number)
+                    .keyboardType(.decimalPad)
+            }
             Text("×")
             TextField("Reps", value: $set.reps, format: .number)
                 .keyboardType(.numberPad)
