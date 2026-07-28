@@ -184,7 +184,8 @@ struct WorkoutLogView: View {
                                     .id("ex-\(drafts[i].id)")
                             case .completedSummary:
                                 CompletedSummaryPageView(drafts: $drafts, pageHeight: geo.size.height,
-                                                        currentPageID: $currentPageID)
+                                                        currentPageID: $currentPageID,
+                                                        onFinish: { showDatePicker = true })
                                     .id("summary")
                             }
                         }
@@ -212,26 +213,6 @@ struct WorkoutLogView: View {
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.orange.opacity(0.12))
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            // Always available (not gated on finishing everything) — the
-            // label/tint flips once every exercise is actually checked off,
-            // so it's clear whether you're ending the workout early or not.
-            if !drafts.isEmpty {
-                let allDone = drafts.allSatisfy { !$0.isExpanded }
-                Button {
-                    showDatePicker = true
-                } label: {
-                    Label(allDone ? "Finish & Save Workout" : "Complete & Save Unfinished Workout",
-                          systemImage: allDone ? "checkmark.circle.fill" : "exclamationmark.circle")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(allDone ? .accentColor : .orange)
-                .padding()
-                .background(.bar)
             }
         }
         .overlay {
@@ -1629,9 +1610,15 @@ struct CompletedSummaryPageView: View {
     @Binding var drafts: [WorkoutLogView.ExerciseDraft]
     let pageHeight: CGFloat
     @Binding var currentPageID: String?
+    /// Called when the finish button here is tapped — starts the date
+    /// confirmation step in the parent.
+    var onFinish: () -> Void
 
     private var completedIndices: [Int] {
         drafts.indices.filter { !drafts[$0].isExpanded }
+    }
+    private var allDone: Bool {
+        !drafts.isEmpty && drafts.allSatisfy { !$0.isExpanded }
     }
 
     var body: some View {
@@ -1651,6 +1638,20 @@ struct CompletedSummaryPageView: View {
             }
             .padding()
             .frame(minHeight: pageHeight, alignment: .top)
+        }
+        .safeAreaInset(edge: .bottom) {
+            if !drafts.isEmpty {
+                Button(action: onFinish) {
+                    Label(allDone ? "Finish & Save Workout" : "Complete & Save Unfinished Workout",
+                          systemImage: allDone ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(allDone ? .accentColor : .orange)
+                .padding()
+                .background(.bar)
+            }
         }
     }
 
