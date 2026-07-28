@@ -295,9 +295,20 @@ struct CSVFormatHelpView: View {
                     .textSelection(.enabled)
                 }
 
+                Section("Rep-Total Example") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Date,Phase,Day,Exercise,Sets,Weights,Reps")
+                        Text("2026-01-05,2,Pull A,Pull-Up,40 total,0/0/0/0/0/0/0,6/5/5/4/4/3/3")
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                }
+
                 Section {
                     Label("Sets is the target rep scheme (e.g. 5/5/5/3/3) — it becomes a saved Set for that exercise in the Exercises tab.",
                           systemImage: "list.bullet.rectangle")
+                    Label("For a rep-total exercise (a running total instead of fixed sets, like Pull-Up), write Sets as \"40 total\" instead — it becomes a saved rep-total target on the exercise. Weights and Reps still list one value per set actually done.",
+                          systemImage: "target")
                     Label("Weights and Reps are what you actually lifted, and must have the same number of slash-separated values as each other.",
                           systemImage: "checkmark.circle")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",

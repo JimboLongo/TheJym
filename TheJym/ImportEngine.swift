@@ -18,6 +18,15 @@
 //  must have the same count; Sets may have a different count or be left
 //  blank if there was no real target.
 //
+//  For a rep-total exercise (e.g. Pull-Up, 40 total reps), write Sets as
+//  "40 total" instead of a rep scheme — Weights and Reps still list one
+//  value per set actually done, in order:
+//
+//    2026-01-05 | 2     | Pull A | Pull-Up     | 40 total  | 0/0/0/0/0/0/0        | 6/5/5/4/4/3/3
+//
+//  This becomes a saved rep-total target on the exercise (alongside its
+//  saved rep schemes), matching however it's set up in the Exercises tab.
+//
 //  Phase is that phase's number; Day is the day's name (e.g. "Push A"),
 //  matched case-insensitively against that phase's days. If either is
 //  missing or doesn't match an existing Phase/PhaseDay, the row still
@@ -33,11 +42,12 @@ enum ImportEngine {
     struct ImportedEntry {
         let date: Date
         let exerciseName: String
-        let targetReps: [Int]     // "Sets" column, e.g. [5,5,5,3,3]
-        let weights: [Double]     // "Weights" column
-        let reps: [Int]           // "Reps" column — actual reps achieved
-        let phaseNumber: Int?     // optional "Phase" column
-        let dayLabel: String?     // optional "Day" column, e.g. "Push A"
+        let goalType: GoalType     // .fixedSets (default) or .repTotal, from the "Sets" column
+        let targetReps: [Int]      // "Sets" column, e.g. [5,5,5,3,3] — empty for repTotal
+        let weights: [Double]      // "Weights" column
+        let reps: [Int]            // "Reps" column — actual reps achieved
+        let phaseNumber: Int?      // optional "Phase" column
+        let dayLabel: String?      // optional "Day" column, e.g. "Push A"
     }
 
     struct ImportResult {
@@ -96,7 +106,18 @@ enum ImportEngine {
 
             guard !name.isEmpty, let date = parseDate(dateStr) else { skipped += 1; continue }
 
-            let targetReps = setsStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            // "40 total" (case-insensitive) marks this row as a rep-total
+            // goal instead of a fixed rep scheme — everything else about
+            // the row (Weights/Reps per set) works exactly the same.
+            let goalType: GoalType
+            let targetReps: [Int]
+            if let target = parseRepTotalTarget(setsStr) {
+                goalType = .repTotal(target: target)
+                targetReps = []
+            } else {
+                goalType = .fixedSets
+                targetReps = setsStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            }
             let weights = weightsStr.split(separator: "/").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
             let reps = repsStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !weights.isEmpty, weights.count == reps.count else { skipped += 1; continue }
@@ -104,7 +125,8 @@ enum ImportEngine {
             let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
 
-            out.append(ImportedEntry(date: date, exerciseName: name, targetReps: targetReps, weights: weights, reps: reps,
+            out.append(ImportedEntry(date: date, exerciseName: name, goalType: goalType,
+                                     targetReps: targetReps, weights: weights, reps: reps,
                                      phaseNumber: phaseStr.flatMap { Int($0) },
                                      dayLabel: (dayStr?.isEmpty == false) ? dayStr : nil))
         }
@@ -149,7 +171,8 @@ enum ImportEngine {
             sessionsCreated += 1
 
             for (order, entry) in dayRows.enumerated() {
-                let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: entry.targetReps, order: order)
+                let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: entry.targetReps,
+                                      order: order, goalType: entry.goalType)
                 log.session = session
                 context.insert(log)
 
@@ -160,11 +183,22 @@ enum ImportEngine {
                     setsImported += 1
                 }
 
-                if entry.targetReps.isEmpty {
-                    ExerciseDef.ensureAnyVariantExists(name: entry.exerciseName, knownDefs: &knownDefs, context: context)
-                } else {
-                    ExerciseDef.ensureVariantExists(name: entry.exerciseName, targetReps: entry.targetReps,
-                                                    knownDefs: &knownDefs, context: context)
+                switch entry.goalType {
+                case .repTotal(let target):
+                    if let def = knownDefs[entry.exerciseName] {
+                        def.addRepTotalTarget(target)
+                    } else {
+                        let def = ExerciseDef(name: entry.exerciseName, repTotalTargets: [target])
+                        context.insert(def)
+                        knownDefs[entry.exerciseName] = def
+                    }
+                case .fixedSets:
+                    if entry.targetReps.isEmpty {
+                        ExerciseDef.ensureAnyVariantExists(name: entry.exerciseName, knownDefs: &knownDefs, context: context)
+                    } else {
+                        ExerciseDef.ensureVariantExists(name: entry.exerciseName, targetReps: entry.targetReps,
+                                                        knownDefs: &knownDefs, context: context)
+                    }
                 }
             }
         }
@@ -222,6 +256,17 @@ enum ImportEngine {
                 return f
             }
     }()
+
+    /// Recognizes a "Sets" field written as a rep-total goal, e.g. "40
+    /// total" or "40 Total" — anything else (a slash-separated scheme, or
+    /// blank) isn't a rep total.
+    private static func parseRepTotalTarget(_ raw: String) -> Int? {
+        let lower = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        guard lower.hasSuffix("total") else { return nil }
+        let numberPart = lower.dropLast("total".count).trimmingCharacters(in: .whitespaces)
+        guard let target = Int(numberPart), target > 0 else { return nil }
+        return target
+    }
 
     private static func parseDate(_ s: String) -> Date? {
         if let iso = ISO8601DateFormatter().date(from: s) { return iso }
