@@ -258,6 +258,7 @@ struct TodayView: View {
                           systemImage: day.isRest ? "figure.walk" : "play.fill")
                         .font(.subheadline)
                 }
+                .padding(.top, day.isRest ? 6 : 0)
             }
         }
         .padding(.vertical, 2)
@@ -305,6 +306,8 @@ struct RestDayLogView: View {
     @State private var activityName = ""
     @State private var distanceText = ""
     @State private var distanceUnit = "mi"
+    private enum Field { case activityName, distance }
+    @FocusState private var focusedField: Field?
 
     private var todaysActivities: [RestDayActivity] {
         allActivities.filter { Calendar.current.isDateInToday($0.date) }
@@ -321,9 +324,11 @@ struct RestDayLogView: View {
         Form {
             Section("Cardio / Activity") {
                 TextField("e.g. Walk, Bike Ride, Yoga", text: $activityName)
+                    .focused($focusedField, equals: .activityName)
                 HStack {
                     TextField("Distance (optional)", text: $distanceText)
                         .keyboardType(.decimalPad)
+                        .focused($focusedField, equals: .distance)
                     Picker("Unit", selection: $distanceUnit) {
                         Text("mi").tag("mi")
                         Text("km").tag("km")
@@ -394,6 +399,7 @@ struct RestDayLogView: View {
     }
 
     private func logActivity() {
+        focusedField = nil
         let trimmed = activityName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         let distance = Double(distanceText)
