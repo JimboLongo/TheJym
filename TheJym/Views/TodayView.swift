@@ -21,6 +21,7 @@ struct TodayView: View {
 
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
+    @State private var statsPhase: Phase?
     @State private var quickJumpDay: PhaseDay?
     @State private var expandedDayIDs: Set<PersistentIdentifier> = []
     @State private var startingQuickWorkout: PhaseDay?
@@ -71,6 +72,9 @@ struct TodayView: View {
             }
             .navigationDestination(item: $startingQuickWorkout) { day in
                 WorkoutLogView(phase: nil, day: day)
+            }
+            .navigationDestination(item: $statsPhase) { phase in
+                PhaseStatsView(phase: phase)
             }
         }
     }
@@ -146,29 +150,38 @@ struct TodayView: View {
     @ViewBuilder
     private func activePhaseSections(_ phase: Phase) -> some View {
         Section {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Phase \(phase.number)").font(.title2.bold())
-                    Spacer()
-                    Text(phase.summary)
-                        .font(.system(.caption, design: .monospaced))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(.thinMaterial, in: Capsule())
-                }
-                ProgressView(value: Double(phase.filledSlotCount),
-                             total: Double(phase.trainingDaysPerCycle * phase.totalCycles))
-                HStack {
-                    Text("Cycle \(phase.currentCycle) of \(phase.totalCycles)")
-                    if settings?.deloadWeeksEnabled == true, phase.deloadCycle == phase.currentCycle {
-                        Label("Deload", systemImage: "arrow.down.heart")
-                            .foregroundStyle(.orange)
+            Button {
+                statsPhase = phase
+            } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Phase \(phase.number)").font(.title2.bold())
+                        Spacer()
+                        Text(phase.summary)
+                            .font(.system(.caption, design: .monospaced))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.thinMaterial, in: Capsule())
                     }
-                    Spacer()
+                    ProgressView(value: Double(phase.filledSlotCount),
+                                 total: Double(phase.trainingDaysPerCycle * phase.totalCycles))
+                    HStack {
+                        Text("Cycle \(phase.currentCycle) of \(phase.totalCycles)")
+                        if settings?.deloadWeeksEnabled == true, phase.deloadCycle == phase.currentCycle {
+                            Label("Deload", systemImage: "arrow.down.heart")
+                                .foregroundStyle(.orange)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                    cycleSlotChecklist(phase)
                 }
-                .font(.caption)
-                cycleSlotChecklist(phase)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 4)
+            .buttonStyle(.plain)
         }
 
         Section("Your Cycle") {
@@ -480,5 +493,106 @@ struct RestDayLogView: View {
         }
         try? context.save()
         exercises = [ExDraft()]
+    }
+}
+
+// MARK: - Per-Phase stats screen
+
+/// Stats scoped to one specific Phase: when it started, its best
+/// consistency streak while it was (or has been) running, cycle progress,
+/// and each exercise's top set logged during it.
+struct PhaseStatsView: View {
+    let phase: Phase
+    @Query(sort: \ActiveRecovery.date) private var activeRecoveries: [ActiveRecovery]
+
+    private struct TopSet: Identifiable {
+        let id = UUID()
+        let exerciseName: String
+        let summary: String
+        let date: Date?
+    }
+
+    /// Real, exercise-bearing sessions logged under this specific phase.
+    private var phaseSessions: [WorkoutSession] {
+        phase.sessions.filter { !$0.exerciseLogs.isEmpty }
+    }
+
+    private var completedCycles: Int {
+        phase.filledSlotCount / max(phase.trainingDaysPerCycle, 1)
+    }
+
+    /// Best rest-bank streak achieved during this phase's own timeframe,
+    /// using the phase's own split-derived earn rate throughout — an
+    /// inactive/completed phase is bounded at its last logged session
+    /// rather than walking all the way to today.
+    private var bestStreak: Int {
+        let dates = phaseSessions.map(\.date)
+            + activeRecoveries.filter { $0.date >= phase.startDate }.map(\.date)
+        guard !dates.isEmpty else { return 0 }
+        let end = phase.isActive ? Date() : (dates.max() ?? phase.startDate)
+        let ratePeriods = [StatsEngine.RatePeriod(start: phase.startDate, earnRate: phase.restBankEarnRate)]
+        return StatsEngine.computeRestBank(creditedDates: dates, ratePeriods: ratePeriods, now: end).maxStreak
+    }
+
+    /// One entry per exercise logged in this phase — its best session, by
+    /// total weight moved (fixedSets) or fewest sets to reach the target
+    /// (repTotal, falling back to total weight moved if never reached).
+    private var topSets: [TopSet] {
+        let logs = phaseSessions.flatMap(\.exerciseLogs).filter { !$0.sets.isEmpty }
+        let grouped = Dictionary(grouping: logs, by: \.exerciseName)
+        return grouped.keys.sorted().compactMap { name -> TopSet? in
+            guard let group = grouped[name], let first = group.first else { return nil }
+            switch first.goalType {
+            case .fixedSets:
+                guard let best = group.max(by: { $0.totalWeightMoved < $1.totalWeightMoved }) else { return nil }
+                return TopSet(exerciseName: name, summary: PaceEngine.weightsSummaryString(for: best),
+                              date: best.session?.date)
+            case .repTotal(let target):
+                guard let best = PaceEngine.bestRepTotalLog(among: group) else { return nil }
+                let summary = best.repTotalReached
+                    ? "\(best.sortedSets.count) set\(best.sortedSets.count == 1 ? "" : "s") to \(target) reps"
+                    : "\(best.repTotalSoFar)/\(target) reps (unfinished)"
+                return TopSet(exerciseName: name, summary: summary, date: best.session?.date)
+            }
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                LabeledContent("Started", value: Formatters.date.string(from: phase.startDate))
+                LabeledContent("Status", value: phase.isActive ? "Active" : (phase.isComplete ? "Complete" : "Inactive"))
+                LabeledContent("Cycles Completed", value: "\(completedCycles) of \(phase.totalCycles)")
+                LabeledContent("Best Streak", value: "\(bestStreak) day\(bestStreak == 1 ? "" : "s")")
+                LabeledContent("Workouts Logged", value: "\(phaseSessions.count)")
+            } header: {
+                Text("Phase \(phase.number)")
+            } footer: {
+                Text(phase.summary)
+            }
+
+            Section("Top Sets") {
+                if topSets.isEmpty {
+                    Text("Nothing logged in this phase yet.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                } else {
+                    ForEach(topSets) { top in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(top.exerciseName).font(.headline)
+                            Text(top.summary)
+                                .font(.system(.subheadline, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            if let date = top.date {
+                                Text(Formatters.date.string(from: date))
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Phase \(phase.number) Stats")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

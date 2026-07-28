@@ -135,7 +135,7 @@ enum PaceEngine {
 
     /// Prefers whichever log reached the target in the fewest sets; if none
     /// reached it yet, falls back to the best attempt by total weight moved.
-    private static func bestRepTotalLog(among logs: [ExerciseLog]) -> ExerciseLog? {
+    static func bestRepTotalLog(among logs: [ExerciseLog]) -> ExerciseLog? {
         let reached = logs.filter(\.repTotalReached)
         if let best = reached.min(by: { $0.sortedSets.count < $1.sortedSets.count }) {
             return best

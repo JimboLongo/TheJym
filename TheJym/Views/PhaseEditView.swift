@@ -136,7 +136,7 @@ struct PhaseDayEditView: View {
         Form {
             Section("Exercises") {
                 ForEach(sortedExercises, id: \.persistentModelID) { pe in
-                    PlannedExerciseRow(pe: pe)
+                    PlannedExerciseRow(pe: pe, exerciseDefs: exerciseDefs)
                 }
                 .onDelete { idx in
                     let sorted = sortedExercises
@@ -175,14 +175,31 @@ struct PhaseDayEditView: View {
 }
 
 struct PlannedExerciseRow: View {
+    @Environment(\.modelContext) private var context
     @Bindable var pe: PlannedExercise
+    let exerciseDefs: [ExerciseDef]
 
-    @State private var repsText = ""
-    @State private var repTotalTargetText = ""
+    @State private var showingSetPicker = false
+    @State private var showingAddSet = false
+
+    private var def: ExerciseDef? {
+        exerciseDefs.first { $0.name == pe.exerciseName }
+    }
 
     private var isRepTotal: Bool {
         if case .repTotal = pe.goalType { return true }
         return false
+    }
+
+    /// What's currently planned — a rep scheme or a rep-total target,
+    /// formatted the same as the sets picker's own options.
+    private var planSummary: String {
+        switch pe.goalType {
+        case .fixedSets:
+            return pe.targetReps.isEmpty ? "Choose a set…" : pe.targetReps.map(String.init).joined(separator: "/")
+        case .repTotal(let target):
+            return "\(target) total reps"
+        }
     }
 
     var body: some View {
@@ -190,35 +207,72 @@ struct PlannedExerciseRow: View {
             TextField("Exercise name", text: $pe.exerciseName)
                 .font(.headline)
 
-            // Goal kind (Fixed Sets vs. Rep Total) is set once on the
-            // exercise itself, in the Exercises tab — this row just shows
-            // whichever field that kind needs.
-            if isRepTotal {
+            // Tap to switch between this exercise's saved sets/rep-totals,
+            // or add a new one — handled exactly like a normal set, just
+            // based on a running total instead of a fixed scheme.
+            Button {
+                showingSetPicker = true
+            } label: {
                 HStack {
-                    Text("Target reps").font(.subheadline)
-                    TextField("e.g. 40", text: $repTotalTargetText)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
-                        .onChange(of: repTotalTargetText) { _, new in
-                            pe.goalType = .repTotal(target: Int(new) ?? 0)
-                        }
+                    Text(planSummary)
+                        .font(.system(.subheadline, design: .monospaced))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+
+            if isRepTotal {
                 Toggle("AI progresses rep total instead of weight", isOn: $pe.repTotalProgressesReps)
                     .font(.caption)
-            } else {
-                TextField("Reps e.g. 5/5/5/3/3/3", text: $repsText)
-                    .font(.system(.caption, design: .monospaced))
-                    .keyboardType(.numbersAndPunctuation)
-                    .onChange(of: repsText) { _, new in
-                        pe.targetReps = new.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-                    }
             }
         }
         .padding(.vertical, 2)
-        .onAppear {
-            repsText = pe.targetReps.map(String.init).joined(separator: "/")
-            if case .repTotal(let target) = pe.goalType { repTotalTargetText = String(target) }
+        .confirmationDialog(pe.exerciseName, isPresented: $showingSetPicker, titleVisibility: .visible) {
+            if let def {
+                ForEach(def.repSchemes, id: \.self) { reps in
+                    Button(reps.map(String.init).joined(separator: "/")) {
+                        pe.targetReps = reps
+                        pe.goalType = .fixedSets
+                    }
+                }
+                ForEach(def.repTotalTargets, id: \.self) { target in
+                    Button("\(target) total reps") {
+                        pe.targetReps = []
+                        pe.goalType = .repTotal(target: target)
+                    }
+                }
+            }
+            Button("Add New Set…") { showingAddSet = true }
+            Button("Cancel", role: .cancel) { }
+        }
+        .sheet(isPresented: $showingAddSet) {
+            AddSetSheet(exerciseName: pe.exerciseName) { goalType, reps in
+                let targetDef: ExerciseDef
+                if let def {
+                    targetDef = def
+                } else {
+                    targetDef = ExerciseDef(name: pe.exerciseName, isBodyweight: pe.isBodyweight)
+                    context.insert(targetDef)
+                }
+                switch goalType {
+                case .fixedSets:
+                    targetDef.addRepScheme(reps)
+                    pe.targetReps = reps
+                    pe.goalType = .fixedSets
+                case .repTotal(let target):
+                    targetDef.addRepTotalTarget(target)
+                    pe.targetReps = []
+                    pe.goalType = .repTotal(target: target)
+                }
+                try? context.save()
+                showingAddSet = false
+            }
         }
     }
 }
