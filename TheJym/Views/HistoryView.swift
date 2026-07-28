@@ -295,10 +295,19 @@ struct CSVFormatHelpView: View {
                     .textSelection(.enabled)
                 }
 
-                Section("Rep-Total Example") {
+                Section("Rep-Total Example (e.g. Pull-Up, bodyweight)") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Date,Phase,Day,Exercise,Sets,Weights,Reps")
                         Text("2026-01-05,2,Pull A,Pull-Up,40 total,0/0/0/0/0/0/0,6/5/5/4/4/3/3")
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                }
+
+                Section("Rest-Day Activity Example") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Date,Phase,Day,Exercise,Sets,Weights,Reps")
+                        Text("2026-01-06,,,Walk,rest,3.1mi,")
                     }
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
@@ -315,6 +324,8 @@ struct CSVFormatHelpView: View {
                           systemImage: "figure.strengthtraining.functional")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
                           systemImage: "questionmark.circle")
+                    Label("Write Sets as \"rest\" for a rest-day activity instead of an exercise — Exercise becomes the activity's name, Weights optionally holds a distance (e.g. \"3.1mi\"), Reps is unused. Counts toward the rest-bank streak, same as logging it live.",
+                          systemImage: "figure.walk")
                     Label("Phase is that phase's number; Day is the day's name (e.g. \"Push A\"), matched case-insensitively. If given and matched, the imported workout is attributed to that real Phase/Day, just like one logged live. Leave them out (or leave them unmatched) and the row still imports fine as a generic \"Imported\" entry.",
                           systemImage: "calendar.badge.checkmark")
                     Label("If a spreadsheet \"fixes\" a value like 12/12/12 into a date (12/12/2012, a leading '12/12/12, or a raw date serial like 41255), it's recovered automatically back to 12/12/12 — no need to clean it up first.",

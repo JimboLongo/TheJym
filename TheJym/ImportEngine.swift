@@ -33,6 +33,17 @@
 //  the most recent BodyWeightEntry on or before that row's date, plus the
 //  added weight given. Write 0 for no added weight beyond bodyweight.
 //
+//  For a rest-day activity (a walk, yoga, etc. — not a logged exercise),
+//  write Sets as "rest". Exercise becomes the activity's name; Weights
+//  optionally holds a distance (e.g. "3.1mi", "5 km" — plain "mi" if left
+//  as just a number); Reps is unused:
+//
+//    2026-01-06 |       |        | Walk        | rest      | 3.1mi                |
+//
+//  This creates both a standalone rest-day activity entry and a matching
+//  History entry, and counts toward the rest-bank streak, same as logging
+//  it live from a Rest day.
+//
 //  Phase is that phase's number; Day is the day's name (e.g. "Push A"),
 //  matched case-insensitively against that phase's days. If either is
 //  missing or doesn't match an existing Phase/PhaseDay, the row still
@@ -45,13 +56,16 @@ import Foundation
 import SwiftData
 
 enum ImportEngine {
+    enum ImportedRowKind {
+        case exercise(goalType: GoalType, targetReps: [Int], weights: [Double], reps: [Int])
+        /// Sets == "rest" — Weights holds an optional distance (e.g. "3.1mi").
+        case restActivity(distance: Double?, distanceUnit: String)
+    }
+
     struct ImportedEntry {
         let date: Date
-        let exerciseName: String
-        let goalType: GoalType     // .fixedSets (default) or .repTotal, from the "Sets" column
-        let targetReps: [Int]      // "Sets" column, e.g. [5,5,5,3,3] — empty for repTotal
-        let weights: [Double]      // "Weights" column
-        let reps: [Int]            // "Reps" column — actual reps achieved
+        let exerciseName: String   // exercise name, or the activity's name for a rest row
+        let kind: ImportedRowKind
         let phaseNumber: Int?      // optional "Phase" column
         let dayLabel: String?      // optional "Day" column, e.g. "Push A"
     }
@@ -112,6 +126,23 @@ enum ImportEngine {
 
             guard !name.isEmpty, let date = parseDate(dateStr) else { skipped += 1; continue }
 
+            let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
+            let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
+            let phaseNumber = phaseStr.flatMap { Int($0) }
+            let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
+
+            // "rest" (case-insensitive) in Sets marks a rest-day activity
+            // row instead of an exercise — Exercise is the activity's name,
+            // Weights optionally holds a distance (e.g. "3.1mi"), Reps is
+            // unused.
+            if setsStr.trimmingCharacters(in: .whitespaces).lowercased() == "rest" {
+                let (distance, unit) = parseDistance(weightsStr)
+                out.append(ImportedEntry(date: date, exerciseName: name,
+                                         kind: .restActivity(distance: distance, distanceUnit: unit),
+                                         phaseNumber: phaseNumber, dayLabel: matchedDayLabel))
+                continue
+            }
+
             // "40 total" (case-insensitive) marks this row as a rep-total
             // goal instead of a fixed rep scheme — everything else about
             // the row (Weights/Reps per set) works exactly the same.
@@ -128,13 +159,9 @@ enum ImportEngine {
             let reps = repsStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !weights.isEmpty, weights.count == reps.count else { skipped += 1; continue }
 
-            let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
-            let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
-
-            out.append(ImportedEntry(date: date, exerciseName: name, goalType: goalType,
-                                     targetReps: targetReps, weights: weights, reps: reps,
-                                     phaseNumber: phaseStr.flatMap { Int($0) },
-                                     dayLabel: (dayStr?.isEmpty == false) ? dayStr : nil))
+            out.append(ImportedEntry(date: date, exerciseName: name,
+                                     kind: .exercise(goalType: goalType, targetReps: targetReps, weights: weights, reps: reps),
+                                     phaseNumber: phaseNumber, dayLabel: matchedDayLabel))
         }
         return (out, skipped)
     }
@@ -160,12 +187,24 @@ enum ImportEngine {
             bodyWeights.last { $0.date <= date }?.weight
         }
 
+        func matchPhaseDay(phaseNumber: Int?, dayLabel: String?) -> (Phase?, PhaseDay?) {
+            let phase = phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+            let day = phase.flatMap { p in
+                dayLabel.flatMap { label in
+                    p.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
+                }
+            }
+            return (phase, day)
+        }
+
         struct GroupKey: Hashable {
             let day: Date
             let phaseNumber: Int?
             let dayLabel: String?
         }
-        let grouped = Dictionary(grouping: rows) { row in
+        let exerciseRows = rows.filter { if case .exercise = $0.kind { return true }; return false }
+        let restRows = rows.filter { if case .restActivity = $0.kind { return true }; return false }
+        let grouped = Dictionary(grouping: exerciseRows) { row in
             GroupKey(day: cal.startOfDay(for: row.date), phaseNumber: row.phaseNumber, dayLabel: row.dayLabel)
         }
 
@@ -173,12 +212,7 @@ enum ImportEngine {
         var setsImported = 0
 
         for (key, dayRows) in grouped.sorted(by: { $0.key.day < $1.key.day }) {
-            let matchedPhase = key.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
-            let matchedDay = matchedPhase.flatMap { phase in
-                key.dayLabel.flatMap { label in
-                    phase.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
-                }
-            }
+            let (matchedPhase, matchedDay) = matchPhaseDay(phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
             let session = WorkoutSession(date: key.day, day: matchedDay,
                                          dayLabel: key.dayLabel ?? "Imported", cycleNumber: 0)
             session.phase = matchedPhase
@@ -186,12 +220,13 @@ enum ImportEngine {
             sessionsCreated += 1
 
             for (order, entry) in dayRows.enumerated() {
+                guard case .exercise(let goalType, let targetReps, let weights, let reps) = entry.kind else { continue }
                 // isBodyweight only comes from an already-existing exercise
                 // (the import format has no such column of its own) —
                 // there's nothing else to derive it from for a brand-new name.
                 let isBW = knownDefs[entry.exerciseName]?.isBodyweight ?? false
-                let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: entry.targetReps,
-                                      order: order, isBodyweight: isBW, goalType: entry.goalType)
+                let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: targetReps,
+                                      order: order, isBodyweight: isBW, goalType: goalType)
                 log.session = session
                 context.insert(log)
 
@@ -199,7 +234,7 @@ enum ImportEngine {
                 // convention as live logging) — resolved against whatever
                 // BodyWeightEntry was on record as of this row's date.
                 let bw = isBW ? resolvedBodyweight(asOf: key.day) : nil
-                for (i, pair) in zip(entry.weights, entry.reps).enumerated() {
+                for (i, pair) in zip(weights, reps).enumerated() {
                     let set: SetLog
                     if isBW {
                         set = SetLog(index: i, weight: pair.0 + (bw ?? 0), reps: pair.1,
@@ -212,7 +247,7 @@ enum ImportEngine {
                     setsImported += 1
                 }
 
-                switch entry.goalType {
+                switch goalType {
                 case .repTotal(let target):
                     if let def = knownDefs[entry.exerciseName] {
                         def.addRepTotalTarget(target)
@@ -222,14 +257,41 @@ enum ImportEngine {
                         knownDefs[entry.exerciseName] = def
                     }
                 case .fixedSets:
-                    if entry.targetReps.isEmpty {
+                    if targetReps.isEmpty {
                         ExerciseDef.ensureAnyVariantExists(name: entry.exerciseName, knownDefs: &knownDefs, context: context)
                     } else {
-                        ExerciseDef.ensureVariantExists(name: entry.exerciseName, targetReps: entry.targetReps,
+                        ExerciseDef.ensureVariantExists(name: entry.exerciseName, targetReps: targetReps,
                                                         knownDefs: &knownDefs, context: context)
                     }
                 }
             }
+        }
+
+        // Rest-day activities: each row becomes both a standalone
+        // RestDayActivity record and a matching WorkoutSession/ExerciseLog/
+        // SetLog, so it shows up in History and counts toward the rest-bank
+        // streak — mirrors live logging (RestDayLogView.logActivity()).
+        // Phase is intentionally left nil so it never shifts the training
+        // cycle, even when Day matched a real Rest day.
+        for entry in restRows {
+            guard case .restActivity(let distance, let unit) = entry.kind else { continue }
+            context.insert(RestDayActivity(date: entry.date, name: entry.exerciseName,
+                                           distance: distance, distanceUnit: unit))
+
+            let (_, matchedDay) = matchPhaseDay(phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
+            let displayName = distance.map { "\(entry.exerciseName) (\(Formatters.trim($0)) \(unit))" } ?? entry.exerciseName
+            let session = WorkoutSession(date: entry.date, day: matchedDay,
+                                         dayLabel: entry.dayLabel ?? "Rest Day", cycleNumber: 0)
+            context.insert(session)
+            sessionsCreated += 1
+            let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
+            log.session = session
+            context.insert(log)
+            let set = SetLog(index: 0, weight: 0, reps: 1)
+            set.exerciseLog = log
+            context.insert(set)
+            setsImported += 1
+            ExerciseDef.ensureAnyVariantExists(name: displayName, knownDefs: &knownDefs, context: context)
         }
 
         try? context.save()
@@ -295,6 +357,17 @@ enum ImportEngine {
         let numberPart = lower.dropLast("total".count).trimmingCharacters(in: .whitespaces)
         guard let target = Int(numberPart), target > 0 else { return nil }
         return target
+    }
+
+    /// Parses a rest-activity row's optional Weights-column distance, e.g.
+    /// "3", "3.1mi", "5 km" — a leading number plus an optional unit suffix
+    /// (defaults to "mi" if no unit, or if the whole field is blank).
+    private static func parseDistance(_ raw: String) -> (Double?, String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return (nil, "mi") }
+        let numberPart = trimmed.prefix { $0.isNumber || $0 == "." }
+        let unitPart = trimmed.dropFirst(numberPart.count).trimmingCharacters(in: .whitespaces)
+        return (Double(numberPart), unitPart.isEmpty ? "mi" : unitPart)
     }
 
     private static func parseDate(_ s: String) -> Date? {
