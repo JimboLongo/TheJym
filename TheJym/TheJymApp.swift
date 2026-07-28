@@ -16,7 +16,8 @@ struct TheJymApp: App {
             AppSettings.self, Bar.self, ExerciseDef.self,
             Phase.self, PhaseDay.self, PlannedExercise.self,
             WorkoutSession.self, ExerciseLog.self, SetLog.self,
-            BodyWeightEntry.self, RestDayActivity.self
+            BodyWeightEntry.self, RestDayActivity.self,
+            ActiveRecovery.self, TrainingDaysPerWeekChange.self
         ])
     }
 }

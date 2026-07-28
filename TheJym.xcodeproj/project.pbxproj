@@ -6,8 +6,24 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		9C66067AC8F0815F729F01FB /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF9A4D0B81AD797D76A68E8D /* Foundation.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		53C3EAD31ED1AB63B5DCB729 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 44DED6D6301272C900A62B53 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 44DED6DD301272C900A62B53;
+			remoteInfo = TheJym;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		44DED6DE301272C900A62B53 /* TheJym.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TheJym.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		73CE5803734C05835F72F35D /* TheJymTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TheJymTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BF9A4D0B81AD797D76A68E8D /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -29,6 +45,13 @@
 			path = TheJym;
 			sourceTree = "<group>";
 		};
+		607E71C8ED6AA4AA640C629B /* TheJymTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			path = TheJymTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -36,6 +59,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		852C532027DF6923FCF5F1CA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9C66067AC8F0815F729F01FB /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -47,6 +78,8 @@
 			children = (
 				44DED6E0301272C900A62B53 /* TheJym */,
 				44DED6DF301272C900A62B53 /* Products */,
+				BE30BAB638EDCAA12E21B434 /* Frameworks */,
+				607E71C8ED6AA4AA640C629B /* TheJymTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -54,13 +87,51 @@
 			isa = PBXGroup;
 			children = (
 				44DED6DE301272C900A62B53 /* TheJym.app */,
+				73CE5803734C05835F72F35D /* TheJymTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		92A6D731E2773E77A3DFB513 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				BF9A4D0B81AD797D76A68E8D /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		BE30BAB638EDCAA12E21B434 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				92A6D731E2773E77A3DFB513 /* iOS */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0868CA45D4AE67D386AD664D /* TheJymTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EDEB1F25EC6EFA574CE6AE13 /* Build configuration list for PBXNativeTarget "TheJymTests" */;
+			buildPhases = (
+				22B05115F4D38F5F613603B8 /* Sources */,
+				852C532027DF6923FCF5F1CA /* Frameworks */,
+				4BCD99E47C1987BF4388E63E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F21F162838FD8ABDCF0E04E3 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				607E71C8ED6AA4AA640C629B /* TheJymTests */,
+			);
+			name = TheJymTests;
+			productName = TheJymTests;
+			productReference = 73CE5803734C05835F72F35D /* TheJymTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		44DED6DD301272C900A62B53 /* TheJym */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 44DED6EF301272C900A62B53 /* Build configuration list for PBXNativeTarget "TheJym" */;
@@ -77,8 +148,6 @@
 				44DED6E0301272C900A62B53 /* TheJym */,
 			);
 			name = TheJym;
-			packageProductDependencies = (
-			);
 			productName = TheJym;
 			productReference = 44DED6DE301272C900A62B53 /* TheJym.app */;
 			productType = "com.apple.product-type.application";
@@ -113,6 +182,7 @@
 			projectRoot = "";
 			targets = (
 				44DED6DD301272C900A62B53 /* TheJym */,
+				0868CA45D4AE67D386AD664D /* TheJymTests */,
 			);
 		};
 /* End PBXProject section */
@@ -125,9 +195,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		4BCD99E47C1987BF4388E63E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		22B05115F4D38F5F613603B8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		44DED6DA301272C900A62B53 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -136,6 +220,15 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F21F162838FD8ABDCF0E04E3 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = TheJym;
+			target = 44DED6DD301272C900A62B53 /* TheJym */;
+			targetProxy = 53C3EAD31ED1AB63B5DCB729 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		44DED6F0301272C900A62B53 /* Debug */ = {
@@ -327,6 +420,39 @@
 			};
 			name = Release;
 		};
+		69BE4216CC149107E6690BF6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = QJ4HB93XZ8;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimbo.TheJymTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TheJym.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TheJym";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6FAA02C610FD9F1B1B2AB310 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = QJ4HB93XZ8;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimbo.TheJymTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TheJym.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TheJym";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -344,6 +470,15 @@
 			buildConfigurations = (
 				44DED6F0301272C900A62B53 /* Debug */,
 				44DED6F1301272C900A62B53 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EDEB1F25EC6EFA574CE6AE13 /* Build configuration list for PBXNativeTarget "TheJymTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				69BE4216CC149107E6690BF6 /* Release */,
+				6FAA02C610FD9F1B1B2AB310 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

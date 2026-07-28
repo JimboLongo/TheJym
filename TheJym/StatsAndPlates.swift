@@ -12,8 +12,9 @@ import Foundation
 struct TrainingStats {
     var daysSinceStart: Int
     var daysLogged: Int
-    var currentStreak: Int      // consecutive logged days ending today/yesterday
+    var currentStreak: Int      // credited days since the rest bank last broke
     var maxStreak: Int
+    var bankBalance: Double     // current rest-bank balance, 0...2
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
 
@@ -30,6 +31,10 @@ struct TrainingStats {
     var perfectMonths: Int      // every scheduled training day that month was logged
     var bestMonthLabel: String? // e.g. "March 2026"
     var bestMonthWorkouts: Int  // workouts logged in that month
+
+    // Active-Phase-only stats (nil with no active phase).
+    var cyclePaceDelta: Int?        // actual sessions vs. floor(daysElapsed * pace)
+    var adherencePercent: Double?   // sessions logged / sessions scheduled to date
 }
 
 enum StatsEngine {
@@ -59,55 +64,30 @@ enum StatsEngine {
     static func compute(startDate: Date,
                         sessionDates: [Date],
                         restActivityDates: [Date] = [],
+                        activeRecoveryDates: [Date] = [],
                         phaseSchedules: [PhaseSchedule] = [],
+                        allPhases: [Phase] = [],
+                        activePhase: Phase? = nil,
+                        trainingDaysPerWeekChanges: [(date: Date, value: Int)] = [],
+                        defaultTrainingDaysPerWeek: Int = 3,
                         now: Date = .now) -> TrainingStats {
         let cal = Calendar.current
         let start = cal.startOfDay(for: startDate)
         let today = cal.startOfDay(for: now)
+        var iterations = 0
 
         let loggedDays = Set((sessionDates + restActivityDates).map { cal.startOfDay(for: $0) })
             .filter { $0 >= start && $0 <= today }
 
         let daysSinceStart = max(1, (cal.dateComponents([.day], from: start, to: today).day ?? 0) + 1)
 
-        // A day with nothing logged doesn't break a streak if it's a scheduled
-        // Rest day, or if it's today (not over yet) — it's simply skipped, as
-        // if it weren't part of the timeline. Any other empty day is a
-        // genuinely missed training day and breaks the streak.
-        func omittedIfEmpty(_ day: Date) -> Bool {
-            day == today || (isScheduledRestDay(day, schedules: phaseSchedules, cal: cal) ?? false)
-        }
-
-        // Max streak: walk forward from start to today.
-        var maxStreak = 0, run = 0, iterations = 0
-        var day = start
-        while day <= today, iterations < 20_000 {
-            iterations += 1
-            if loggedDays.contains(day) {
-                run += 1
-                maxStreak = max(maxStreak, run)
-            } else if !omittedIfEmpty(day) {
-                run = 0
-            }
-            guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
-            day = next
-        }
-
-        // Current streak: walk backward from today, stopping at the first
-        // genuinely missed training day.
-        var current = 0
-        var cursor = today
-        iterations = 0
-        while cursor >= start, iterations < 20_000 {
-            iterations += 1
-            if loggedDays.contains(cursor) {
-                current += 1
-            } else if !omittedIfEmpty(cursor) {
-                break
-            }
-            guard let prev = cal.date(byAdding: .day, value: -1, to: cursor) else { break }
-            cursor = prev
-        }
+        let ratePeriods = buildRatePeriods(phases: allPhases,
+                                          trainingDaysPerWeekChanges: trainingDaysPerWeekChanges,
+                                          defaultTrainingDaysPerWeek: defaultTrainingDaysPerWeek)
+        let bank = computeRestBank(creditedDates: sessionDates + activeRecoveryDates,
+                                   ratePeriods: ratePeriods, now: now)
+        let cyclePace = activePhase.map { cyclePaceDelta(for: $0, now: now) }
+        let adherence = activePhase.map { adherencePercent(for: $0, now: now) }
 
         let daysLogged = loggedDays.count
         let pct = Double(daysLogged) / Double(daysSinceStart)
@@ -187,8 +167,9 @@ enum StatsEngine {
 
         return TrainingStats(daysSinceStart: daysSinceStart,
                              daysLogged: daysLogged,
-                             currentStreak: current,
-                             maxStreak: maxStreak,
+                             currentStreak: bank.currentStreak,
+                             maxStreak: bank.maxStreak,
+                             bankBalance: bank.bankBalance,
                              percentLogged: pct,
                              daysPerWeek: perWeek,
                              ytdWorkoutDays: ytdWorkoutDays,
@@ -198,7 +179,146 @@ enum StatsEngine {
                              perfectWeeks: perfectWeeks,
                              perfectMonths: perfectMonths,
                              bestMonthLabel: bestMonthLabel,
-                             bestMonthWorkouts: bestMonthWorkouts)
+                             bestMonthWorkouts: bestMonthWorkouts,
+                             cyclePaceDelta: cyclePace,
+                             adherencePercent: adherence)
+    }
+
+    // MARK: - Rest bank (replaces the old schedule-walking streak model)
+
+    /// A minimum floor so a 7-day-a-week trainer (or an all-training-day
+    /// split with no Rest day) isn't stuck earning ~0 and living on a
+    /// knife's edge where any missed day breaks the streak outright.
+    static let minEarnRate = 0.15
+    /// The bank never holds more than this many "days" of buffer.
+    static let bankCap = 2.0
+
+    static func earnRate(restDays: Int, trainingDays: Int) -> Double {
+        guard trainingDays > 0 else { return minEarnRate }
+        return max(minEarnRate, Double(restDays) / Double(trainingDays))
+    }
+
+    /// A window of time over which a constant earn rate applies. Periods are
+    /// meant to be sorted by `start` ascending; the rate in effect on a given
+    /// day is whichever period's `start` is the latest one at or before it.
+    struct RatePeriod {
+        let start: Date
+        let earnRate: Double
+    }
+
+    struct RestBankResult {
+        var currentStreak: Int
+        var maxStreak: Int
+        var bankBalance: Double
+    }
+
+    /// Builds the earn-rate timeline: an active Phase's split-derived rate
+    /// takes over from its start date forward (until a later Phase
+    /// supersedes it); everywhere else, the "Training days per week"
+    /// setting's rate applies, itself changing at whatever date it was
+    /// actually changed — never recomputing history retroactively.
+    static func buildRatePeriods(phases: [Phase],
+                                 trainingDaysPerWeekChanges: [(date: Date, value: Int)],
+                                 defaultTrainingDaysPerWeek: Int) -> [RatePeriod] {
+        let cal = Calendar.current
+        var events: [(date: Date, rate: Double)] = []
+
+        let sortedChanges = trainingDaysPerWeekChanges.sorted { $0.date < $1.date }
+        if sortedChanges.isEmpty {
+            events.append((date: .distantPast,
+                           rate: earnRate(restDays: 7 - defaultTrainingDaysPerWeek,
+                                         trainingDays: defaultTrainingDaysPerWeek)))
+        } else {
+            for change in sortedChanges {
+                events.append((date: change.date,
+                               rate: earnRate(restDays: 7 - change.value, trainingDays: change.value)))
+            }
+        }
+
+        for phase in phases.sorted(by: { $0.startDate < $1.startDate }) {
+            events.append((date: phase.startDate, rate: phase.restBankEarnRate))
+        }
+
+        return events
+            .sorted { $0.date < $1.date }
+            .map { RatePeriod(start: cal.startOfDay(for: $0.date), earnRate: $0.rate) }
+    }
+
+    /// Pure day-by-day walk of the rest-bank model. Bank starts at 1.0 on the
+    /// first credited day, capped at `bankCap`; each subsequent credited day
+    /// adds that day's earn rate, each uncredited day spends 1.0. The streak
+    /// (count of credited days since the last break) resets to 0 the moment
+    /// the bank drops below 0. Today is left pending — neither earned nor
+    /// spent — if nothing's logged yet, so it doesn't prematurely end things.
+    static func computeRestBank(creditedDates: [Date],
+                                ratePeriods: [RatePeriod],
+                                now: Date = .now) -> RestBankResult {
+        let cal = Calendar.current
+        let credited = Set(creditedDates.map { cal.startOfDay(for: $0) })
+        let today = cal.startOfDay(for: now)
+        guard let firstDay = credited.min() else {
+            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0)
+        }
+        let sortedPeriods = ratePeriods.sorted { $0.start < $1.start }
+
+        func rate(on day: Date) -> Double {
+            let covering = sortedPeriods.filter { $0.start <= day }.max { $0.start < $1.start }
+            return covering?.earnRate ?? (sortedPeriods.first?.earnRate ?? minEarnRate)
+        }
+
+        var bank = 0.0
+        var started = false
+        var streak = 0
+        var maxStreak = 0
+        var day = firstDay
+        var iterations = 0
+        while day <= today, iterations < 20_000 {
+            iterations += 1
+            let isToday = day == today
+            let isCredited = credited.contains(day)
+
+            if isToday && !isCredited { break }   // pending — stop without processing today
+
+            if isCredited {
+                bank = started ? min(bankCap, bank + rate(on: day)) : 1.0
+                started = true
+                streak += 1
+                maxStreak = max(maxStreak, streak)
+            } else {
+                bank -= 1.0
+                // Epsilon guards against floating-point residue (e.g. a
+                // repeating-decimal earn rate landing at -1e-16 instead of
+                // exactly 0) spuriously tripping a break right at the edge.
+                if bank < -1e-9 { streak = 0 }
+            }
+
+            guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return RestBankResult(currentStreak: streak, maxStreak: maxStreak, bankBalance: bank)
+    }
+
+    /// Required pace (workouts per calendar day) implied by the phase's own
+    /// split — one day-template slot per calendar day, so totalCycles cancel
+    /// out: pace = trainingDaysPerCycle / (days in one pass of the template).
+    static func cyclePaceDelta(for phase: Phase, now: Date = .now) -> Int {
+        let cal = Calendar.current
+        let daysElapsed = max(1, (cal.dateComponents([.day],
+            from: cal.startOfDay(for: phase.startDate), to: cal.startOfDay(for: now)).day ?? 0) + 1)
+        let pace = Double(phase.trainingDaysPerCycle) / Double(max(phase.orderedDays.count, 1))
+        let expected = Int(floor(Double(daysElapsed) * pace))
+        return phase.completedSessionCount - expected
+    }
+
+    /// Sessions logged ÷ sessions scheduled to date (same "scheduled to
+    /// date" quantity used by cyclePaceDelta), as a percentage.
+    static func adherencePercent(for phase: Phase, now: Date = .now) -> Double {
+        let cal = Calendar.current
+        let daysElapsed = max(1, (cal.dateComponents([.day],
+            from: cal.startOfDay(for: phase.startDate), to: cal.startOfDay(for: now)).day ?? 0) + 1)
+        let pace = Double(phase.trainingDaysPerCycle) / Double(max(phase.orderedDays.count, 1))
+        let expected = max(1, Int(floor(Double(daysElapsed) * pace)))
+        return Double(phase.completedSessionCount) / Double(expected) * 100
     }
 }
 

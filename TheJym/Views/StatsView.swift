@@ -16,22 +16,46 @@ struct StatsView: View {
     @Query(sort: \WorkoutSession.date) private var sessions: [WorkoutSession]
     @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
     @Query private var restActivities: [RestDayActivity]
+    @Query(sort: \ActiveRecovery.date) private var activeRecoveries: [ActiveRecovery]
+    @Query(sort: \TrainingDaysPerWeekChange.date) private var tdpwChanges: [TrainingDaysPerWeekChange]
     @Query private var phases: [Phase]
 
     @State private var newWeightText = ""
+    @State private var newActiveRecoveryType = ActiveRecoveryType.walk
 
     private var settings: AppSettings? { settingsList.first }
+    private var activePhase: Phase? { phases.first(where: \.isActive) }
+
+    /// Real, exercise-bearing sessions only — excludes the no-activity
+    /// backfilled Rest Day sessions, which shouldn't count as (or mask) a
+    /// genuinely missed training day anywhere in stats.
+    private var realSessionDates: [Date] {
+        sessions.filter { !$0.exerciseLogs.isEmpty }.map(\.date)
+    }
 
     private var stats: TrainingStats {
         StatsEngine.compute(startDate: settings?.trainingStartDate ?? .now,
-                            // Excludes no-activity backfilled Rest Day
-                            // sessions — those shouldn't count as, or mask,
-                            // a genuinely missed training day.
-                            sessionDates: sessions.filter { !$0.exerciseLogs.isEmpty }.map(\.date),
+                            sessionDates: realSessionDates,
                             restActivityDates: restActivities.map(\.date),
+                            activeRecoveryDates: activeRecoveries.map(\.date),
                             phaseSchedules: phases.map {
                                 StatsEngine.PhaseSchedule(startDate: $0.startDate, phase: $0)
-                            })
+                            },
+                            allPhases: phases,
+                            activePhase: activePhase,
+                            trainingDaysPerWeekChanges: tdpwChanges.map { (date: $0.date, value: $0.trainingDaysPerWeek) },
+                            defaultTrainingDaysPerWeek: settings?.trainingDaysPerWeek ?? 3)
+    }
+
+    private func logActiveRecovery() {
+        context.insert(ActiveRecovery(type: newActiveRecoveryType))
+        try? context.save()
+    }
+
+    private func setTrainingDaysPerWeek(_ value: Int) {
+        settings?.trainingDaysPerWeek = value
+        context.insert(TrainingDaysPerWeekChange(trainingDaysPerWeek: value))
+        try? context.save()
     }
 
     var body: some View {
@@ -49,8 +73,35 @@ struct StatsView: View {
                     statRow("Days logged", "\(stats.daysLogged)")
                     statRow("Current streak", "\(stats.currentStreak) 🔥")
                     statRow("Max streak", "\(stats.maxStreak)")
+                    statRow("Rest days banked", String(format: "%.1f", stats.bankBalance))
                     statRow("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100))
                     statRow("Days per week", String(format: "%.2f", stats.daysPerWeek))
+                    if let delta = stats.cyclePaceDelta {
+                        statRow("Cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")")
+                    }
+                    if let adherence = stats.adherencePercent {
+                        statRow("Adherence", String(format: "%.0f%%", adherence))
+                    }
+
+                    if activePhase == nil {
+                        Stepper("Training days per week: \(settings?.trainingDaysPerWeek ?? 3)",
+                               value: Binding(
+                                   get: { settings?.trainingDaysPerWeek ?? 3 },
+                                   set: { setTrainingDaysPerWeek($0) }),
+                               in: 1...7)
+                    }
+
+                    HStack {
+                        Picker("Type", selection: $newActiveRecoveryType) {
+                            ForEach(ActiveRecoveryType.allCases) { type in
+                                Text(type.label).tag(type)
+                            }
+                        }
+                        .labelsHidden()
+                        Spacer()
+                        Button("Log Active Recovery") { logActiveRecovery() }
+                            .buttonStyle(.borderedProminent)
+                    }
                 }
 
                 Section("Year / Month to Date") {

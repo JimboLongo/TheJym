@@ -43,6 +43,11 @@ final class AppSettings {
     var availablePlateSizes: [Double] = [45, 35, 25, 10, 5, 2.5, 1.25]   // plates you own, for the plate calculator
     var hasDumbbell125Attachment: Bool = false   // finer dumbbell-weight increments, used in AI weight suggestions
     var hasDumbbell25Attachment: Bool = false
+    /// Used to derive the rest-bank earn rate when there's no active Phase
+    /// to derive it from a split pattern instead. Changes are logged to
+    /// TrainingDaysPerWeekChange so past days keep the rate that was
+    /// actually in effect then.
+    var trainingDaysPerWeek: Int = 3
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }
@@ -229,6 +234,13 @@ final class Phase {
     var isComplete: Bool {
         completedSessionCount >= trainingDaysPerCycle * totalCycles
     }
+
+    /// This phase's own rest-bank earn rate, derived from its split pattern
+    /// (e.g. Push/Pull/Legs/Rest -> 1 rest day / 3 training days -> ~0.33).
+    var restBankEarnRate: Double {
+        let rest = orderedDays.count - trainingDaysPerCycle
+        return StatsEngine.earnRate(restDays: rest, trainingDays: trainingDaysPerCycle)
+    }
 }
 
 /// One day within a Phase's one-cycle template — either the fixed "Rest" or
@@ -366,6 +378,57 @@ final class RestDayActivity {
         self.name = name
         self.distance = distance
         self.distanceUnit = distanceUnit
+    }
+}
+
+// MARK: - Active recovery (rest-bank streak credit only)
+
+enum ActiveRecoveryType: Int, Codable, CaseIterable, Identifiable {
+    case walk = 0
+    case cardio = 1
+    case mobility = 2
+
+    var id: Int { rawValue }
+    var label: String {
+        switch self {
+        case .walk: return "Walk"
+        case .cardio: return "Cardio"
+        case .mobility: return "Mobility"
+        }
+    }
+}
+
+/// A logged "did something active today" entry that credits the rest-bank
+/// streak (see StatsEngine.computeRestBank) without touching workout history
+/// or pace comparisons — deliberately separate from RestDayActivity, which
+/// is a richer, named/timed log tied to a Phase's Rest day.
+@Model
+final class ActiveRecovery {
+    var date: Date
+    var typeRaw: Int
+
+    var type: ActiveRecoveryType {
+        get { ActiveRecoveryType(rawValue: typeRaw) ?? .walk }
+        set { typeRaw = newValue.rawValue }
+    }
+
+    init(date: Date = .now, type: ActiveRecoveryType) {
+        self.date = date
+        self.typeRaw = type.rawValue
+    }
+}
+
+/// Logs when the "Training days per week" setting changes, so the rest-bank
+/// engine can apply the rate that was actually in effect on each historical
+/// day instead of recomputing the past with today's value.
+@Model
+final class TrainingDaysPerWeekChange {
+    var date: Date
+    var trainingDaysPerWeek: Int
+
+    init(date: Date = .now, trainingDaysPerWeek: Int) {
+        self.date = date
+        self.trainingDaysPerWeek = trainingDaysPerWeek
     }
 }
 
