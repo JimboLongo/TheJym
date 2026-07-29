@@ -88,6 +88,16 @@ enum ImportEngine {
         let equipmentName: String? // optional "Equipment" column — "Bodyweight" or a Bar name
     }
 
+    /// "Rest" and "Rest Day" both mark a rest-day row — the app's own
+    /// backfilled no-activity sessions are labeled "Rest Day"
+    /// (TheJymApp.backfillRestDays), so a user filling in history by hand
+    /// naturally types that instead of the bare "Rest" the import docs ask
+    /// for.
+    private static func isRestLabel(_ label: String) -> Bool {
+        let lower = label.lowercased()
+        return lower == "rest" || lower == "rest day"
+    }
+
     struct ImportResult {
         var sessionsCreated: Int
         var setsImported: Int
@@ -149,7 +159,7 @@ enum ImportEngine {
         var seenLabels = Set<String>()
         for occurrence in occurrences.reversed() {
             let key = occurrence.label.lowercased()
-            let isRest = key == "rest"
+            let isRest = isRestLabel(occurrence.label)
             if !isRest {
                 if seenLabels.contains(key) { break }
                 seenLabels.insert(key)
@@ -162,13 +172,13 @@ enum ImportEngine {
         // template starts on a real training day. A cyclic pattern has no
         // true "start", so beginning at whichever training day comes first
         // is just as valid as the original order.
-        while let first = lastCycle.first, first.label.lowercased() == "rest" {
+        while let first = lastCycle.first, isRestLabel(first.label) {
             lastCycle.removeFirst()
         }
         guard !lastCycle.isEmpty else { return nil }
 
         return lastCycle.map { occurrence in
-            let isRest = occurrence.label.lowercased() == "rest"
+            let isRest = isRestLabel(occurrence.label)
             let exercises: [DetectedExercise] = occurrence.rows.compactMap { row in
                 guard case .exercise(let goalType, let targetReps, let weights, _) = row.kind else { return nil }
                 return DetectedExercise(name: row.exerciseName, goalType: goalType, targetReps: targetReps, weights: weights)
@@ -236,11 +246,11 @@ enum ImportEngine {
             let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
             let matchedEquipment = (equipmentStr?.isEmpty == false) ? equipmentStr : nil
 
-            // "Rest" (case-insensitive) in Day marks a rest-day activity row
-            // instead of an exercise — Exercise is the activity's name,
-            // Reps optionally holds a distance (e.g. "3.1mi"), Sets/Weights
-            // are unused. Requires a Day column in the header.
-            if dayStr?.lowercased() == "rest" {
+            // "Rest" or "Rest Day" (case-insensitive) in Day marks a rest-day
+            // activity row instead of an exercise — Exercise is the
+            // activity's name, Reps optionally holds a distance (e.g.
+            // "3.1mi"), Sets/Weights are unused. Requires a Day column.
+            if let dayStr, isRestLabel(dayStr) {
                 let (distance, unit) = parseDistance(repsStr)
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),

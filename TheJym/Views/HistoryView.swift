@@ -466,7 +466,7 @@ struct CSVFormatHelpView: View {
                           systemImage: "dumbbell")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
                           systemImage: "questionmark.circle")
-                    Label("Write Day as \"Rest\" for a rest-day activity instead of an exercise (requires a Day column) — Exercise becomes the activity's name, Reps optionally holds a distance (e.g. \"3.1mi\"), Sets/Weights are unused. Counts toward the rest-bank streak, same as logging it live.",
+                    Label("Write Day as \"Rest\" or \"Rest Day\" for a rest-day activity instead of an exercise (requires a Day column) — Exercise becomes the activity's name, Reps optionally holds a distance (e.g. \"3.1mi\"), Sets/Weights are unused. Counts toward the rest-bank streak, same as logging it live.",
                           systemImage: "figure.walk")
                     Label("Phase is that phase's number; Day is the day's name (e.g. \"Push A\"), matched case-insensitively. If given and matched, the imported workout is attributed to that real Phase/Day, just like one logged live. Leave them out (or leave them unmatched) and the row still imports fine as a generic \"Imported\" entry.",
                           systemImage: "calendar.badge.checkmark")
