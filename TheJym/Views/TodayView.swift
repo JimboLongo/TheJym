@@ -28,6 +28,10 @@ struct TodayView: View {
     @State private var showingNewQuickWorkout = false
     @State private var editingQuickWorkout: PhaseDay?
 
+    @State private var newWeightText = ""
+    @State private var newWeightDate = Date()
+    @FocusState private var weightFieldFocused: Bool
+
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
 
@@ -44,6 +48,7 @@ struct TodayView: View {
                     noPhaseSection
                 }
 
+                bodyWeightQuickAddSection
                 quickWorkoutsSection
             }
             .navigationTitle("Train")
@@ -77,6 +82,34 @@ struct TodayView: View {
                 PhaseStatsView(phase: phase)
             }
         }
+    }
+
+    /// Quick body-weight logging right from Train — saves straight into the
+    /// same BodyWeightEntry store the Weight tab reads from (no separate
+    /// copy), just a faster path than switching tabs.
+    private var bodyWeightQuickAddSection: some View {
+        Section("Body Weight") {
+            DatePicker("Date", selection: $newWeightDate, in: ...Date(), displayedComponents: .date)
+            HStack {
+                TextField("Weight (lbs)", text: $newWeightText)
+                    .keyboardType(.decimalPad)
+                    .focused($weightFieldFocused)
+                Button("Log") {
+                    logWeight()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(Double(newWeightText) == nil)
+            }
+        }
+    }
+
+    private func logWeight() {
+        guard let w = Double(newWeightText) else { return }
+        context.insert(BodyWeightEntry(date: newWeightDate, weight: w))
+        try? context.save()
+        newWeightText = ""
+        newWeightDate = Date()
+        weightFieldFocused = false
     }
 
     /// Standalone "Upper Day"-style workouts you can start or reuse without
@@ -187,8 +220,7 @@ struct TodayView: View {
         Section("Your Cycle") {
             if let nextDay = phase.nextDay {
                 featuredDayRow(phase, nextDay)
-                ForEach(phase.orderedDays.filter { $0.persistentModelID != nextDay.persistentModelID },
-                        id: \.persistentModelID) { day in
+                ForEach(upcomingDays(phase, after: nextDay), id: \.persistentModelID) { day in
                     collapsibleDayRow(phase, day)
                 }
             } else {
@@ -197,6 +229,20 @@ struct TodayView: View {
                 }
             }
         }
+    }
+
+    /// The rest of the cycle in actual upcoming order (including Rest days
+    /// interspersed where they really fall), starting right after `nextDay`
+    /// and wrapping back around to it — not just "every other day in
+    /// template order," which could show a day that's really 3 slots away
+    /// right after one that's next up in 1.
+    private func upcomingDays(_ phase: Phase, after nextDay: PhaseDay) -> [PhaseDay] {
+        let ordered = phase.orderedDays
+        guard let idx = ordered.firstIndex(where: { $0.persistentModelID == nextDay.persistentModelID }) else {
+            return ordered.filter { $0.persistentModelID != nextDay.persistentModelID }
+        }
+        let rotated = Array(ordered[(idx + 1)...] + ordered[..<idx])
+        return rotated
     }
 
     /// The day up next in the cycle: a play button to jump straight into it,
