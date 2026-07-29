@@ -29,24 +29,45 @@ struct ContentView: View {
     @Query private var exerciseDefs: [ExerciseDef]
     @Query(sort: \WorkoutSession.date) private var allSessions: [WorkoutSession]
 
+    @State private var selectedTab = 0
+
+    private struct TabInfo {
+        let title: String
+        let icon: String
+    }
+
+    private let tabs: [TabInfo] = [
+        TabInfo(title: "Train", icon: "dumbbell.fill"),
+        TabInfo(title: "Stats", icon: "chart.bar.fill"),
+        TabInfo(title: "Exercises", icon: "figure.strengthtraining.traditional"),
+        TabInfo(title: "Weight", icon: "scalemass.fill"),
+        TabInfo(title: "History", icon: "clock.arrow.circlepath"),
+        TabInfo(title: "Phases", icon: "calendar"),
+        TabInfo(title: "Equipment", icon: "circle.circle"),
+        TabInfo(title: "Settings", icon: "gearshape.fill"),
+    ]
+
     var body: some View {
-        TabView {
-            TodayView()
-                .tabItem { Label("Train", systemImage: "dumbbell.fill") }
-            StatsView()
-                .tabItem { Label("Stats", systemImage: "chart.bar.fill") }
-            ExercisesView()
-                .tabItem { Label("Exercises", systemImage: "figure.strengthtraining.traditional") }
-            BodyWeightView()
-                .tabItem { Label("Weight", systemImage: "scalemass.fill") }
-            HistoryView()
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-            PhasesView()
-                .tabItem { Label("Phases", systemImage: "calendar") }
-            EquipmentView()
-                .tabItem { Label("Equipment", systemImage: "circle.circle") }
-            SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+        VStack(spacing: 0) {
+            // All eight tabs' views stay resident (opacity/hit-testing
+            // toggled, never removed from the hierarchy) so switching tabs
+            // never resets a tab's own scroll position, in-progress text,
+            // or navigation stack — the same persistence a native TabView
+            // gives you for free.
+            ZStack {
+                TodayView().opacity(selectedTab == 0 ? 1 : 0).allowsHitTesting(selectedTab == 0)
+                StatsView().opacity(selectedTab == 1 ? 1 : 0).allowsHitTesting(selectedTab == 1)
+                ExercisesView().opacity(selectedTab == 2 ? 1 : 0).allowsHitTesting(selectedTab == 2)
+                BodyWeightView().opacity(selectedTab == 3 ? 1 : 0).allowsHitTesting(selectedTab == 3)
+                HistoryView().opacity(selectedTab == 4 ? 1 : 0).allowsHitTesting(selectedTab == 4)
+                PhasesView().opacity(selectedTab == 5 ? 1 : 0).allowsHitTesting(selectedTab == 5)
+                EquipmentView().opacity(selectedTab == 6 ? 1 : 0).allowsHitTesting(selectedTab == 6)
+                SettingsView().opacity(selectedTab == 7 ? 1 : 0).allowsHitTesting(selectedTab == 7)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+            scrollableTabBar
         }
         // Applies to every List/Form/ScrollView in the app (and sheets
         // presented from within it, which inherit this environment value) —
@@ -59,6 +80,42 @@ struct ContentView: View {
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
         }
+    }
+
+    /// A horizontally-scrollable tab strip standing in for the native
+    /// 5-tab-then-"More" bar — all eight tabs are always reachable by
+    /// sliding along the bar itself, with the selected one auto-scrolled
+    /// into view whenever it changes.
+    private var scrollableTabBar: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    ForEach(tabs.indices, id: \.self) { i in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { selectedTab = i }
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: tabs[i].icon)
+                                    .font(.system(size: 20))
+                                Text(tabs[i].title)
+                                    .font(.caption2)
+                            }
+                            .foregroundStyle(selectedTab == i ? Color.accentColor : Color.secondary)
+                            .frame(width: 72)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id(i)
+                    }
+                }
+            }
+            .onChange(of: selectedTab) { _, newValue in
+                withAnimation { proxy.scrollTo(newValue, anchor: .center) }
+            }
+        }
+        .frame(height: 56)
+        .background(.bar)
     }
 
     /// Any past calendar day (from your earliest logged session through
