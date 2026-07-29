@@ -225,7 +225,7 @@ struct TodayView: View {
                         HStack {
                             Text(pe.exerciseName)
                             Spacer()
-                            Text(pe.targetReps.map(String.init).joined(separator: "/"))
+                            Text(pe.setsSummaryText)
                                 .font(.system(.caption2, design: .monospaced))
                         }
                         .font(.caption2)
@@ -285,7 +285,7 @@ struct TodayView: View {
                             HStack {
                                 Text(pe.exerciseName)
                                 Spacer()
-                                Text(pe.targetReps.map(String.init).joined(separator: "/"))
+                                Text(pe.setsSummaryText)
                                     .font(.system(.caption2, design: .monospaced))
                             }
                             .font(.caption2)

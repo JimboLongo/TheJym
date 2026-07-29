@@ -230,6 +230,20 @@ struct WorkoutLogView: View {
                                   in: ...Date(), displayedComponents: .date)
                             .datePickerStyle(.graphical)
                             .labelsHidden()
+                            // Tapping a day is a complete, deliberate choice
+                            // on its own — closing the calendar immediately
+                            // (proceeding exactly like tapping Save Workout)
+                            // means there's no separate "confirm" tap needed
+                            // once you've actually picked a date.
+                            .onChange(of: loggedDate) { _, _ in
+                                showDatePicker = false
+                                if needsBodyWeightPrompt {
+                                    bodyWeightPromptText = currentBodyweight.map(Formatters.trim) ?? ""
+                                    showBodyWeightPrompt = true
+                                } else {
+                                    finishWorkout()
+                                }
+                            }
                         HStack {
                             Button("Cancel") { showDatePicker = false }
                             Spacer()

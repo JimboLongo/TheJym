@@ -163,7 +163,7 @@ struct SettingsView: View {
             for log in session.exerciseLogs.sorted(by: { $0.order < $1.order }) {
                 let sortedSets = log.sortedSets
                 guard !sortedSets.isEmpty else { continue }
-                let sets = log.targetReps.map(String.init).joined(separator: "/")
+                let sets = log.setsSummaryText
                 let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
                 let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
                 lines.append([dateStr, log.exerciseName, sets, weights, reps].map(csvField).joined(separator: ","))
@@ -218,7 +218,7 @@ struct NextPhasePlannerView: View {
                                         HStack {
                                             Text(slot.exerciseName).font(.headline)
                                             Spacer()
-                                            Text(slot.targetReps.map(String.init).joined(separator: "/"))
+                                            Text(slot.setsSummaryText)
                                                 .font(.system(.caption, design: .monospaced))
                                         }
                                         if !slot.startingWeights.isEmpty {

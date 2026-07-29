@@ -145,7 +145,7 @@ struct PhaseExerciseRow: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(plannedExercise.exerciseName).font(.subheadline.bold())
-                        Text(plannedExercise.targetReps.map(String.init).joined(separator: "/"))
+                        Text(plannedExercise.setsSummaryText)
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }

@@ -294,10 +294,18 @@ struct PhaseBuilderView: View {
                 dayDrafts.append(DayDraft(name: "Rest", isRest: true))
             } else {
                 let slots = seededPlan?[day.name] ?? []
-                let exercises = slots.map {
-                    DraftExercise(name: $0.exerciseName,
-                                  repsText: $0.targetReps.map(String.init).joined(separator: "/"),
-                                  weightsText: $0.startingWeights.map { Formatters.trim($0) }.joined(separator: "/"))
+                let exercises = slots.map { slot -> DraftExercise in
+                    var draft = DraftExercise(
+                        name: slot.exerciseName, repsText: "",
+                        weightsText: slot.startingWeights.map { Formatters.trim($0) }.joined(separator: "/"))
+                    switch slot.goalType {
+                    case .fixedSets:
+                        draft.repsText = slot.targetReps.map(String.init).joined(separator: "/")
+                    case .repTotal(let target):
+                        draft.goalType = .repTotal(target: target)
+                        draft.repTotalTargetText = String(target)
+                    }
+                    return draft
                 }
                 dayDrafts.append(DayDraft(name: day.name, isRest: false, exercises: exercises))
             }

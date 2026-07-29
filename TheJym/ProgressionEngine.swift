@@ -190,9 +190,21 @@ enum ProgressionEngine {
 
     struct PlannedSlot {
         var exerciseName: String
-        var targetReps: [Int]
+        var targetReps: [Int]      // fixedSets only — empty for repTotal
         var startingWeights: [Double]
         var rationale: String
+        var goalType: GoalType = .fixedSets
+
+        /// How this slot's target reads wherever a plain rep scheme would
+        /// otherwise show (e.g. "8/8/8") — "N Total" for repTotal instead.
+        var setsSummaryText: String {
+            switch goalType {
+            case .fixedSets:
+                return targetReps.map(String.init).joined(separator: "/")
+            case .repTotal(let target):
+                return "\(target) Total"
+            }
+        }
     }
 
     /// Build a Phase-N+1 plan from Phase-N results:
@@ -216,7 +228,8 @@ enum ProgressionEngine {
                     slots.append(PlannedSlot(exerciseName: planned.exerciseName,
                                              targetReps: planned.targetReps,
                                              startingWeights: planned.suggestedWeights,
-                                             rationale: "Carried over (no logs last phase)."))
+                                             rationale: "Carried over (no logs last phase).",
+                                             goalType: planned.goalType))
                     continue
                 }
 
@@ -228,15 +241,30 @@ enum ProgressionEngine {
                     slots.append(PlannedSlot(exerciseName: planned.exerciseName,
                                              targetReps: planned.targetReps,
                                              startingWeights: lastWeights,
-                                             rationale: "Progressing well (+\(Formatters.trim(lastAvg - firstAvg)) lb avg) — keep riding it."))
+                                             rationale: "Progressing well (+\(Formatters.trim(lastAvg - firstAvg)) lb avg) — keep riding it.",
+                                             goalType: planned.goalType))
                 } else {
-                    let newReps = flippedScheme(planned.targetReps)
-                    let factor = schemeIsLighter(newReps, than: planned.targetReps) ? 0.85 : 1.05
-                    let newWeights = lastWeights.map { roundToPlate($0 * factor) }
-                    slots.append(PlannedSlot(exerciseName: planned.exerciseName,
-                                             targetReps: newReps,
-                                             startingWeights: newWeights,
-                                             rationale: "Stalled last phase — changing rep scheme to vary the stimulus."))
+                    switch planned.goalType {
+                    case .fixedSets:
+                        let newReps = flippedScheme(planned.targetReps)
+                        let factor = schemeIsLighter(newReps, than: planned.targetReps) ? 0.85 : 1.05
+                        let newWeights = lastWeights.map { roundToPlate($0 * factor) }
+                        slots.append(PlannedSlot(exerciseName: planned.exerciseName,
+                                                 targetReps: newReps,
+                                                 startingWeights: newWeights,
+                                                 rationale: "Stalled last phase — changing rep scheme to vary the stimulus.",
+                                                 goalType: .fixedSets))
+                    case .repTotal(let target):
+                        // No rep scheme to flip — back off the weight
+                        // slightly instead to vary the stimulus while
+                        // keeping the same rep-total target.
+                        let newWeights = lastWeights.map { roundToPlate($0 * 0.925) }
+                        slots.append(PlannedSlot(exerciseName: planned.exerciseName,
+                                                 targetReps: [],
+                                                 startingWeights: newWeights,
+                                                 rationale: "Stalled last phase — backing off slightly to build back up.",
+                                                 goalType: .repTotal(target: target)))
+                    }
                 }
             }
             result[day.name] = slots

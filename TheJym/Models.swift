@@ -410,6 +410,18 @@ final class PlannedExercise {
             return "\(exerciseName)|\(target) total"
         }
     }
+
+    /// How this exercise's target reads wherever a plain rep scheme would
+    /// otherwise show (e.g. "8/8/8") — "N Total" for a repTotal exercise
+    /// instead, since it has no fixed per-set scheme to join.
+    var setsSummaryText: String {
+        switch goalType {
+        case .fixedSets:
+            return targetReps.map(String.init).joined(separator: "/")
+        case .repTotal(let target):
+            return "\(target) Total"
+        }
+    }
 }
 
 // MARK: - Logged workouts
@@ -515,6 +527,18 @@ final class ExerciseLog {
             return "\(exerciseName)|\(targetReps.map(String.init).joined(separator: "/"))"
         case .repTotal(let target):
             return "\(exerciseName)|\(target) total"
+        }
+    }
+
+    /// How this exercise's target reads wherever a plain rep scheme would
+    /// otherwise show (e.g. "8/8/8") — "N Total" for a repTotal exercise
+    /// instead, since it has no fixed per-set scheme to join.
+    var setsSummaryText: String {
+        switch goalType {
+        case .fixedSets:
+            return targetReps.map(String.init).joined(separator: "/")
+        case .repTotal(let target):
+            return "\(target) Total"
         }
     }
 
