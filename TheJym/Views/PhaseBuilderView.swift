@@ -23,6 +23,14 @@ struct PhaseBuilderView: View {
     /// If non-nil, seed the day structure + plan from an AI-planned or previous phase.
     var previousPhase: Phase?
     var seededPlan: [String: [ProgressionEngine.PlannedSlot]]? = nil
+    /// Alternative seed source: a ready-made day list (e.g. detected from an
+    /// imported file's last training cycle) — takes priority over
+    /// previousPhase when given, since there's no real Phase object behind it.
+    var seededDayDrafts: [DayDraft]? = nil
+    /// Called with the newly created Phase right before this view dismisses
+    /// — lets a caller that seeded from an import retroactively attribute
+    /// historical rows to it.
+    var onPhaseCreated: ((Phase) -> Void)? = nil
 
     @State private var cycles = 8
     @State private var dayDrafts: [DayDraft] = []
@@ -206,7 +214,8 @@ struct PhaseBuilderView: View {
                 }
             }
             .environment(\.editMode, .constant(.active))
-            .navigationTitle(previousPhase == nil && phases.isEmpty ? "Phase 1 Setup" : "New Phase")
+            .navigationTitle(seededDayDrafts != nil ? "Review Imported Phase"
+                             : (previousPhase == nil && phases.isEmpty ? "Phase 1 Setup" : "New Phase"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -273,7 +282,12 @@ struct PhaseBuilderView: View {
     }
 
     private func seed() {
-        guard dayDrafts.isEmpty, let prev = previousPhase else { return }
+        guard dayDrafts.isEmpty else { return }
+        if let seededDayDrafts {
+            dayDrafts = seededDayDrafts
+            return
+        }
+        guard let prev = previousPhase else { return }
         cycles = prev.totalCycles
         for day in prev.orderedDays {
             if day.isRest {
@@ -336,6 +350,7 @@ struct PhaseBuilderView: View {
             }
         }
         try? context.save()
+        onPhaseCreated?(phase)
         dismiss()
     }
 }

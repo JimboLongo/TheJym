@@ -51,6 +51,16 @@
 //  keeps whatever Day text was given as the label, if only the phase match
 //  failed).
 //
+//  If the file's Day column shows a repeating pattern (e.g. Push A / Pull A
+//  / Legs A / Rest, over and over), the importer detects the most recently
+//  completed cycle and drafts a whole Phase from it — HistoryView presents
+//  that draft (in the normal Phase Builder screen) for review/editing
+//  before anything is actually imported. Saving it retroactively attributes
+//  every row whose Day matches one of that Phase's days, not just the last
+//  cycle's — so a consistently-labeled import ends up as one continuous
+//  Phase covering its whole history, not just its tail end. A file with no
+//  Day column, or no repeated pattern, just imports the old way.
+//
 
 import Foundation
 import SwiftData
@@ -73,6 +83,75 @@ enum ImportEngine {
     struct ImportResult {
         var sessionsCreated: Int
         var setsImported: Int
+    }
+
+    // MARK: - Last-cycle pattern detection (import -> auto-drafted Phase)
+
+    struct DetectedExercise {
+        let name: String
+        let goalType: GoalType
+        let targetReps: [Int]      // fixedSets only
+        let weights: [Double]      // that occurrence's actual weights, seeded as the starting suggestion
+    }
+
+    struct DetectedDay {
+        let name: String
+        let isRest: Bool
+        let exercises: [DetectedExercise]   // empty for a rest day
+    }
+
+    /// Reconstructs the day-by-day training pattern from imported rows and
+    /// returns the most recently completed cycle's day template, in
+    /// chronological order (e.g. [Push A, Pull A, Legs A, Rest]) — each
+    /// day's exercises are exactly what was logged the last time that day
+    /// was trained, mirroring how Phase.cycleWalk finds cycle boundaries but
+    /// walking backward from the newest date instead of forward.
+    ///
+    /// Requires a Day column with real values on at least one row (that's
+    /// the only signal that identifies "which day is this") — returns nil
+    /// if none of the rows carry a usable label, since there's nothing to
+    /// detect a pattern from.
+    static func detectLastCyclePattern(from rows: [ImportedEntry]) -> [DetectedDay]? {
+        let labeled = rows.filter { $0.dayLabel != nil && !$0.dayLabel!.isEmpty }
+        guard !labeled.isEmpty else { return nil }
+
+        let cal = Calendar.current
+        struct Key: Hashable { let day: Date; let label: String }
+        var grouped: [Key: [ImportedEntry]] = [:]
+        var order: [Key] = []
+        for row in labeled {
+            guard let label = row.dayLabel else { continue }
+            let key = Key(day: cal.startOfDay(for: row.date), label: label)
+            if grouped[key] == nil { order.append(key) }
+            grouped[key, default: []].append(row)
+        }
+
+        struct Occurrence { let date: Date; let label: String; let rows: [ImportedEntry] }
+        let occurrences = order.map { key in Occurrence(date: key.day, label: key.label, rows: grouped[key] ?? []) }
+            .sorted { $0.date < $1.date }
+        guard !occurrences.isEmpty else { return nil }
+
+        // Walk backward from the most recent occurrence until a day label
+        // repeats — that trailing run (put back in chronological order) is
+        // the last full cycle.
+        var lastCycle: [Occurrence] = []
+        var seenLabels = Set<String>()
+        for occurrence in occurrences.reversed() {
+            let key = occurrence.label.lowercased()
+            if seenLabels.contains(key) { break }
+            seenLabels.insert(key)
+            lastCycle.insert(occurrence, at: 0)
+        }
+        guard !lastCycle.isEmpty else { return nil }
+
+        return lastCycle.map { occurrence in
+            let isRest = occurrence.label.lowercased() == "rest"
+            let exercises: [DetectedExercise] = occurrence.rows.compactMap { row in
+                guard case .exercise(let goalType, let targetReps, let weights, _) = row.kind else { return nil }
+                return DetectedExercise(name: row.exerciseName, goalType: goalType, targetReps: targetReps, weights: weights)
+            }
+            return DetectedDay(name: occurrence.label, isRest: isRest, exercises: exercises)
+        }
     }
 
     /// Parses CSV (or tab-delimited — pasting straight out of a spreadsheet
@@ -171,8 +250,17 @@ enum ImportEngine {
     /// the row's Weights/Reps pairs in order. A row's Phase/Day, if given and
     /// matched, links the session to that real Phase/PhaseDay; otherwise it
     /// falls back to an unattributed "Imported" entry.
+    /// `forcedPhase`, when given, overrides normal Phase-number matching —
+    /// every row is matched against `forcedPhase`'s own days by Day label
+    /// alone (case-insensitive), regardless of what's in the row's Phase
+    /// column, and attributed there whenever it matches. Used to retroactively
+    /// attribute imported historical days to a Phase auto-drafted from the
+    /// import itself, which obviously can't already appear in the file's
+    /// Phase column. Rows whose Day doesn't match any of forcedPhase's days
+    /// fall back to an unattributed "Imported" entry, same as always.
     @MainActor
-    static func importIntoStore(_ rows: [ImportedEntry], context: ModelContext) -> ImportResult {
+    static func importIntoStore(_ rows: [ImportedEntry], context: ModelContext,
+                                attributeTo forcedPhase: Phase? = nil) -> ImportResult {
         let cal = Calendar.current
         let existingDefs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
         var knownDefs = Dictionary(uniqueKeysWithValues: existingDefs.map { ($0.name, $0) })
@@ -188,6 +276,12 @@ enum ImportEngine {
         }
 
         func matchPhaseDay(phaseNumber: Int?, dayLabel: String?) -> (Phase?, PhaseDay?) {
+            if let forcedPhase {
+                let day = dayLabel.flatMap { label in
+                    forcedPhase.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
+                }
+                return day != nil ? (forcedPhase, day) : (nil, nil)
+            }
             let phase = phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
             let day = phase.flatMap { p in
                 dayLabel.flatMap { label in
@@ -271,19 +365,23 @@ enum ImportEngine {
         // RestDayActivity record and a matching WorkoutSession/ExerciseLog/
         // SetLog, so it shows up in History and counts toward the rest-bank
         // streak — mirrors live logging (RestDayLogView.logActivity()).
-        // Phase is intentionally left nil so it never shifts the training
-        // cycle, even when Day matched a real Rest day. Deliberately does
-        // NOT touch the Exercises tab — a rest activity isn't an exercise
-        // in the import file, so it shouldn't show up as one there.
+        // Phase is left nil (same as live logging, so it never shifts the
+        // training cycle) UNLESS forcedPhase is retroactively attributing
+        // this whole import to a Phase — rest days don't participate in
+        // cycle-slot math either way, so attributing them there too is safe
+        // and keeps the Phase's own history complete. Deliberately does NOT
+        // touch the Exercises tab — a rest activity isn't an exercise in
+        // the import file, so it shouldn't show up as one there.
         for entry in restRows {
             guard case .restActivity(let distance, let unit) = entry.kind else { continue }
             context.insert(RestDayActivity(date: entry.date, name: entry.exerciseName,
                                            distance: distance, distanceUnit: unit))
 
-            let (_, matchedDay) = matchPhaseDay(phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
+            let (matchedRestPhase, matchedDay) = matchPhaseDay(phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
             let displayName = distance.map { "\(entry.exerciseName) (\(Formatters.trim($0)) \(unit))" } ?? entry.exerciseName
             let session = WorkoutSession(date: entry.date, day: matchedDay,
                                          dayLabel: entry.dayLabel ?? "Rest Day", cycleNumber: 0)
+            session.phase = forcedPhase != nil ? matchedRestPhase : nil
             context.insert(session)
             sessionsCreated += 1
             let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)

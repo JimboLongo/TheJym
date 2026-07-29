@@ -32,6 +32,14 @@ struct HistoryView: View {
     @State private var searchText = ""
     @State private var editingSessionID: PersistentIdentifier?
 
+    // Import -> auto-drafted-Phase review flow: rows are held here between
+    // parsing and the user confirming/editing the detected Phase, since the
+    // actual store-import is deferred until the Phase exists to attribute to.
+    @State private var showingImportPhaseReview = false
+    @State private var seededPhaseDayDrafts: [PhaseBuilderView.DayDraft]?
+    @State private var pendingImportRows: [ImportEngine.ImportedEntry] = []
+    @State private var pendingImportSkipped = 0
+
     private var filteredSessions: [WorkoutSession] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return sessions }
@@ -93,6 +101,11 @@ struct HistoryView: View {
             }
             .sheet(isPresented: $showingImportHelp) {
                 CSVFormatHelpView()
+            }
+            .sheet(isPresented: $showingImportPhaseReview) {
+                PhaseBuilderView(previousPhase: nil, seededDayDrafts: seededPhaseDayDrafts) { newPhase in
+                    finishImportIntoPhase(newPhase)
+                }
             }
             .fileImporter(isPresented: $showingImporter,
                          allowedContentTypes: [.commaSeparatedText, .plainText, .text, .xlsxSpreadsheet]) { result in
@@ -264,11 +277,64 @@ struct HistoryView: View {
                 importResultMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Sets, Weights, and Reps columns — see the Import Format Guide for the exact layout."
                 return
             }
+            // If the file's Day column reveals a repeating training pattern,
+            // draft a Phase from the most recently completed cycle and let
+            // the user review/edit it before anything actually gets
+            // imported — once they save it, every row that matches one of
+            // its days gets attributed there.
+            if let detected = ImportEngine.detectLastCyclePattern(from: rows),
+               detected.contains(where: { !$0.isRest && !$0.exercises.isEmpty }) {
+                pendingImportRows = rows
+                pendingImportSkipped = skipped
+                seededPhaseDayDrafts = dayDrafts(from: detected)
+                showingImportPhaseReview = true
+                return
+            }
+
             let outcome = ImportEngine.importIntoStore(rows, context: context)
             var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s")."
             if skipped > 0 { msg += " Skipped \(skipped) row\(skipped == 1 ? "" : "s") that didn't parse." }
             importResultMessage = msg
         }
+    }
+
+    /// Builds Phase Builder's day-draft seed from a detected last-cycle
+    /// pattern — each exercise's starting weights come straight from that
+    /// occurrence's actual logged weights.
+    private func dayDrafts(from detected: [ImportEngine.DetectedDay]) -> [PhaseBuilderView.DayDraft] {
+        detected.map { day in
+            guard !day.isRest else {
+                return PhaseBuilderView.DayDraft(name: "Rest", isRest: true)
+            }
+            let exercises = day.exercises.map { e -> PhaseBuilderView.DraftExercise in
+                var draft = PhaseBuilderView.DraftExercise(
+                    name: e.name, repsText: "",
+                    weightsText: e.weights.map { Formatters.trim($0) }.joined(separator: "/"))
+                switch e.goalType {
+                case .fixedSets:
+                    draft.repsText = e.targetReps.map(String.init).joined(separator: "/")
+                case .repTotal(let target):
+                    draft.goalType = .repTotal(target: target)
+                    draft.repTotalTargetText = String(target)
+                }
+                return draft
+            }
+            return PhaseBuilderView.DayDraft(name: day.name, isRest: false, exercises: exercises)
+        }
+    }
+
+    /// Runs once the auto-drafted Phase has been reviewed/edited and saved —
+    /// the deferred real import, attributing every matching row to it.
+    private func finishImportIntoPhase(_ phase: Phase) {
+        let outcome = ImportEngine.importIntoStore(pendingImportRows, context: context, attributeTo: phase)
+        var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s"), attributed to Phase \(phase.number)."
+        if pendingImportSkipped > 0 {
+            msg += " Skipped \(pendingImportSkipped) row\(pendingImportSkipped == 1 ? "" : "s") that didn't parse."
+        }
+        importResultMessage = msg
+        pendingImportRows = []
+        pendingImportSkipped = 0
+        seededPhaseDayDrafts = nil
     }
 }
 
@@ -328,6 +394,8 @@ struct CSVFormatHelpView: View {
                           systemImage: "figure.walk")
                     Label("Phase is that phase's number; Day is the day's name (e.g. \"Push A\"), matched case-insensitively. If given and matched, the imported workout is attributed to that real Phase/Day, just like one logged live. Leave them out (or leave them unmatched) and the row still imports fine as a generic \"Imported\" entry.",
                           systemImage: "calendar.badge.checkmark")
+                    Label("If your Day column shows a repeating pattern (Push A / Pull A / Legs A / Rest, over and over), you'll be shown a Phase auto-drafted from the most recently completed cycle to review and edit before anything imports — saving it attributes every matching row in the file to it, not just the last cycle.",
+                          systemImage: "calendar.badge.clock")
                     Label("If a spreadsheet \"fixes\" a value like 12/12/12 into a date (12/12/2012, a leading '12/12/12, or a raw date serial like 41255), it's recovered automatically back to 12/12/12 — no need to clean it up first.",
                           systemImage: "wand.and.stars")
                 } header: {
