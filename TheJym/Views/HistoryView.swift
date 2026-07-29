@@ -452,8 +452,8 @@ struct CSVFormatHelpView: View {
                           systemImage: "calendar.badge.checkmark")
                     Label("If your Day column shows a repeating pattern (Push A / Pull A / Legs A / Rest, over and over), you'll be shown a Phase auto-drafted from the most recently completed cycle to review and edit before anything imports — saving it attributes every matching row in the file to it, not just the last cycle.",
                           systemImage: "calendar.badge.clock")
-                    Label("If a spreadsheet \"fixes\" a value like 12/12/12 into a date (12/12/2012, a leading '12/12/12, or a raw date serial like 41255), it's recovered automatically back to 12/12/12 — no need to clean it up first.",
-                          systemImage: "wand.and.stars")
+                    Label("Sets/Weights/Reps are read as plain text, exactly as the cell contains it. If your spreadsheet \"fixes\" a value like 12/12/12 into a date, format that column as Text before typing it, so it isn't mangled in the first place.",
+                          systemImage: "text.alignleft")
                 } header: {
                     Text("Notes")
                 }

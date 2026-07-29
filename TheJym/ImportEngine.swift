@@ -223,9 +223,9 @@ enum ImportEngine {
             guard fields.count > max(dateIdx, exerciseIdx, setsIdx, weightsIdx, repsIdx) else { skipped += 1; continue }
             let name = fields[exerciseIdx].trimmingCharacters(in: .whitespaces)
             let dateStr = fields[dateIdx].trimmingCharacters(in: .whitespaces)
-            let setsStr = recoverSlashValue(fields[setsIdx])
-            let weightsStr = recoverSlashValue(fields[weightsIdx])
-            let repsStr = recoverSlashValue(fields[repsIdx])
+            let setsStr = fields[setsIdx].trimmingCharacters(in: .whitespaces)
+            let weightsStr = fields[weightsIdx].trimmingCharacters(in: .whitespaces)
+            let repsStr = fields[repsIdx].trimmingCharacters(in: .whitespaces)
 
             guard !name.isEmpty, let date = parseDate(dateStr) else { skipped += 1; continue }
 
@@ -557,54 +557,6 @@ enum ImportEngine {
         return nil
     }
 
-    // MARK: - Sets/Weights/Reps recovery
-    //
-    // Spreadsheets love "fixing" a slash value like "12/12/12" by treating it
-    // as a date. Recover the intended value from whatever shape that mangling
-    // took: a leading apostrophe some sheets add to force literal text
-    // ('12/12/12), a fully-expanded date (12/12/2012), or a raw date serial
-    // number some exporters dump instead (41255) — all become "12/12/12".
-
-    private static func recoverSlashValue(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespaces)
-        if s.hasPrefix("'") { s.removeFirst() }
-
-        // Most common case: a spreadsheet "fixed" e.g. "8/8/8" into a plain
-        // slash- or dash-separated M/D/Y string like "8/8/2008" or "8-8-08".
-        // Pull the three numbers straight out of the string — no need to
-        // round-trip through an actual Date, which sidesteps any
-        // DateFormatter matching-order/leniency ambiguity entirely.
-        if let recovered = monthDaySlashYearFromComponents(s) {
-            return recovered
-        }
-        // A bare number might be a spreadsheet date serial rather than an
-        // actual rep/weight value — real reps/weights never get this large.
-        // Serials are timezone-agnostic day counts, so extract in UTC.
-        if let serial = serialInt(from: s), let date = excelSerialDate(serial) {
-            return monthDaySlashYear(date, calendar: utcCalendar)
-        }
-        // parseDate's formatters use the local timezone, so extract components
-        // the same way to avoid shifting the day for users east/west of UTC.
-        if let date = parseDate(s) {
-            return monthDaySlashYear(date, calendar: .current)
-        }
-        return s
-    }
-
-    /// Directly splits a "M/D/Y" or "M-D-Y" shaped string into its three
-    /// numeric components assuming MM/DD/YYYY — e.g. "8/8/2008" or
-    /// "12-12-2012" -> "8/8/8" / "12/12/12". Returns nil if `s` isn't shaped
-    /// like exactly three numbers with a plausible month (1-12) and day
-    /// (1-31), so it never touches an unrelated value like "13/13/13".
-    private static func monthDaySlashYearFromComponents(_ s: String) -> String? {
-        let parts = s.components(separatedBy: CharacterSet(charactersIn: "/-"))
-        guard parts.count == 3,
-              let month = Int(parts[0]), let day = Int(parts[1]), let year = Int(parts[2]),
-              month >= 1, month <= 12, day >= 1, day <= 31
-        else { return nil }
-        return "\(month)/\(day)/\(year % 100)"
-    }
-
     private static let utcCalendar: Calendar = {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC")!
@@ -618,12 +570,5 @@ enum ImportEngine {
         guard serial > 20_000, serial < 60_000 else { return nil }
         guard let epoch = utcCalendar.date(from: DateComponents(year: 1899, month: 12, day: 30)) else { return nil }
         return utcCalendar.date(byAdding: .day, value: serial, to: epoch)
-    }
-
-    /// "12/12/12" style: month/day/last-2-digits-of-year.
-    private static func monthDaySlashYear(_ date: Date, calendar: Calendar) -> String {
-        let c = calendar.dateComponents([.year, .month, .day], from: date)
-        let shortYear = (c.year ?? 0) % 100
-        return "\(c.month ?? 0)/\(c.day ?? 0)/\(shortYear)"
     }
 }
