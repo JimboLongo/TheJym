@@ -30,7 +30,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
     }
 
     @MainActor
-    func testForcedPhaseAttributionRightAfterCreation() {
+    func testForcedPhaseAttributionRightAfterCreation() async {
         let context = makeContext()
 
         // Mirror PhaseBuilderView.save() exactly: insert the Phase, then
@@ -62,7 +62,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
             equipmentName: nil
         )
 
-        let result = ImportEngine.importIntoStore([row], context: context, attributeTo: phase)
+        let result = await ImportEngine.importIntoStore([row], context: context, attributeTo: phase)
 
         XCTAssertEqual(result.sessionsCreated, 1, "Expected exactly one session to be created")
         XCTAssertEqual(result.setsImported, 3, "Expected all 3 sets to import")

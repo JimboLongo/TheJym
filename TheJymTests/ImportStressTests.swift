@@ -29,7 +29,7 @@ final class ImportStressTests: XCTestCase {
     }
 
     @MainActor
-    func testLargeHistoricalImportAttributedToForcedPhase() {
+    func testLargeHistoricalImportAttributedToForcedPhase() async {
         let context = makeContext()
 
         let dayNames = ["Upper A", "Lower A", "Rest", "Upper B", "Lower B", "Rest"]
@@ -67,7 +67,7 @@ final class ImportStressTests: XCTestCase {
         }
 
         let start = Date()
-        let result = ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
+        let result = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
         let elapsed = Date().timeIntervalSince(start)
 
         print("Imported \(result.sessionsCreated) sessions, \(result.setsImported) sets from \(rows.count) rows in \(elapsed)s")

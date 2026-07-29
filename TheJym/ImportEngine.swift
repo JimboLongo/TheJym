@@ -286,9 +286,19 @@ enum ImportEngine {
     /// import itself, which obviously can't already appear in the file's
     /// Phase column. Rows whose Day doesn't match any of forcedPhase's days
     /// fall back to an unattributed "Imported" entry, same as always.
+    /// A big historical import (hundreds of sessions, thousands of sets) run
+    /// as one giant unbroken block risked the main thread going unresponsive
+    /// long enough for iOS to background the app mid-import — since nothing
+    /// was saved until one final `context.save()` at the very end, an
+    /// interruption at any point lost the *entire* run, not just the tail.
+    /// Saving and yielding every `checkpointInterval` day-groups keeps the
+    /// run loop breathing (so the app is never seen as unresponsive) and
+    /// makes partial progress durable if it's ever interrupted anyway.
+    private static let checkpointInterval = 25
+
     @MainActor
     static func importIntoStore(_ rows: [ImportedEntry], context: ModelContext,
-                                attributeTo forcedPhase: Phase? = nil) -> ImportResult {
+                                attributeTo forcedPhase: Phase? = nil) async -> ImportResult {
         let cal = Calendar.current
         let existingDefs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
         var knownDefs = Dictionary(uniqueKeysWithValues: existingDefs.map { ($0.name, $0) })
@@ -363,7 +373,11 @@ enum ImportEngine {
         var sessionsCreated = 0
         var setsImported = 0
 
-        for (key, dayRows) in grouped.sorted(by: { $0.key.day < $1.key.day }) {
+        for (groupIndex, (key, dayRows)) in grouped.sorted(by: { $0.key.day < $1.key.day }).enumerated() {
+            if groupIndex > 0, groupIndex % checkpointInterval == 0 {
+                try? context.save()
+                await Task.yield()
+            }
             let (matchedPhase, matchedDay) = matchPhaseDay(phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
             let session = WorkoutSession(date: key.day, day: matchedDay,
                                          dayLabel: key.dayLabel ?? "Imported", cycleNumber: 0)
@@ -430,7 +444,11 @@ enum ImportEngine {
         // and keeps the Phase's own history complete. Deliberately does NOT
         // touch the Exercises tab — a rest activity isn't an exercise in
         // the import file, so it shouldn't show up as one there.
-        for entry in restRows {
+        for (restIndex, entry) in restRows.enumerated() {
+            if restIndex > 0, restIndex % checkpointInterval == 0 {
+                try? context.save()
+                await Task.yield()
+            }
             guard case .restActivity(let distance, let unit) = entry.kind else { continue }
             context.insert(RestDayActivity(date: entry.date, name: entry.exerciseName,
                                            distance: distance, distanceUnit: unit))

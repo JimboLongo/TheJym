@@ -35,6 +35,11 @@ struct HistoryView: View {
     @State private var importResultMessage: String?
     @State private var searchText = ""
     @State private var editingSessionID: PersistentIdentifier?
+    // A big import saves/yields periodically rather than running as one
+    // giant unbroken block (see ImportEngine.checkpointInterval) — this just
+    // gives the user something to look at while that's in progress instead
+    // of an apparently-frozen screen.
+    @State private var isImporting = false
 
     // Import -> auto-drafted-Phase review flow: rows are held here between
     // parsing and the user confirming/editing the detected Phase, since the
@@ -122,6 +127,13 @@ struct HistoryView: View {
             .headerProminence(.increased)
             .refreshable {
                 refreshHistory()
+            }
+            .overlay {
+                if isImporting {
+                    ProgressView("Importing…")
+                        .padding()
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
             }
             .navigationTitle("History")
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Filter by exercise")
@@ -345,10 +357,14 @@ struct HistoryView: View {
                 return
             }
 
-            let outcome = ImportEngine.importIntoStore(rows, context: context)
-            var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s")."
-            if skipped > 0 { msg += " Skipped \(skipped) row\(skipped == 1 ? "" : "s") that didn't parse." }
-            importResultMessage = msg
+            isImporting = true
+            Task { @MainActor in
+                let outcome = await ImportEngine.importIntoStore(rows, context: context)
+                var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s")."
+                if skipped > 0 { msg += " Skipped \(skipped) row\(skipped == 1 ? "" : "s") that didn't parse." }
+                importResultMessage = msg
+                isImporting = false
+            }
         }
     }
 
@@ -380,15 +396,19 @@ struct HistoryView: View {
     /// Runs once the auto-drafted Phase has been reviewed/edited and saved —
     /// the deferred real import, attributing every matching row to it.
     private func finishImportIntoPhase(_ phase: Phase) {
-        let outcome = ImportEngine.importIntoStore(pendingImportRows, context: context, attributeTo: phase)
-        var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s"), attributed to Phase \(phase.number)."
-        if pendingImportSkipped > 0 {
-            msg += " Skipped \(pendingImportSkipped) row\(pendingImportSkipped == 1 ? "" : "s") that didn't parse."
+        isImporting = true
+        Task { @MainActor in
+            let outcome = await ImportEngine.importIntoStore(pendingImportRows, context: context, attributeTo: phase)
+            var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s"), attributed to Phase \(phase.number)."
+            if pendingImportSkipped > 0 {
+                msg += " Skipped \(pendingImportSkipped) row\(pendingImportSkipped == 1 ? "" : "s") that didn't parse."
+            }
+            importResultMessage = msg
+            pendingImportRows = []
+            pendingImportSkipped = 0
+            seededPhaseDayDrafts = nil
+            isImporting = false
         }
-        importResultMessage = msg
-        pendingImportRows = []
-        pendingImportSkipped = 0
-        seededPhaseDayDrafts = nil
     }
 }
 
