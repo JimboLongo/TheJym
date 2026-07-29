@@ -68,6 +68,7 @@ struct ContentView: View {
     @Query private var settingsList: [AppSettings]
     @Query private var bars: [Bar]
     @Query private var exerciseDefs: [ExerciseDef]
+    @Query private var phases: [Phase]
 
     @State private var overflowTab: OverflowTab?
 
@@ -102,7 +103,26 @@ struct ContentView: View {
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
             ensureBandsBarExists()
+            fixPhaseStartDatesFromHistory()
         }
+    }
+
+    /// cyclePaceDelta/adherencePercent both assume every one of a Phase's
+    /// attributed sessions happened within daysElapsed of its startDate —
+    /// but a Phase auto-drafted from an import (or otherwise given
+    /// backdated history some other way) can end up with a startDate of
+    /// "today" while its real history goes back months, producing wildly
+    /// inflated readings (e.g. "14 days ahead" / "1400%" adherence).
+    /// Corrects any Phase whose startDate is later than its own earliest
+    /// attributed session.
+    private func fixPhaseStartDatesFromHistory() {
+        var changed = false
+        for phase in phases {
+            guard let earliest = phase.sessions.map(\.date).min(), earliest < phase.startDate else { continue }
+            phase.startDate = earliest
+            changed = true
+        }
+        if changed { try? context.save() }
     }
 
     /// bootstrap() only seeds Dumbbells (alongside the starter bars) on a

@@ -400,6 +400,18 @@ struct HistoryView: View {
         isImporting = true
         Task { @MainActor in
             let outcome = await ImportEngine.importIntoStore(pendingImportRows, context: context, attributeTo: phase)
+            // The Phase was created moments ago (startDate defaults to .now),
+            // but retroactive attribution can backdate its actual history by
+            // months — cyclePaceDelta/adherencePercent both assume every
+            // attributed session happened within daysElapsed of startDate,
+            // so left at "today" they compare a full history's worth of
+            // filled slots against ~1 day of expected pace (hence wildly
+            // inflated "N days ahead" / "1400%" readings). Backdate to the
+            // earliest session actually attributed here.
+            if let earliest = phase.sessions.map(\.date).min(), earliest < phase.startDate {
+                phase.startDate = earliest
+                try? context.save()
+            }
             WorkoutSession.backfillRestDays(context: context)
             var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s"), attributed to Phase \(phase.number)."
             if pendingImportSkipped > 0 {

@@ -433,6 +433,7 @@ struct RestDayLogView: View {
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \RestDayActivity.date, order: .reverse) private var allActivities: [RestDayActivity]
     @Query(sort: \ActiveRecovery.date, order: .reverse) private var allActiveRecoveries: [ActiveRecovery]
+    @Query(sort: \WorkoutSession.date, order: .reverse) private var allSessions: [WorkoutSession]
 
     let phase: Phase
     let day: PhaseDay
@@ -451,12 +452,30 @@ struct RestDayLogView: View {
         allActivities.filter { Calendar.current.isDateInToday($0.date) }
     }
 
+    /// Today's plain "I rested today" credit, if logged via the one-tap
+    /// button below — nil once it's been superseded by an activity, or if
+    /// nothing's been logged yet.
+    private var todaysActiveRecovery: ActiveRecovery? {
+        allActiveRecoveries.first { Calendar.current.isDateInToday($0.date) }
+    }
+
+    /// The no-activity History entry the plain button creates alongside the
+    /// ActiveRecovery credit — identified by today + this exact PhaseDay +
+    /// no exercise logs (an activity/exercise session always has at least
+    /// one), so it's found and removed as a pair.
+    private var todaysPlainRestSession: WorkoutSession? {
+        allSessions.first {
+            Calendar.current.isDateInToday($0.date)
+                && $0.day?.persistentModelID == day.persistentModelID
+                && $0.exerciseLogs.isEmpty
+        }
+    }
+
     /// True once today's already been credited as a plain rest day (either
     /// via the one-tap button below, or an activity/exercise logged here —
     /// no need to double-credit the streak for the same day).
     private var restDayAlreadyCredited: Bool {
-        allActiveRecoveries.contains { Calendar.current.isDateInToday($0.date) }
-            || !todaysActivities.isEmpty
+        todaysActiveRecovery != nil || !todaysActivities.isEmpty
     }
 
     private var canSaveExercises: Bool {
@@ -470,14 +489,19 @@ struct RestDayLogView: View {
         Form {
             Section {
                 Button {
-                    logPlainRestDay()
+                    if todaysActiveRecovery != nil {
+                        unlogPlainRestDay()
+                    } else {
+                        logPlainRestDay()
+                    }
                 } label: {
-                    Label(restDayAlreadyCredited ? "Rest Day Logged" : "Log Rest Day",
-                          systemImage: restDayAlreadyCredited ? "checkmark.circle.fill" : "moon.zzz.fill")
+                    Label(todaysActiveRecovery != nil ? "Rest Day Logged (tap to undo)"
+                          : (restDayAlreadyCredited ? "Activity Logged" : "Log Rest Day"),
+                          systemImage: todaysActiveRecovery != nil ? "checkmark.circle.fill" : "moon.zzz.fill")
                 }
-                .disabled(restDayAlreadyCredited)
+                .disabled(restDayAlreadyCredited && todaysActiveRecovery == nil)
             } footer: {
-                Text("One tap to credit today toward your rest-bank streak — no need to log a specific activity.")
+                Text("One tap to credit today toward your rest-bank streak and log it in History — no need to log a specific activity. Still today? Tap again to undo, or log an activity below, which automatically replaces this credit.")
             }
 
             Section("Cardio / Activity") {
@@ -556,11 +580,24 @@ struct RestDayLogView: View {
         .navigationTitle(day.name)
     }
 
-    /// One-tap "I rested today" credit — an ActiveRecovery entry, same
-    /// mechanism the rest-bank engine already reads (StatsEngine.compute's
-    /// activeRecoveryDates), just without requiring an activity name.
+    /// One-tap "I rested today" credit — an ActiveRecovery entry (same
+    /// mechanism the rest-bank engine already reads, StatsEngine.compute's
+    /// activeRecoveryDates) plus a no-activity WorkoutSession so it shows up
+    /// in History and Stats immediately, same as any other logged day.
     private func logPlainRestDay() {
         context.insert(ActiveRecovery(type: .rest))
+        let session = WorkoutSession(day: day, dayLabel: day.name, cycleNumber: 0)
+        context.insert(session)
+        try? context.save()
+    }
+
+    /// Undoes logPlainRestDay() — only meaningful while it's still today
+    /// (both lookups are scoped to today, so this is a no-op once the day's
+    /// passed). Called either directly (tapping the button again) or
+    /// automatically when a real activity supersedes the plain credit.
+    private func unlogPlainRestDay() {
+        if let recovery = todaysActiveRecovery { context.delete(recovery) }
+        if let session = todaysPlainRestSession { context.delete(session) }
         try? context.save()
     }
 
@@ -568,6 +605,10 @@ struct RestDayLogView: View {
         focusedField = nil
         let trimmed = activityName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
+        // A specific activity supersedes the generic "I rested today"
+        // credit — remove it (and its no-activity session) so today doesn't
+        // end up double-counted.
+        unlogPlainRestDay()
         let distance = Double(distanceText)
         context.insert(RestDayActivity(name: trimmed, distance: distance, distanceUnit: distanceUnit))
 
