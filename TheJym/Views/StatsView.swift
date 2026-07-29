@@ -21,6 +21,7 @@ struct StatsView: View {
     @Query private var phases: [Phase]
 
     @State private var newWeightText = ""
+    @State private var newWeightDate = Date()
 
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -88,14 +89,16 @@ struct StatsView: View {
                 }
 
                 Section("Body Weight") {
+                    DatePicker("Date", selection: $newWeightDate, in: ...Date(), displayedComponents: .date)
                     HStack {
-                        TextField("Today's weight (lbs)", text: $newWeightText)
+                        TextField("Weight (lbs)", text: $newWeightText)
                             .keyboardType(.decimalPad)
                         Button("Log") {
                             if let w = Double(newWeightText) {
-                                context.insert(BodyWeightEntry(weight: w))
+                                context.insert(BodyWeightEntry(date: newWeightDate, weight: w))
                                 try? context.save()
                                 newWeightText = ""
+                                newWeightDate = Date()
                             }
                         }
                         .buttonStyle(.borderedProminent)

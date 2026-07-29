@@ -24,6 +24,7 @@ extension UTType {
 struct HistoryView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
+    @Query(sort: \BodyWeightEntry.date, order: .reverse) private var bodyWeights: [BodyWeightEntry]
 
     @State private var showingAddPast = false
     @State private var showingImporter = false
@@ -60,29 +61,44 @@ struct HistoryView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if sessions.isEmpty {
-                    ContentUnavailableView("No workouts yet",
-                                           systemImage: "clock.arrow.circlepath",
-                                           description: Text("Your logged sessions will show up here."))
-                } else if filteredSessions.isEmpty {
-                    ContentUnavailableView.search(text: searchText)
-                } else {
-                    List {
-                        ForEach(filteredSessions, id: \.persistentModelID) { session in
-                            Section {
-                                ForEach(filteredLogs(for: session), id: \.persistentModelID) { log in
-                                    exerciseRow(log)
-                                }
-                            } header: {
-                                sessionHeader(session)
-                            }
+            List {
+                if !bodyWeights.isEmpty {
+                    Section("Body Weight") {
+                        ForEach(bodyWeights, id: \.persistentModelID) { entry in
+                            LabeledContent(Formatters.date.string(from: entry.date),
+                                          value: "\(Formatters.trim(entry.weight)) lbs")
+                        }
+                        .onDelete { idx in
+                            for i in idx { context.delete(bodyWeights[i]) }
+                            try? context.save()
                         }
                     }
-                    .listStyle(.plain)
-                    .headerProminence(.increased)
+                }
+
+                if sessions.isEmpty {
+                    Section {
+                        ContentUnavailableView("No workouts yet",
+                                               systemImage: "clock.arrow.circlepath",
+                                               description: Text("Your logged sessions will show up here."))
+                    }
+                } else if filteredSessions.isEmpty {
+                    Section {
+                        ContentUnavailableView.search(text: searchText)
+                    }
+                } else {
+                    ForEach(filteredSessions, id: \.persistentModelID) { session in
+                        Section {
+                            ForEach(filteredLogs(for: session), id: \.persistentModelID) { log in
+                                exerciseRow(log)
+                            }
+                        } header: {
+                            sessionHeader(session)
+                        }
+                    }
                 }
             }
+            .listStyle(.plain)
+            .headerProminence(.increased)
             .navigationTitle("History")
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Filter by exercise")
             .toolbar {
