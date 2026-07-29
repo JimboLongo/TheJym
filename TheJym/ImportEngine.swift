@@ -27,11 +27,18 @@
 //  This becomes a saved rep-total target on the exercise (alongside its
 //  saved rep schemes), matching however it's set up in the Exercises tab.
 //
-//  For a bodyweight exercise (already flagged as such in the Exercises tab
-//  — the import format has no column of its own for it), Weights means
-//  ADDED weight, same as live logging: each set's weight is resolved as
-//  the most recent BodyWeightEntry on or before that row's date, plus the
-//  added weight given. Write 0 for no added weight beyond bodyweight.
+//  For a bodyweight exercise, Weights means ADDED weight, same as live
+//  logging: each set's weight is resolved as the most recent BodyWeightEntry
+//  on or before that row's date, plus the added weight given. Write 0 for no
+//  added weight beyond bodyweight.
+//
+//  An optional Equipment column tags the exercise: write "Bodyweight" to
+//  flag it bodyweight (same effect as the Exercises-tab toggle — this is
+//  what makes Weights mean added weight per above), or any other name to tag
+//  it with that equipment, e.g. "Trap Bar" or "Cable Machine". A name that
+//  doesn't already exist in the Equipment tab still imports fine — it
+//  creates a new placeholder there (weight TBD, 2-sided) instead of being
+//  dropped, so just fill in its real weight afterward.
 //
 //  For a rest-day activity (a walk, yoga, etc. — not a logged exercise),
 //  write Day as "Rest" (requires a Day column). Exercise becomes the
@@ -78,6 +85,7 @@ enum ImportEngine {
         let kind: ImportedRowKind
         let phaseNumber: Int?      // optional "Phase" column
         let dayLabel: String?      // optional "Day" column, e.g. "Push A"
+        let equipmentName: String? // optional "Equipment" column — "Bodyweight" or a Bar name
     }
 
     struct ImportResult {
@@ -204,9 +212,10 @@ enum ImportEngine {
               let weightsIdx = header.firstIndex(where: { $0.hasPrefix("weight") }),
               let repsIdx = header.firstIndex(where: { $0.hasPrefix("rep") })
         else { return ([], 0) }
-        // Optional — the import still works fine without either of these.
+        // Optional — the import still works fine without any of these.
         let phaseIdx = header.firstIndex(where: { $0.hasPrefix("phase") })
         let dayIdx = header.firstIndex(where: { $0.hasPrefix("day") })
+        let equipmentIdx = header.firstIndex(where: { $0.hasPrefix("equipment") })
 
         var out: [ImportedEntry] = []
         var skipped = 0
@@ -222,8 +231,10 @@ enum ImportEngine {
 
             let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
+            let equipmentStr = equipmentIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let phaseNumber = phaseStr.flatMap { Int($0) }
             let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
+            let matchedEquipment = (equipmentStr?.isEmpty == false) ? equipmentStr : nil
 
             // "Rest" (case-insensitive) in Day marks a rest-day activity row
             // instead of an exercise — Exercise is the activity's name,
@@ -233,7 +244,8 @@ enum ImportEngine {
                 let (distance, unit) = parseDistance(repsStr)
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),
-                                         phaseNumber: phaseNumber, dayLabel: matchedDayLabel))
+                                         phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
+                                         equipmentName: nil))
                 continue
             }
 
@@ -255,7 +267,8 @@ enum ImportEngine {
 
             out.append(ImportedEntry(date: date, exerciseName: name,
                                      kind: .exercise(goalType: goalType, targetReps: targetReps, weights: weights, reps: reps),
-                                     phaseNumber: phaseNumber, dayLabel: matchedDayLabel))
+                                     phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
+                                     equipmentName: matchedEquipment))
         }
         return (out, skipped)
     }
@@ -279,9 +292,39 @@ enum ImportEngine {
         let cal = Calendar.current
         let existingDefs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
         var knownDefs = Dictionary(uniqueKeysWithValues: existingDefs.map { ($0.name, $0) })
+        let existingBars = (try? context.fetch(FetchDescriptor<Bar>())) ?? []
+        var knownBars = Dictionary(uniqueKeysWithValues: existingBars.map { ($0.name.lowercased(), $0) })
         let existingPhases = (try? context.fetch(FetchDescriptor<Phase>())) ?? []
         let bodyWeights = ((try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? [])
             .sorted { $0.date < $1.date }
+
+        /// "Bodyweight" flags the exercise bodyweight; any other non-blank
+        /// value names equipment to tag it with — an unrecognized name
+        /// creates a new placeholder Bar (weight 0/"TBD", 2-sided) rather
+        /// than being dropped, so the row still imports and the equipment
+        /// just needs its real weight filled in later.
+        func applyEquipment(_ equipmentName: String?, to exerciseName: String) {
+            guard let equipmentName, !equipmentName.isEmpty else { return }
+            let def = knownDefs[exerciseName] ?? {
+                let newDef = ExerciseDef(name: exerciseName)
+                context.insert(newDef)
+                knownDefs[exerciseName] = newDef
+                return newDef
+            }()
+            if equipmentName.lowercased() == "bodyweight" {
+                def.isBodyweight = true
+                return
+            }
+            let key = equipmentName.lowercased()
+            if let bar = knownBars[key] {
+                def.equipment = bar
+            } else {
+                let newBar = Bar(name: equipmentName, weight: 0, loadableSides: 2)
+                context.insert(newBar)
+                knownBars[key] = newBar
+                def.equipment = newBar
+            }
+        }
 
         /// Most recent BodyWeightEntry on or before `date` — same resolution
         /// rule live logging uses, so an imported bodyweight row lines up
@@ -330,9 +373,9 @@ enum ImportEngine {
 
             for (order, entry) in dayRows.enumerated() {
                 guard case .exercise(let goalType, let targetReps, let weights, let reps) = entry.kind else { continue }
-                // isBodyweight only comes from an already-existing exercise
-                // (the import format has no such column of its own) —
-                // there's nothing else to derive it from for a brand-new name.
+                applyEquipment(entry.equipmentName, to: entry.exerciseName)
+                // isBodyweight comes from an already-existing exercise, or
+                // this row's own Equipment column if it said "Bodyweight".
                 let isBW = knownDefs[entry.exerciseName]?.isBodyweight ?? false
                 let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: targetReps,
                                       order: order, isBodyweight: isBW, goalType: goalType)

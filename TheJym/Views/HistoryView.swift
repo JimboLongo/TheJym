@@ -381,7 +381,7 @@ struct CSVFormatHelpView: View {
             List {
                 Section {
                     Text("Works with a .csv file or an Excel/Sheets .xlsx workbook (first sheet).")
-                    Text("Required columns (any order): **Date**, **Exercise**, **Sets**, **Weights**, **Reps**. Optional: **Phase**, **Day**.")
+                    Text("Required columns (any order): **Date**, **Exercise**, **Sets**, **Weights**, **Reps**. Optional: **Phase**, **Day**, **Equipment**.")
                     Text("One row = one exercise logged on one day. Sets, Weights, and Reps are slash-separated, one value per set, in the same order.")
                         .foregroundStyle(.secondary)
                 }
@@ -397,8 +397,8 @@ struct CSVFormatHelpView: View {
 
                 Section("Rep-Total Example (e.g. Pull-Up, bodyweight)") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Date,Phase,Day,Exercise,Sets,Weights,Reps")
-                        Text("2026-01-05,2,Pull A,Pull-Up,40 total,0/0/0/0/0/0/0,6/5/5/4/4/3/3")
+                        Text("Date,Phase,Day,Exercise,Sets,Weights,Reps,Equipment")
+                        Text("2026-01-05,2,Pull A,Pull-Up,40 total,0/0/0/0/0/0/0,6/5/5/4/4/3/3,Bodyweight")
                     }
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
@@ -420,8 +420,10 @@ struct CSVFormatHelpView: View {
                           systemImage: "target")
                     Label("Weights and Reps are what you actually lifted, and must have the same number of slash-separated values as each other.",
                           systemImage: "checkmark.circle")
-                    Label("For an exercise already flagged Bodyweight in the Exercises tab, Weights means ADDED weight, not total load — it's resolved against whatever body weight was on record as of that row's date. Write 0 for no added weight.",
+                    Label("For a bodyweight exercise, Weights means ADDED weight, not total load — it's resolved against whatever body weight was on record as of that row's date. Write 0 for no added weight.",
                           systemImage: "figure.strengthtraining.functional")
+                    Label("Equipment tags the exercise: write \"Bodyweight\" to flag it bodyweight (same as the Exercises-tab toggle), or any equipment name (e.g. \"Trap Bar\"). A name that doesn't exist yet still imports fine — it creates a new placeholder in the Equipment tab (weight TBD, 2-sided) instead of being dropped.",
+                          systemImage: "dumbbell")
                     Label("Leave Sets blank if there was no real target — the exercise still gets logged, just without a saved Set.",
                           systemImage: "questionmark.circle")
                     Label("Write Day as \"Rest\" for a rest-day activity instead of an exercise (requires a Day column) — Exercise becomes the activity's name, Reps optionally holds a distance (e.g. \"3.1mi\"), Sets/Weights are unused. Counts toward the rest-bank streak, same as logging it live.",
