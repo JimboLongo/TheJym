@@ -24,7 +24,8 @@ extension UTType {
 struct HistoryView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
-    @Query(sort: \BodyWeightEntry.date, order: .reverse) private var bodyWeights: [BodyWeightEntry]
+    @Query(sort: \BodyWeightEntry.date) private var bodyWeights: [BodyWeightEntry]
+    @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
 
     @State private var showingAddPast = false
     @State private var showingImporter = false
@@ -59,22 +60,36 @@ struct HistoryView: View {
         return sorted.filter { $0.exerciseName.localizedCaseInsensitiveContains(trimmed) }
     }
 
+    /// Pull-to-refresh: an exercise logged before it was flagged bodyweight
+    /// in the Exercises tab recorded its full weight as a plain total, with
+    /// no added-weight/bodyweight split — this backfills that split for any
+    /// log whose exercise has since been tagged, by resolving the body
+    /// weight on record as of that session's date and treating the
+    /// difference as added weight. `weight` itself (the effective total)
+    /// never changes, so totals/comparisons stay correct either way; this
+    /// only fixes how it's displayed and keyed. Skips a log if no
+    /// BodyWeightEntry exists yet for that date — nothing to split against.
+    private func refreshHistory() {
+        let bodyweightNames = Set(exerciseDefs.filter(\.isBodyweight).map(\.name))
+        guard !bodyweightNames.isEmpty else { return }
+        var changed = false
+        for session in sessions {
+            for log in session.exerciseLogs where !log.isBodyweight && bodyweightNames.contains(log.exerciseName) {
+                guard let bw = bodyWeights.last(where: { $0.date <= session.date })?.weight else { continue }
+                log.isBodyweight = true
+                for set in log.sets {
+                    set.addedWeight = max(0, set.weight - bw)
+                    set.bodyweightAtLog = bw
+                }
+                changed = true
+            }
+        }
+        if changed { try? context.save() }
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                if !bodyWeights.isEmpty {
-                    Section("Body Weight") {
-                        ForEach(bodyWeights, id: \.persistentModelID) { entry in
-                            LabeledContent(Formatters.date.string(from: entry.date),
-                                          value: "\(Formatters.trim(entry.weight)) lbs")
-                        }
-                        .onDelete { idx in
-                            for i in idx { context.delete(bodyWeights[i]) }
-                            try? context.save()
-                        }
-                    }
-                }
-
                 if sessions.isEmpty {
                     Section {
                         ContentUnavailableView("No workouts yet",
@@ -99,6 +114,9 @@ struct HistoryView: View {
             }
             .listStyle(.plain)
             .headerProminence(.increased)
+            .refreshable {
+                refreshHistory()
+            }
             .navigationTitle("History")
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Filter by exercise")
             .toolbar {
