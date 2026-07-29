@@ -109,7 +109,11 @@ struct ContentView: View {
                         .id(i)
                     }
                 }
+                .scrollTargetLayout()
             }
+            // Snaps so a drag always settles with a tab's full width
+            // aligned in view — never stops with one half on-screen.
+            .scrollTargetBehavior(.viewAligned)
             .onChange(of: selectedTab) { _, newValue in
                 withAnimation { proxy.scrollTo(newValue, anchor: .center) }
             }
