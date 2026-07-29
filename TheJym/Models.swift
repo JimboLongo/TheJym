@@ -609,6 +609,9 @@ enum ActiveRecoveryType: Int, Codable, CaseIterable, Identifiable {
     case walk = 0
     case cardio = 1
     case mobility = 2
+    /// Plain "I rested today" credit — no activity of any kind, just a
+    /// one-tap way to mark the day as rested for streak purposes.
+    case rest = 3
 
     var id: Int { rawValue }
     var label: String {
@@ -616,6 +619,7 @@ enum ActiveRecoveryType: Int, Codable, CaseIterable, Identifiable {
         case .walk: return "Walk"
         case .cardio: return "Cardio"
         case .mobility: return "Mobility"
+        case .rest: return "Rest"
         }
     }
 }

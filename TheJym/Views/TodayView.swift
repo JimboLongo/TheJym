@@ -412,6 +412,7 @@ struct RestDayLogView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \RestDayActivity.date, order: .reverse) private var allActivities: [RestDayActivity]
+    @Query(sort: \ActiveRecovery.date, order: .reverse) private var allActiveRecoveries: [ActiveRecovery]
 
     let phase: Phase
     let day: PhaseDay
@@ -430,6 +431,14 @@ struct RestDayLogView: View {
         allActivities.filter { Calendar.current.isDateInToday($0.date) }
     }
 
+    /// True once today's already been credited as a plain rest day (either
+    /// via the one-tap button below, or an activity/exercise logged here —
+    /// no need to double-credit the streak for the same day).
+    private var restDayAlreadyCredited: Bool {
+        allActiveRecoveries.contains { Calendar.current.isDateInToday($0.date) }
+            || !todaysActivities.isEmpty
+    }
+
     private var canSaveExercises: Bool {
         exercises.contains { ex in
             !ex.name.trimmingCharacters(in: .whitespaces).isEmpty &&
@@ -439,6 +448,18 @@ struct RestDayLogView: View {
 
     var body: some View {
         Form {
+            Section {
+                Button {
+                    logPlainRestDay()
+                } label: {
+                    Label(restDayAlreadyCredited ? "Rest Day Logged" : "Log Rest Day",
+                          systemImage: restDayAlreadyCredited ? "checkmark.circle.fill" : "moon.zzz.fill")
+                }
+                .disabled(restDayAlreadyCredited)
+            } footer: {
+                Text("One tap to credit today toward your rest-bank streak — no need to log a specific activity.")
+            }
+
             Section("Cardio / Activity") {
                 TextField("e.g. Walk, Bike Ride, Yoga", text: $activityName)
                     .focused($focusedField, equals: .activityName)
@@ -513,6 +534,14 @@ struct RestDayLogView: View {
             }
         }
         .navigationTitle(day.name)
+    }
+
+    /// One-tap "I rested today" credit — an ActiveRecovery entry, same
+    /// mechanism the rest-bank engine already reads (StatsEngine.compute's
+    /// activeRecoveryDates), just without requiring an activity name.
+    private func logPlainRestDay() {
+        context.insert(ActiveRecovery(type: .rest))
+        try? context.save()
     }
 
     private func logActivity() {
