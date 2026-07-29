@@ -108,6 +108,16 @@ struct SettingsView: View {
                     Text("Export saves every logged workout as a .csv file (same format the importer expects, so it doubles as a backup). Delete All History permanently deletes every logged workout — Phases, exercises, and equipment are untouched.")
                 }
 
+                if let s = settingsList.first {
+                    Section {
+                        Toggle("Include Default Exercises", isOn: Binding(
+                            get: { s.includeDefaultExercises },
+                            set: { s.includeDefaultExercises = $0; try? context.save() }))
+                    } footer: {
+                        Text("When on, the built-in starter library (Bench Press, Back Squat, etc.) is seeded into the Exercises tab whenever it's empty. Turn off to keep it from coming back after Delete All Exercises — it won't remove anything already there.")
+                    }
+                }
+
                 Section {
                     Button("Delete All Exercises", role: .destructive) {
                         showingDeleteExercisesConfirm = true

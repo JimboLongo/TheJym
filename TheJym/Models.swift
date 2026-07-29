@@ -48,6 +48,12 @@ final class AppSettings {
     /// TrainingDaysPerWeekChange so past days keep the rate that was
     /// actually in effect then.
     var trainingDaysPerWeek: Int = 3
+    /// Whether the built-in starter exercise library (Bench Press, Back
+    /// Squat, etc.) gets seeded into the Exercises tab. Only matters when
+    /// the tab is empty — turning this off after exercises already exist
+    /// doesn't remove them, it just stops them from being reseeded if the
+    /// tab is ever emptied out again (e.g. via Delete All Exercises).
+    var includeDefaultExercises: Bool = true
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }

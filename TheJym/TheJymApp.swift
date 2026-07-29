@@ -118,8 +118,13 @@ struct ContentView: View {
 
     /// Create default settings, bars, dumbbells, and exercise library on first launch.
     private func bootstrap() {
-        if settingsList.isEmpty {
-            context.insert(AppSettings())
+        let settings: AppSettings
+        if let existing = settingsList.first {
+            settings = existing
+        } else {
+            let new = AppSettings()
+            context.insert(new)
+            settings = new
         }
         if bars.isEmpty {
             context.insert(Bar(name: "Barbell", weight: 45))
@@ -128,7 +133,7 @@ struct ContentView: View {
             context.insert(Bar(name: "Dumbbells", weight: 0, isDumbbell: true,
                                dumbbellWeights: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]))
         }
-        if exerciseDefs.isEmpty {
+        if exerciseDefs.isEmpty && settings.includeDefaultExercises {
             for group in ExerciseLibrary.grouped {
                 for e in group.exercises {
                     let reps = e.defaultReps.split(separator: "/").compactMap { Int($0) }
