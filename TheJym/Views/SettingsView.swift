@@ -16,9 +16,15 @@ struct SettingsView: View {
     @Query private var sessions: [WorkoutSession]
     @Query private var exerciseDefs: [ExerciseDef]
     @Query private var phases: [Phase]
+    @Query private var bars: [Bar]
+    @Query private var bodyWeights: [BodyWeightEntry]
+    @Query private var restActivities: [RestDayActivity]
+    @Query private var activeRecoveries: [ActiveRecovery]
+    @Query private var tdpwChanges: [TrainingDaysPerWeekChange]
 
     @State private var showingDeleteHistoryConfirm = false
     @State private var showingDeleteExercisesConfirm = false
+    @State private var showingDeleteAllDataConfirm = false
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
 
@@ -127,6 +133,15 @@ struct SettingsView: View {
                 } footer: {
                     Text("Permanently deletes every exercise from the Exercises tab library (names, saved sets, equipment tags, bodyweight flags). Logged history and Phase plans are untouched — they'll just reference exercises no longer in the library.")
                 }
+
+                Section {
+                    Button("Delete All Data", role: .destructive) {
+                        showingDeleteAllDataConfirm = true
+                    }
+                    .disabled(isAllDataEmpty)
+                } footer: {
+                    Text("Permanently deletes everything: logged history, exercises, equipment, Phases, body weight entries, and rest-day activity. Your app settings (this screen) are untouched. This can't be undone.")
+                }
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -144,7 +159,33 @@ struct SettingsView: View {
                 Button("Delete All Exercises", role: .destructive) { deleteAllExercises() }
                 Button("Cancel", role: .cancel) { }
             }
+            .confirmationDialog("Delete ALL data — every logged workout, exercise, piece of equipment, Phase, and body weight entry? This can't be undone.",
+                                isPresented: $showingDeleteAllDataConfirm, titleVisibility: .visible) {
+                Button("Delete All Data", role: .destructive) { deleteAllData() }
+                Button("Cancel", role: .cancel) { }
+            }
         }
+    }
+
+    private var isAllDataEmpty: Bool {
+        sessions.isEmpty && exerciseDefs.isEmpty && phases.isEmpty && bars.isEmpty
+            && bodyWeights.isEmpty && restActivities.isEmpty && activeRecoveries.isEmpty
+    }
+
+    /// Wipes every user-generated data type — history (sessions cascade to
+    /// their logs/sets), the exercise library, equipment, Phases (cascade to
+    /// their days/planned exercises), body weight, and rest-day activity —
+    /// but leaves AppSettings (this screen's own toggles/preferences) alone.
+    private func deleteAllData() {
+        for session in sessions { context.delete(session) }
+        for def in exerciseDefs { context.delete(def) }
+        for bar in bars { context.delete(bar) }
+        for phase in phases { context.delete(phase) }
+        for entry in bodyWeights { context.delete(entry) }
+        for activity in restActivities { context.delete(activity) }
+        for recovery in activeRecoveries { context.delete(recovery) }
+        for change in tdpwChanges { context.delete(change) }
+        try? context.save()
     }
 
     private func deleteAllHistory() {
