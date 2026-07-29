@@ -20,6 +20,13 @@ struct StatsView: View {
     @Query(sort: \TrainingDaysPerWeekChange.date) private var tdpwChanges: [TrainingDaysPerWeekChange]
     @Query private var phases: [Phase]
 
+    // @Query already keeps every stat live against real data changes (e.g.
+    // edits made in History) — this just forces stats to also recompute
+    // against the current wall-clock time on a manual pull, since "today"
+    // (see StatsEngine.compute's loggedToday handling) can otherwise go
+    // stale if the view sits open across a day rollover with no new data.
+    @State private var refreshTick = false
+
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
 
@@ -84,6 +91,10 @@ struct StatsView: View {
                         statRow("Best month all-time", "—")
                     }
                 }
+            }
+            .id(refreshTick)
+            .refreshable {
+                refreshTick.toggle()
             }
             .navigationTitle("Stats")
             .toolbar {
