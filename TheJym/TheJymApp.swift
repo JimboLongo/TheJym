@@ -83,39 +83,42 @@ struct ContentView: View {
     }
 
     /// A horizontally-scrollable tab strip standing in for the native
-    /// 5-tab-then-"More" bar — all eight tabs are always reachable by
-    /// sliding along the bar itself, with the selected one auto-scrolled
-    /// into view whenever it changes.
+    /// 5-tab-then-"More" bar — all eight tabs are reachable by sliding along
+    /// the bar, which pages a full screen at a time so exactly 5 icons
+    /// (each sized to a fifth of the bar's width) are ever visible at once,
+    /// never a partial 6th. The selected tab auto-scrolls into view.
     private var scrollableTabBar: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    ForEach(tabs.indices, id: \.self) { i in
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) { selectedTab = i }
-                        } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: tabs[i].icon)
-                                    .font(.system(size: 20))
-                                Text(tabs[i].title)
-                                    .font(.caption2)
+        GeometryReader { geo in
+            let itemWidth = geo.size.width / 5
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(tabs.indices, id: \.self) { i in
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) { selectedTab = i }
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: tabs[i].icon)
+                                        .font(.system(size: 20))
+                                    Text(tabs[i].title)
+                                        .font(.caption2)
+                                }
+                                .foregroundStyle(selectedTab == i ? Color.accentColor : Color.secondary)
+                                .frame(width: itemWidth)
+                                .padding(.vertical, 8)
+                                .contentShape(Rectangle())
                             }
-                            .foregroundStyle(selectedTab == i ? Color.accentColor : Color.secondary)
-                            .frame(width: 72)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            .id(i)
                         }
-                        .buttonStyle(.plain)
-                        .id(i)
                     }
                 }
-                .scrollTargetLayout()
-            }
-            // Snaps so a drag always settles with a tab's full width
-            // aligned in view — never stops with one half on-screen.
-            .scrollTargetBehavior(.viewAligned)
-            .onChange(of: selectedTab) { _, newValue in
-                withAnimation { proxy.scrollTo(newValue, anchor: .center) }
+                // Pages by the bar's own width, which is exactly 5 icon
+                // widths — so a swipe always lands on a 5-icon boundary.
+                .scrollTargetBehavior(.paging)
+                .onChange(of: selectedTab) { _, newValue in
+                    withAnimation { proxy.scrollTo(newValue, anchor: .center) }
+                }
             }
         }
         .frame(height: 56)
