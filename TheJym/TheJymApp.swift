@@ -48,6 +48,11 @@ struct ContentView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
+        // Applies to every List/Form/ScrollView in the app (and sheets
+        // presented from within it, which inherit this environment value) —
+        // swiping down on the content dismisses an open keyboard, tracking
+        // the drag interactively rather than needing a hard flick.
+        .scrollDismissesKeyboard(.interactively)
         .onAppear {
             bootstrap()
             backfillRestDays()
