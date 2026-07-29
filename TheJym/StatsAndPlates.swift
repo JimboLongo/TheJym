@@ -76,18 +76,30 @@ enum StatsEngine {
         let today = cal.startOfDay(for: now)
         var iterations = 0
 
+        // Today only counts toward day-based stats (days since start, cycle
+        // pace, adherence) once something's actually been logged for it — a
+        // workout, a rest-day activity, or a plain rest-day credit — same
+        // "pending until logged" rule the rest bank already applies to
+        // today's streak credit. Until then, treat "now" as yesterday so a
+        // still-open day doesn't drag the denominator down or make today's
+        // not-yet-logged workout look missed.
+        let loggedToday = (sessionDates + restActivityDates + activeRecoveryDates)
+            .contains { cal.isDate($0, inSameDayAs: today) }
+        let effectiveNow = loggedToday ? now : (cal.date(byAdding: .day, value: -1, to: today) ?? now)
+        let effectiveToday = cal.startOfDay(for: effectiveNow)
+
         let loggedDays = Set((sessionDates + restActivityDates).map { cal.startOfDay(for: $0) })
             .filter { $0 >= start && $0 <= today }
 
-        let daysSinceStart = max(1, (cal.dateComponents([.day], from: start, to: today).day ?? 0) + 1)
+        let daysSinceStart = max(1, (cal.dateComponents([.day], from: start, to: effectiveToday).day ?? 0) + 1)
 
         let ratePeriods = buildRatePeriods(phases: allPhases,
                                           trainingDaysPerWeekChanges: trainingDaysPerWeekChanges,
                                           defaultTrainingDaysPerWeek: defaultTrainingDaysPerWeek)
         let bank = computeRestBank(creditedDates: sessionDates + activeRecoveryDates,
                                    ratePeriods: ratePeriods, now: now)
-        let cyclePace = activePhase.map { cyclePaceDelta(for: $0, now: now) }
-        let adherence = activePhase.map { adherencePercent(for: $0, now: now) }
+        let cyclePace = activePhase.map { cyclePaceDelta(for: $0, now: effectiveNow) }
+        let adherence = activePhase.map { adherencePercent(for: $0, now: effectiveNow) }
 
         let daysLogged = loggedDays.count
         let pct = Double(daysLogged) / Double(daysSinceStart)
