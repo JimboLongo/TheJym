@@ -492,7 +492,16 @@ enum ImportEngine {
         // .xlsx stores dates as day-count serials (no formatting info
         // survives once we've read just the cell value) — usually a bare
         // integer, but some exporters write it as a float like "45700.0".
-        if let serial = serialInt(from: s) { return excelSerialDate(serial) }
+        // excelSerialDate resolves the day count in UTC (deliberately —
+        // it's a timezone-agnostic count), but everything downstream groups
+        // sessions by Calendar.current (local) day. West of Greenwich, a
+        // UTC-midnight Date falls in the LOCAL calendar on the day before,
+        // shifting every serial-dated row back a day — re-anchor to the
+        // same Y/M/D as a local-midnight Date so it survives that grouping.
+        if let serial = serialInt(from: s), let utcDate = excelSerialDate(serial) {
+            let comps = utcCalendar.dateComponents([.year, .month, .day], from: utcDate)
+            return Calendar.current.date(from: comps)
+        }
         return nil
     }
 
