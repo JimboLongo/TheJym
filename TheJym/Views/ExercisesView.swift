@@ -70,6 +70,9 @@ struct ExercisesView: View {
                         HStack {
                             Text(def.name).font(.headline)
                             Spacer()
+                            if def.isBodyweight {
+                                Text("Bodyweight").font(.caption).foregroundStyle(.secondary)
+                            }
                             if let eq = def.equipment {
                                 Text(eq.name).font(.caption).foregroundStyle(.secondary)
                             }
