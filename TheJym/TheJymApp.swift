@@ -35,14 +35,14 @@ struct ContentView: View {
                 .tabItem { Label("Train", systemImage: "dumbbell.fill") }
             StatsView()
                 .tabItem { Label("Stats", systemImage: "chart.bar.fill") }
-            BodyWeightView()
-                .tabItem { Label("Body Weight", systemImage: "scalemass.fill") }
-            PhasesView()
-                .tabItem { Label("Phases", systemImage: "calendar") }
-            HistoryView()
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
             ExercisesView()
                 .tabItem { Label("Exercises", systemImage: "figure.strengthtraining.traditional") }
+            BodyWeightView()
+                .tabItem { Label("Weight", systemImage: "scalemass.fill") }
+            HistoryView()
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+            PhasesView()
+                .tabItem { Label("Phases", systemImage: "calendar") }
             EquipmentView()
                 .tabItem { Label("Equipment", systemImage: "circle.circle") }
             SettingsView()
