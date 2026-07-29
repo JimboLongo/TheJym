@@ -131,16 +131,31 @@ enum ImportEngine {
             .sorted { $0.date < $1.date }
         guard !occurrences.isEmpty else { return nil }
 
-        // Walk backward from the most recent occurrence until a day label
-        // repeats — that trailing run (put back in chronological order) is
-        // the last full cycle.
+        // Walk backward from the most recent occurrence until a TRAINING day
+        // label repeats — that trailing run (put back in chronological
+        // order) is the last full cycle. Rest is exempt from the repeat
+        // check: a real split can (and often does) have more than one rest
+        // day per cycle, so treating a second "Rest" as a cycle boundary
+        // would truncate the pattern after the first training day pair.
         var lastCycle: [Occurrence] = []
         var seenLabels = Set<String>()
         for occurrence in occurrences.reversed() {
             let key = occurrence.label.lowercased()
-            if seenLabels.contains(key) { break }
-            seenLabels.insert(key)
+            let isRest = key == "rest"
+            if !isRest {
+                if seenLabels.contains(key) { break }
+                seenLabels.insert(key)
+            }
             lastCycle.insert(occurrence, at: 0)
+        }
+        // A leading Rest run is left over from wrapping past the cycle
+        // boundary (the rest day that followed the PREVIOUS cycle's last
+        // training day) rather than part of this one — trim it so the
+        // template starts on a real training day. A cyclic pattern has no
+        // true "start", so beginning at whichever training day comes first
+        // is just as valid as the original order.
+        while let first = lastCycle.first, first.label.lowercased() == "rest" {
+            lastCycle.removeFirst()
         }
         guard !lastCycle.isEmpty else { return nil }
 
