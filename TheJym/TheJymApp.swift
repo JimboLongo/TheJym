@@ -35,6 +35,8 @@ struct ContentView: View {
                 .tabItem { Label("Train", systemImage: "dumbbell.fill") }
             StatsView()
                 .tabItem { Label("Stats", systemImage: "chart.bar.fill") }
+            BodyWeightView()
+                .tabItem { Label("Body Weight", systemImage: "scalemass.fill") }
             PhasesView()
                 .tabItem { Label("Phases", systemImage: "calendar") }
             HistoryView()

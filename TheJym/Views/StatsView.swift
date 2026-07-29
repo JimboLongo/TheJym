@@ -2,26 +2,21 @@
 //  StatsView.swift
 //  TheJym
 //
-//  Consistency stats (days logged, streaks, % logged, days/week) and
-//  body-weight tracking with a chart.
+//  Consistency stats (days logged, streaks, % logged, days/week). Body
+//  weight tracking lives in its own BodyWeightView.
 //
 
 import SwiftUI
 import SwiftData
-import Charts
 
 struct StatsView: View {
     @Environment(\.modelContext) private var context
     @Query private var settingsList: [AppSettings]
     @Query(sort: \WorkoutSession.date) private var sessions: [WorkoutSession]
-    @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
     @Query private var restActivities: [RestDayActivity]
     @Query(sort: \ActiveRecovery.date) private var activeRecoveries: [ActiveRecovery]
     @Query(sort: \TrainingDaysPerWeekChange.date) private var tdpwChanges: [TrainingDaysPerWeekChange]
     @Query private var phases: [Phase]
-
-    @State private var newWeightText = ""
-    @State private var newWeightDate = Date()
 
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -85,44 +80,6 @@ struct StatsView: View {
                         statRow("Best month all-time", "\(label) (\(stats.bestMonthWorkouts))")
                     } else {
                         statRow("Best month all-time", "—")
-                    }
-                }
-
-                Section("Body Weight") {
-                    DatePicker("Date", selection: $newWeightDate, in: ...Date(), displayedComponents: .date)
-                    HStack {
-                        TextField("Weight (lbs)", text: $newWeightText)
-                            .keyboardType(.decimalPad)
-                        Button("Log") {
-                            if let w = Double(newWeightText) {
-                                context.insert(BodyWeightEntry(date: newWeightDate, weight: w))
-                                try? context.save()
-                                newWeightText = ""
-                                newWeightDate = Date()
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(Double(newWeightText) == nil)
-                    }
-                    if weights.count >= 2 {
-                        Chart(weights, id: \.persistentModelID) { entry in
-                            LineMark(x: .value("Date", entry.date),
-                                     y: .value("Weight", entry.weight))
-                            PointMark(x: .value("Date", entry.date),
-                                      y: .value("Weight", entry.weight))
-                        }
-                        .chartYScale(domain: .automatic(includesZero: false))
-                        .frame(height: 180)
-                        .padding(.vertical, 4)
-                    }
-                    ForEach(weights.reversed(), id: \.persistentModelID) { e in
-                        LabeledContent(Formatters.date.string(from: e.date),
-                                       value: "\(Formatters.trim(e.weight)) lbs")
-                    }
-                    .onDelete { idx in
-                        let reversed = Array(weights.reversed())
-                        for i in idx { context.delete(reversed[i]) }
-                        try? context.save()
                     }
                 }
             }
