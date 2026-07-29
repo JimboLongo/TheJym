@@ -218,7 +218,7 @@ struct TodayView: View {
         }
 
         Section("Your Cycle") {
-            if let nextDay = phase.nextDay {
+            if let nextDay = templateNextDay(phase) {
                 featuredDayRow(phase, nextDay)
                 ForEach(upcomingDays(phase, after: nextDay), id: \.persistentModelID) { day in
                     collapsibleDayRow(phase, day)
@@ -229,6 +229,29 @@ struct TodayView: View {
                 }
             }
         }
+    }
+
+    /// What's up next in the actual template rotation (Rest included in its
+    /// real position) — the day right after whichever day was logged most
+    /// recently, wrapping around the cycle. Purely for display: distinct
+    /// from Phase.nextDay (the next unfilled TRAINING slot, which
+    /// deliberately ignores Rest and drives real cycle-completion/
+    /// progression math) — you can still train out of order or skip a Rest
+    /// day entirely and slot-filling behaves exactly as it always has; this
+    /// only decides what's featured as "next" here.
+    private func templateNextDay(_ phase: Phase) -> PhaseDay? {
+        let ordered = phase.orderedDays
+        guard !ordered.isEmpty else { return nil }
+        let lastLoggedDay = phase.sessions
+            .filter { $0.day != nil }
+            .sorted { $0.date < $1.date }
+            .last?.day
+        guard let lastDay = lastLoggedDay,
+              let idx = ordered.firstIndex(where: { $0.persistentModelID == lastDay.persistentModelID })
+        else {
+            return phase.nextDay ?? ordered.first
+        }
+        return ordered[(idx + 1) % ordered.count]
     }
 
     /// The rest of the cycle in actual upcoming order (including Rest days
@@ -251,7 +274,6 @@ struct TodayView: View {
     /// play button).
     @ViewBuilder
     private func featuredDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
-        let plan = phase.plan(for: day)
         HStack(alignment: .top, spacing: 12) {
             Button {
                 quickJumpDay = day
@@ -261,21 +283,30 @@ struct TodayView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(day.name).font(.headline)
-                if plan.isEmpty {
-                    Text("No exercises planned — edit the phase to add some.")
+            if day.isRest {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(day.name).font(.headline)
+                    Text("Log a rest-day activity, or just take it easy.")
                         .font(.caption2).foregroundStyle(.secondary)
-                } else {
-                    ForEach(plan, id: \.persistentModelID) { pe in
-                        HStack {
-                            Text(pe.exerciseName)
-                            Spacer()
-                            Text(pe.setsSummaryText)
-                                .font(.system(.caption2, design: .monospaced))
+                }
+            } else {
+                let plan = phase.plan(for: day)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(day.name).font(.headline)
+                    if plan.isEmpty {
+                        Text("No exercises planned — edit the phase to add some.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(plan, id: \.persistentModelID) { pe in
+                            HStack {
+                                Text(pe.exerciseName)
+                                Spacer()
+                                Text(pe.setsSummaryText)
+                                    .font(.system(.caption2, design: .monospaced))
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         }
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                     }
                 }
             }
