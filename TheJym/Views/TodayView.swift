@@ -101,6 +101,19 @@ struct TodayView: View {
                 TextField("Weight (lbs)", text: $newWeightText)
                     .keyboardType(.decimalPad)
                     .focused($weightFieldFocused)
+                    .onSubmit { logWeight() }
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Button {
+                                weightFieldFocused = false
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            Spacer()
+                            Button("Log") { logWeight() }
+                                .disabled(Double(newWeightText) == nil)
+                        }
+                    }
                 Button("Log") {
                     logWeight()
                 }
