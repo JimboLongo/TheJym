@@ -457,6 +457,34 @@ final class WorkoutSession {
     var totalWeightMoved: Double {
         exerciseLogs.reduce(0) { $0 + $1.totalWeightMoved }
     }
+
+    /// Any calendar day (from the earliest logged session through yesterday)
+    /// with no session at all gets a no-activity Rest Day entry, so History
+    /// never has an unexplained gap. Safe to re-run any time — only fills
+    /// days that are still missing. Runs on every app launch
+    /// (TheJymApp.ContentView) and right after an import completes, since an
+    /// import can introduce gaps (days between logged workouts) that weren't
+    /// there before.
+    @MainActor
+    static func backfillRestDays(context: ModelContext) {
+        let allSessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        guard let earliest = allSessions.map(\.date).min() else { return }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        var existingDays = Set(allSessions.map { calendar.startOfDay(for: $0.date) })
+
+        var day = calendar.startOfDay(for: earliest)
+        while day < today {
+            if !existingDays.contains(day) {
+                let session = WorkoutSession(date: day, dayLabel: "Rest Day", cycleNumber: 0)
+                context.insert(session)
+                existingDays.insert(day)
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        try? context.save()
+    }
 }
 
 @Model

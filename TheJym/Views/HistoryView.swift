@@ -360,6 +360,7 @@ struct HistoryView: View {
             isImporting = true
             Task { @MainActor in
                 let outcome = await ImportEngine.importIntoStore(rows, context: context)
+                WorkoutSession.backfillRestDays(context: context)
                 var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s")."
                 if skipped > 0 { msg += " Skipped \(skipped) row\(skipped == 1 ? "" : "s") that didn't parse." }
                 importResultMessage = msg
@@ -399,6 +400,7 @@ struct HistoryView: View {
         isImporting = true
         Task { @MainActor in
             let outcome = await ImportEngine.importIntoStore(pendingImportRows, context: context, attributeTo: phase)
+            WorkoutSession.backfillRestDays(context: context)
             var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s"), attributed to Phase \(phase.number)."
             if pendingImportSkipped > 0 {
                 msg += " Skipped \(pendingImportSkipped) row\(pendingImportSkipped == 1 ? "" : "s") that didn't parse."

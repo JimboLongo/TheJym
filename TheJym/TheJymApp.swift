@@ -68,7 +68,6 @@ struct ContentView: View {
     @Query private var settingsList: [AppSettings]
     @Query private var bars: [Bar]
     @Query private var exerciseDefs: [ExerciseDef]
-    @Query(sort: \WorkoutSession.date) private var allSessions: [WorkoutSession]
 
     @State private var overflowTab: OverflowTab?
 
@@ -99,7 +98,7 @@ struct ContentView: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
             bootstrap()
-            backfillRestDays()
+            WorkoutSession.backfillRestDays(context: context)
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
             ensureBandsBarExists()
@@ -114,29 +113,6 @@ struct ContentView: View {
         guard !bars.contains(where: { $0.isDumbbell && $0.name == "Bands" }) else { return }
         context.insert(Bar(name: "Bands", weight: 0, isDumbbell: true,
                            dumbbellWeights: [10, 20, 30, 40, 50]))
-        try? context.save()
-    }
-
-    /// Any past calendar day (from your earliest logged session through
-    /// yesterday) with no session at all gets a no-activity Rest Day entry,
-    /// so history never has an unexplained gap. Safe to re-run every launch —
-    /// only fills days that are still missing.
-    private func backfillRestDays() {
-        guard let earliest = allSessions.first?.date else { return }
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        var existingDays = Set(allSessions.map { calendar.startOfDay(for: $0.date) })
-
-        var day = calendar.startOfDay(for: earliest)
-        while day < today {
-            if !existingDays.contains(day) {
-                let session = WorkoutSession(date: day, dayLabel: "Rest Day", cycleNumber: 0)
-                context.insert(session)
-                existingDays.insert(day)
-            }
-            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
-            day = next
-        }
         try? context.save()
     }
 
