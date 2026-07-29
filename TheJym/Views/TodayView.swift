@@ -11,6 +11,8 @@ import SwiftUI
 import SwiftData
 
 struct TodayView: View {
+    @Binding var overflowTab: OverflowTab?
+
     @Environment(\.modelContext) private var context
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
     @Query private var settingsList: [AppSettings]
@@ -52,6 +54,11 @@ struct TodayView: View {
                 quickWorkoutsSection
             }
             .navigationTitle("Train")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    OverflowMenuButton(overflowTab: $overflowTab)
+                }
+            }
             .sheet(isPresented: $showingPhaseSetup) {
                 PhaseBuilderView(previousPhase: nil)
             }

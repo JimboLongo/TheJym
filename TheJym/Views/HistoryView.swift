@@ -22,6 +22,8 @@ extension UTType {
 /// Each row shows the date + day name once, with an edit button that opens
 /// the full day for editing and a delete button that removes the whole day.
 struct HistoryView: View {
+    @Binding var overflowTab: OverflowTab?
+
     @Environment(\.modelContext) private var context
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
     @Query(sort: \BodyWeightEntry.date) private var bodyWeights: [BodyWeightEntry]
@@ -128,6 +130,9 @@ struct HistoryView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    OverflowMenuButton(overflowTab: $overflowTab)
                 }
             }
             .sheet(isPresented: $showingAddPast) {

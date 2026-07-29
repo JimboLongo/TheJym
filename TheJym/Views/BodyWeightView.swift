@@ -11,6 +11,8 @@ import SwiftData
 import Charts
 
 struct BodyWeightView: View {
+    @Binding var overflowTab: OverflowTab?
+
     @Environment(\.modelContext) private var context
     @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
 
@@ -62,6 +64,11 @@ struct BodyWeightView: View {
                 }
             }
             .navigationTitle("Body Weight")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    OverflowMenuButton(overflowTab: $overflowTab)
+                }
+            }
         }
     }
 

@@ -11,6 +11,7 @@ import SwiftUI
 import SwiftData
 
 struct EquipmentView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query(sort: \Bar.name) private var allBars: [Bar]
     @Query private var settingsList: [AppSettings]
@@ -158,6 +159,11 @@ struct EquipmentView: View {
                 }
             }
             .navigationTitle("Equipment")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }

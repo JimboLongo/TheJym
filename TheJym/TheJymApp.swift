@@ -22,6 +22,47 @@ struct TheJymApp: App {
     }
 }
 
+/// The tabs that don't get a permanent slot in the bottom bar — reached
+/// instead through the hamburger menu in the top-right of every main tab.
+/// Presented as a sheet, so each keeps its own NavigationStack/toolbar as-is,
+/// just with a "Done" button added to close it.
+enum OverflowTab: Int, Identifiable {
+    case phases, equipment, settings
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .phases: return "Phases"
+        case .equipment: return "Equipment"
+        case .settings: return "Settings"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .phases: return "calendar"
+        case .equipment: return "circle.circle"
+        case .settings: return "gearshape.fill"
+        }
+    }
+}
+
+/// Hamburger button added to every main tab's toolbar, giving access to the
+/// three overflow tabs (Phases, Equipment, Settings) from anywhere in the app.
+struct OverflowMenuButton: View {
+    @Binding var overflowTab: OverflowTab?
+
+    var body: some View {
+        Menu {
+            ForEach([OverflowTab.phases, .equipment, .settings]) { tab in
+                Button(tab.title, systemImage: tab.icon) { overflowTab = tab }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal")
+        }
+    }
+}
+
 struct ContentView: View {
     @Environment(\.modelContext) private var context
     @Query private var settingsList: [AppSettings]
@@ -29,45 +70,27 @@ struct ContentView: View {
     @Query private var exerciseDefs: [ExerciseDef]
     @Query(sort: \WorkoutSession.date) private var allSessions: [WorkoutSession]
 
-    @State private var selectedTab = 0
-
-    private struct TabInfo {
-        let title: String
-        let icon: String
-    }
-
-    private let tabs: [TabInfo] = [
-        TabInfo(title: "Train", icon: "dumbbell.fill"),
-        TabInfo(title: "Stats", icon: "chart.bar.fill"),
-        TabInfo(title: "Exercises", icon: "figure.strengthtraining.traditional"),
-        TabInfo(title: "Weight", icon: "scalemass.fill"),
-        TabInfo(title: "History", icon: "clock.arrow.circlepath"),
-        TabInfo(title: "Phases", icon: "calendar"),
-        TabInfo(title: "Equipment", icon: "circle.circle"),
-        TabInfo(title: "Settings", icon: "gearshape.fill"),
-    ]
+    @State private var overflowTab: OverflowTab?
 
     var body: some View {
-        VStack(spacing: 0) {
-            // All eight tabs' views stay resident (opacity/hit-testing
-            // toggled, never removed from the hierarchy) so switching tabs
-            // never resets a tab's own scroll position, in-progress text,
-            // or navigation stack — the same persistence a native TabView
-            // gives you for free.
-            ZStack {
-                TodayView().opacity(selectedTab == 0 ? 1 : 0).allowsHitTesting(selectedTab == 0)
-                StatsView().opacity(selectedTab == 1 ? 1 : 0).allowsHitTesting(selectedTab == 1)
-                ExercisesView().opacity(selectedTab == 2 ? 1 : 0).allowsHitTesting(selectedTab == 2)
-                BodyWeightView().opacity(selectedTab == 3 ? 1 : 0).allowsHitTesting(selectedTab == 3)
-                HistoryView().opacity(selectedTab == 4 ? 1 : 0).allowsHitTesting(selectedTab == 4)
-                PhasesView().opacity(selectedTab == 5 ? 1 : 0).allowsHitTesting(selectedTab == 5)
-                EquipmentView().opacity(selectedTab == 6 ? 1 : 0).allowsHitTesting(selectedTab == 6)
-                SettingsView().opacity(selectedTab == 7 ? 1 : 0).allowsHitTesting(selectedTab == 7)
+        TabView {
+            TodayView(overflowTab: $overflowTab)
+                .tabItem { Label("Train", systemImage: "dumbbell.fill") }
+            StatsView(overflowTab: $overflowTab)
+                .tabItem { Label("Stats", systemImage: "chart.bar.fill") }
+            HistoryView(overflowTab: $overflowTab)
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+            ExercisesView(overflowTab: $overflowTab)
+                .tabItem { Label("Exercises", systemImage: "figure.strengthtraining.traditional") }
+            BodyWeightView(overflowTab: $overflowTab)
+                .tabItem { Label("Weight", systemImage: "scalemass.fill") }
+        }
+        .sheet(item: $overflowTab) { tab in
+            switch tab {
+            case .phases: PhasesView()
+            case .equipment: EquipmentView()
+            case .settings: SettingsView()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider()
-            scrollableTabBar
         }
         // Applies to every List/Form/ScrollView in the app (and sheets
         // presented from within it, which inherit this environment value) —
@@ -80,49 +103,6 @@ struct ContentView: View {
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
         }
-    }
-
-    /// A horizontally-scrollable tab strip standing in for the native
-    /// 5-tab-then-"More" bar — all eight tabs are reachable by sliding along
-    /// the bar, which pages a full screen at a time so exactly 5 icons
-    /// (each sized to a fifth of the bar's width) are ever visible at once,
-    /// never a partial 6th. The selected tab auto-scrolls into view.
-    private var scrollableTabBar: some View {
-        GeometryReader { geo in
-            let itemWidth = geo.size.width / 5
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        ForEach(tabs.indices, id: \.self) { i in
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.2)) { selectedTab = i }
-                            } label: {
-                                VStack(spacing: 4) {
-                                    Image(systemName: tabs[i].icon)
-                                        .font(.system(size: 20))
-                                    Text(tabs[i].title)
-                                        .font(.caption2)
-                                }
-                                .foregroundStyle(selectedTab == i ? Color.accentColor : Color.secondary)
-                                .frame(width: itemWidth)
-                                .padding(.vertical, 8)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .id(i)
-                        }
-                    }
-                }
-                // Pages by the bar's own width, which is exactly 5 icon
-                // widths — so a swipe always lands on a 5-icon boundary.
-                .scrollTargetBehavior(.paging)
-                .onChange(of: selectedTab) { _, newValue in
-                    withAnimation { proxy.scrollTo(newValue, anchor: .center) }
-                }
-            }
-        }
-        .frame(height: 56)
-        .background(.bar)
     }
 
     /// Any past calendar day (from your earliest logged session through

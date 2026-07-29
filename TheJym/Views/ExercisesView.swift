@@ -12,6 +12,8 @@ import SwiftUI
 import SwiftData
 
 struct ExercisesView: View {
+    @Binding var overflowTab: OverflowTab?
+
     @Environment(\.modelContext) private var context
     @Environment(\.editMode) private var editMode
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
@@ -115,6 +117,9 @@ struct ExercisesView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    OverflowMenuButton(overflowTab: $overflowTab)
                 }
             }
             .confirmationDialog("Delete \(selectedIDs.count) exercise\(selectedIDs.count == 1 ? "" : "s")? This also deletes their saved sets. Logged history stays intact.",

@@ -11,6 +11,7 @@ import SwiftUI
 import SwiftData
 
 struct PhasesView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
 
@@ -54,6 +55,9 @@ struct PhasesView: View {
             }
             .navigationTitle("Phases")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingAdd = true } label: { Image(systemName: "plus") }
                 }

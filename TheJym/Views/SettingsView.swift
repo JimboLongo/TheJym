@@ -10,6 +10,7 @@ import SwiftUI
 import SwiftData
 
 struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query private var settingsList: [AppSettings]
     @Query private var sessions: [WorkoutSession]
@@ -128,6 +129,11 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .confirmationDialog("Delete all \(sessions.count) logged workout\(sessions.count == 1 ? "" : "s")? This can't be undone.",
                                 isPresented: $showingDeleteHistoryConfirm, titleVisibility: .visible) {
                 Button("Delete All History", role: .destructive) { deleteAllHistory() }

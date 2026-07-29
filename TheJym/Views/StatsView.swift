@@ -10,6 +10,8 @@ import SwiftUI
 import SwiftData
 
 struct StatsView: View {
+    @Binding var overflowTab: OverflowTab?
+
     @Environment(\.modelContext) private var context
     @Query private var settingsList: [AppSettings]
     @Query(sort: \WorkoutSession.date) private var sessions: [WorkoutSession]
@@ -84,6 +86,11 @@ struct StatsView: View {
                 }
             }
             .navigationTitle("Stats")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    OverflowMenuButton(overflowTab: $overflowTab)
+                }
+            }
         }
     }
 
