@@ -43,6 +43,10 @@ struct HistoryView: View {
     @State private var seededPhaseDayDrafts: [PhaseBuilderView.DayDraft]?
     @State private var pendingImportRows: [ImportEngine.ImportedEntry] = []
     @State private var pendingImportSkipped = 0
+    // The just-created Phase, held until the review sheet has fully
+    // dismissed — see the .sheet(onDismiss:) below for why the actual
+    // import/alert can't run in the same moment as dismiss().
+    @State private var phasePendingImportCompletion: Phase?
 
     private var filteredSessions: [WorkoutSession] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
@@ -141,9 +145,20 @@ struct HistoryView: View {
             .sheet(isPresented: $showingImportHelp) {
                 CSVFormatHelpView()
             }
-            .sheet(isPresented: $showingImportPhaseReview) {
+            .sheet(isPresented: $showingImportPhaseReview, onDismiss: {
+                // PhaseBuilderView calls onPhaseCreated right before its own
+                // dismiss() — presenting a NEW alert from that same instant
+                // (while this sheet is still mid-dismissal) is a known
+                // SwiftUI race that silently drops the presentation, so the
+                // actual retroactive import (and its confirmation alert)
+                // waits until the sheet has fully closed.
+                if let phase = phasePendingImportCompletion {
+                    finishImportIntoPhase(phase)
+                    phasePendingImportCompletion = nil
+                }
+            }) {
                 PhaseBuilderView(previousPhase: nil, seededDayDrafts: seededPhaseDayDrafts) { newPhase in
-                    finishImportIntoPhase(newPhase)
+                    phasePendingImportCompletion = newPhase
                 }
             }
             .fileImporter(isPresented: $showingImporter,
