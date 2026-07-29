@@ -20,15 +20,23 @@ struct EquipmentView: View {
     @State private var newBarWeightText = ""
     @State private var newPlateSizeText = ""
     @State private var newDumbbellWeightText = ""
+    @State private var newBandWeightText = ""
 
     private var bars: [Bar] { allBars.filter { !$0.isDumbbell } }
-    private var dumbbellSets: [Bar] { allBars.filter(\.isDumbbell) }
-    private var dumbbellBar: Bar? { dumbbellSets.first }
+    private var dumbbellBar: Bar? { allBars.first { $0.isDumbbell && $0.name == "Dumbbells" } }
+    private var bandsBar: Bar? { allBars.first { $0.isDumbbell && $0.name == "Bands" } }
     private var settings: AppSettings? { settingsList.first }
 
     private func ensureDumbbellBar() -> Bar {
         if let existing = dumbbellBar { return existing }
         let bar = Bar(name: "Dumbbells", weight: 0, isDumbbell: true)
+        context.insert(bar)
+        return bar
+    }
+
+    private func ensureBandsBar() -> Bar {
+        if let existing = bandsBar { return existing }
+        let bar = Bar(name: "Bands", weight: 0, isDumbbell: true)
         context.insert(bar)
         return bar
     }
@@ -155,6 +163,40 @@ struct EquipmentView: View {
                             }
                         }
                         .disabled(Double(newDumbbellWeightText) == nil)
+                    }
+                }
+
+                Section("Bands You Have") {
+                    let weights = (bandsBar?.dumbbellWeights ?? []).sorted(by: >)
+                    if weights.isEmpty {
+                        Text("No bands added yet.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(weights, id: \.self) { w in
+                        HStack {
+                            Text("\(Formatters.trim(w)) lb")
+                            Spacer()
+                            Button(role: .destructive) {
+                                bandsBar?.dumbbellWeights.removeAll { $0 == w }
+                                try? context.save()
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                        }
+                    }
+                    HStack {
+                        TextField("Add band e.g. 30", text: $newBandWeightText)
+                            .keyboardType(.decimalPad)
+                        Button("Add") {
+                            if let w = Double(newBandWeightText) {
+                                let bar = ensureBandsBar()
+                                if !bar.dumbbellWeights.contains(w) {
+                                    bar.dumbbellWeights.append(w)
+                                }
+                                try? context.save()
+                                newBandWeightText = ""
+                            }
+                        }
+                        .disabled(Double(newBandWeightText) == nil)
                     }
                 }
             }

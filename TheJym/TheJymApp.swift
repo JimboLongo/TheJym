@@ -102,7 +102,19 @@ struct ContentView: View {
             backfillRestDays()
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
+            ensureBandsBarExists()
         }
+    }
+
+    /// bootstrap() only seeds Dumbbells (alongside the starter bars) on a
+    /// totally empty Equipment list, so an existing install never revisits
+    /// it — add the Bands preset-weight bar separately, once, whenever it's
+    /// still missing.
+    private func ensureBandsBarExists() {
+        guard !bars.contains(where: { $0.isDumbbell && $0.name == "Bands" }) else { return }
+        context.insert(Bar(name: "Bands", weight: 0, isDumbbell: true,
+                           dumbbellWeights: [10, 20, 30, 40, 50]))
+        try? context.save()
     }
 
     /// Any past calendar day (from your earliest logged session through
@@ -183,6 +195,8 @@ struct ContentView: View {
             context.insert(Bar(name: "Trap Bar", weight: 60))
             context.insert(Bar(name: "Dumbbells", weight: 0, isDumbbell: true,
                                dumbbellWeights: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]))
+            context.insert(Bar(name: "Bands", weight: 0, isDumbbell: true,
+                               dumbbellWeights: [10, 20, 30, 40, 50]))
         }
         if exerciseDefs.isEmpty && settings.includeDefaultExercises {
             for group in ExerciseLibrary.grouped {
