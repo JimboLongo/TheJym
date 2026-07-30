@@ -65,6 +65,7 @@ struct OverflowMenuButton: View {
 
 struct ContentView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var settingsList: [AppSettings]
     @Query private var bars: [Bar]
     @Query private var exerciseDefs: [ExerciseDef]
@@ -104,7 +105,35 @@ struct ContentView: View {
             syncPlannedExerciseBodyweightFlags()
             ensureBandsBarExists()
             fixPhaseStartDatesFromHistory()
+            refreshStreakNotification()
         }
+        // Re-evaluated on every foreground/background transition — not just
+        // launch — so the reminder reflects whatever was just logged (on
+        // backgrounding) and picks up a day rollover or a settings change
+        // (on foregrounding), without needing every individual logging
+        // action to remember to call this itself.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active || newPhase == .background {
+                refreshStreakNotification()
+            }
+        }
+    }
+
+    /// "Logged today" here mirrors the rest bank's own credited-day
+    /// definition (StatsEngine.computeRestBank): a real, exercise-bearing
+    /// WorkoutSession, or a plain ActiveRecovery rest-day credit.
+    private func refreshStreakNotification() {
+        guard let settings = settingsList.first, settings.streakRemindersEnabled else {
+            StreakNotificationManager.cancel()
+            return
+        }
+        let cal = Calendar.current
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        let activeRecoveries = (try? context.fetch(FetchDescriptor<ActiveRecovery>())) ?? []
+        let loggedToday = sessions.contains { cal.isDateInToday($0.date) && !$0.exerciseLogs.isEmpty }
+            || activeRecoveries.contains { cal.isDateInToday($0.date) }
+        StreakNotificationManager.refresh(enabled: true, loggedToday: loggedToday,
+                                          reminderHour: settings.streakReminderHour)
     }
 
     /// cyclePaceDelta/adherencePercent both assume every one of a Phase's

@@ -98,6 +98,36 @@ struct SettingsView: View {
                     }
                 }
 
+                if let s = settingsList.first {
+                    Section {
+                        Toggle("Streak Reminders", isOn: Binding(
+                            get: { s.streakRemindersEnabled },
+                            set: { newValue in
+                                s.streakRemindersEnabled = newValue
+                                try? context.save()
+                                if newValue {
+                                    Task {
+                                        await StreakNotificationManager.requestAuthorizationIfNeeded()
+                                    }
+                                } else {
+                                    StreakNotificationManager.cancel()
+                                }
+                            }))
+                        if s.streakRemindersEnabled {
+                            Picker("Remind Me At", selection: Binding(
+                                get: { s.streakReminderHour },
+                                set: { s.streakReminderHour = $0; try? context.save() })) {
+                                ForEach(0..<24, id: \.self) { hour in
+                                    Text(Formatters.hourLabel(hour)).tag(hour)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    } footer: {
+                        Text("A notification reminding you to log a workout or rest day, if you haven't yet that day — never fires once you have.")
+                    }
+                }
+
                 Section {
                     if let url = exportCSVURL {
                         ShareLink(item: url) {

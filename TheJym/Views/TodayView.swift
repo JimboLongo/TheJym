@@ -478,6 +478,22 @@ struct RestDayLogView: View {
         todaysActiveRecovery != nil || !todaysActivities.isEmpty
     }
 
+    /// Every distinct activity name ever logged — live or via a CSV/Excel
+    /// import, both land in the same RestDayActivity table — case-
+    /// insensitively deduped and alphabetized, so a name used once can be
+    /// quickly reselected instead of retyped.
+    private var knownActivityNames: [String] {
+        var seen = Set<String>()
+        var names: [String] = []
+        for activity in allActivities.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) {
+            let key = activity.name.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            names.append(activity.name)
+        }
+        return names
+    }
+
     private var canSaveExercises: Bool {
         exercises.contains { ex in
             !ex.name.trimmingCharacters(in: .whitespaces).isEmpty &&
@@ -505,8 +521,20 @@ struct RestDayLogView: View {
             }
 
             Section("Cardio / Activity") {
-                TextField("e.g. Walk, Bike Ride, Yoga", text: $activityName)
-                    .focused($focusedField, equals: .activityName)
+                HStack {
+                    TextField("e.g. Walk, Bike Ride, Yoga", text: $activityName)
+                        .focused($focusedField, equals: .activityName)
+                    if !knownActivityNames.isEmpty {
+                        Menu {
+                            ForEach(knownActivityNames, id: \.self) { name in
+                                Button(name) { activityName = name }
+                            }
+                        } label: {
+                            Image(systemName: "chevron.down.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 HStack {
                     TextField("Distance (optional)", text: $distanceText)
                         .keyboardType(.decimalPad)

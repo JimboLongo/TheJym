@@ -54,6 +54,12 @@ final class AppSettings {
     /// doesn't remove them, it just stops them from being reseeded if the
     /// tab is ever emptied out again (e.g. via Delete All Exercises).
     var includeDefaultExercises: Bool = true
+    /// A local notification reminding you to log a workout or rest day,
+    /// scheduled for streakReminderHour each day — but only when nothing's
+    /// been logged yet that day (StreakNotificationManager cancels it the
+    /// moment something is), so it never fires once the streak's covered.
+    var streakRemindersEnabled: Bool = false
+    var streakReminderHour: Int = 20   // 24-hour clock, local time
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }
@@ -712,6 +718,16 @@ enum Formatters {
         f.dateStyle = .medium
         return f
     }()
+    /// "8:00 PM" for a bare 24-hour-clock hour (0-23) — the streak-reminder
+    /// time picker's own values, formatted using the user's locale/12-24hr
+    /// preference rather than a hardcoded "20:00" string.
+    static func hourLabel(_ hour: Int) -> String {
+        let comps = DateComponents(hour: hour, minute: 0)
+        let date = Calendar.current.date(from: comps) ?? Date()
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f.string(from: date)
+    }
     /// Full weekday name alone, e.g. "Sunday" — first line of the workout
     /// log's two-line date button.
     static let weekdayFull: DateFormatter = {
