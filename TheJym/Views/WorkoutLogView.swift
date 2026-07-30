@@ -1829,6 +1829,11 @@ struct CelebrationBurst: View {
 struct SetsGrid: View {
     let weightLabels: [String]
     let repLabels: [String]
+    /// Optional per-column color override for the reps row only — an index
+    /// left nil (or past the array's end) keeps the default secondary
+    /// color. Lets a caller (e.g. PaceRow, once a set's been logged) recolor
+    /// one rep cell at a time without touching the weights row.
+    var repColors: [Color?] = []
 
     var body: some View {
         let columnCount = max(weightLabels.count, repLabels.count)
@@ -1836,6 +1841,7 @@ struct SetsGrid: View {
             GridRow {
                 ForEach(0..<columnCount, id: \.self) { idx in
                     Text(idx < weightLabels.count ? weightLabels[idx] : "")
+                        .foregroundStyle(.secondary)
                     if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
                     }
@@ -1844,6 +1850,7 @@ struct SetsGrid: View {
             GridRow {
                 ForEach(0..<columnCount, id: \.self) { idx in
                     Text(idx < repLabels.count ? repLabels[idx] : "")
+                        .foregroundStyle((idx < repColors.count ? repColors[idx] : nil) ?? .secondary)
                     if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
                     }
@@ -1851,7 +1858,6 @@ struct SetsGrid: View {
             }
         }
         .font(.system(.caption2, design: .monospaced))
-        .foregroundStyle(.secondary)
     }
 }
 
@@ -1961,27 +1967,41 @@ struct PaceRow: View {
         }
     }
 
-    /// Cumulative reps ahead (green) or behind (red) this target's own pace
-    /// as of the most recently logged set — recomputed off `draft` every
-    /// time it changes, so it updates the moment a new set is logged. Nil
-    /// once nothing's logged yet, or exactly on pace (nothing to show).
-    private var cumulativeDelta: (reps: Int, ahead: Bool)? {
-        let loggedCount = draft.sets.filter(\.isLogged).count
-        guard target.hasData, loggedCount > 0, avgWeightPerRep > 0 else { return nil }
-        let milestone = PaceEngine.milestone(atSetIndex: loggedCount, setWeightsMoved: target.setWeightsMoved,
+    /// Cumulative reps ahead (green, sign kept) or behind (red) this
+    /// target's own pace as of today's set `n` (1-based) — a permanent
+    /// snapshot, not a live-recomputed running total: set n's own weight/
+    /// reps (already logged, so fixed) and the target's milestone at n are
+    /// both fixed the moment set n is logged, so this never changes
+    /// retroactively just because a later set gets logged too. Nil until
+    /// set n itself has been logged.
+    private func cumulativeDelta(throughSet n: Int) -> (reps: Int, ahead: Bool)? {
+        let loggedSets = draft.sets.filter(\.isLogged)
+        guard target.hasData, avgWeightPerRep > 0, n >= 1, n <= loggedSets.count else { return nil }
+        let cumulative = loggedSets.prefix(n).reduce(0.0) { total, s in
+            let raw = s.weight ?? 0
+            let effective = draft.isBodyweight ? raw + (currentBodyweight ?? 0) : raw
+            return total + effective * Double(s.reps ?? 0)
+        }
+        let milestone = PaceEngine.milestone(atSetIndex: n, setWeightsMoved: target.setWeightsMoved,
                                              total: target.totalWeightMoved)
-        let deltaLbs = loggedSoFar - milestone
+        let deltaLbs = cumulative - milestone
         let reps = Int((abs(deltaLbs) / avgWeightPerRep).rounded())
-        guard reps > 0 else { return nil }
         return (reps, deltaLbs >= 0)
     }
 
-    @ViewBuilder
-    private var cumulativeDeltaBadge: some View {
-        if let delta = cumulativeDelta {
-            Text(delta.ahead ? "+\(delta.reps)" : "(\(delta.reps))")
-                .font(.system(.caption2, design: .monospaced)).bold()
-                .foregroundStyle(delta.ahead ? .green : .red)
+    /// The target's own historical rep count for each set, except once
+    /// today's session has logged that many sets — from there on, that
+    /// cell shows the cumulative pace delta as of that set instead.
+    private var paceRepLabels: [String] {
+        target.reps.enumerated().map { i, rep in
+            guard let delta = cumulativeDelta(throughSet: i + 1) else { return String(rep) }
+            return delta.ahead ? "+\(delta.reps)" : "(\(delta.reps))"
+        }
+    }
+    private var paceRepColors: [Color?] {
+        target.reps.enumerated().map { i, _ in
+            guard let delta = cumulativeDelta(throughSet: i + 1) else { return nil }
+            return delta.ahead ? .green : .red
         }
     }
 
@@ -1990,14 +2010,13 @@ struct PaceRow: View {
             HStack {
                 Text(target.kind.rawValue).font(.caption.bold())
                 Spacer()
-                cumulativeDeltaBadge
                 if let date = target.date {
                     Text(Formatters.date.string(from: date))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
             if target.hasData {
-                SetsGrid(weightLabels: target.weightLabels, repLabels: target.reps.map(String.init))
+                SetsGrid(weightLabels: target.weightLabels, repLabels: paceRepLabels, repColors: paceRepColors)
                 loggedComparison
             } else {
                 Text(noDataMessage)
