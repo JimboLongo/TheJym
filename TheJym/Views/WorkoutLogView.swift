@@ -698,13 +698,13 @@ struct ExercisePageView: View {
     @State private var plateTargetText = ""
     @State private var showAddEquipmentSheet = false
     /// Which page of the pace panel is showing — 0 is the live pace
-    /// comparisons, 1...5 step back through previousLogs. Reset per exercise
+    /// comparisons, 1 is all previous workouts together. Reset per exercise
     /// implicitly since this view is recreated per exercise page.
     @State private var paceTabSelection = 0
 
     /// Up to the 5 most recently logged workouts of this exercise (already
     /// saved — the one in progress right now isn't in allLogs yet), most
-    /// recent first — swiped through via the pace panel, one per page.
+    /// recent first — all shown together on the pace panel's second page.
     private var previousLogs: [ExerciseLog] {
         Array(allLogs
             .filter { $0.exerciseName == draft.name && !$0.sets.isEmpty }
@@ -713,20 +713,24 @@ struct ExercisePageView: View {
     }
 
     @ViewBuilder
-    private func previousLogPage(_ log: ExerciseLog) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                if let date = log.session?.date {
-                    Text(Formatters.date.string(from: date)).font(.caption.bold())
+    private var previousLogsPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if previousLogs.isEmpty {
+                    Text("No previous workouts yet.").font(.caption2).foregroundStyle(.secondary)
                 }
-                Spacer()
-                Text("\(Formatters.trim(log.totalWeightMoved)) lbs total")
-                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(previousLogs, id: \.persistentModelID) { log in
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let date = log.session?.date {
+                            Text(Formatters.date.string(from: date)).font(.caption2.bold())
+                        }
+                        Text(log.sortedSets.map { String($0.reps) }.joined(separator: "/") + " reps @ " + PaceEngine.weightsSummaryString(for: log))
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            Text(log.sortedSets.map { String($0.reps) }.joined(separator: "/") + " reps @ " + PaceEngine.weightsSummaryString(for: log))
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
     /// Sets a later set's weight was just shifted by via cascade, so the
@@ -875,11 +879,10 @@ struct ExercisePageView: View {
                 }
                 .tag(0)
 
-                ForEach(Array(previousLogs.enumerated()), id: \.offset) { index, log in
-                    previousLogPage(log).tag(index + 1)
-                }
+                previousLogsPage
+                    .tag(1)
             }
-            .tabViewStyle(.page(indexDisplayMode: previousLogs.isEmpty ? .never : .automatic))
+            .tabViewStyle(.page(indexDisplayMode: .automatic))
             .frame(height: 170)
             .padding(10)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
