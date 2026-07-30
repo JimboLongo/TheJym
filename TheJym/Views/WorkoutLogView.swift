@@ -765,11 +765,12 @@ struct ExercisePageView: View {
     @Binding var currentPageID: String?
 
     @State private var showAddEquipmentSheet = false
-    /// Which page of the pace panel is showing — 0 is the live pace
-    /// comparisons, 1 is the plate calculator, 2 is all previous workouts
-    /// together. Reset per exercise implicitly since this view is recreated
-    /// per exercise page.
-    @State private var paceTabSelection = 0
+    /// Which internal tag of the pace panel's TabView is showing — 1 is the
+    /// live pace comparisons (the "real" first page), 2 is previous
+    /// workouts, 3 is the plate calculator, 4 is warm-up sets; 0 and 5 are
+    /// invisible wraparound decoys (see the TabView's own comment). Starts
+    /// at 1, not 0, since 0 is a decoy now.
+    @State private var paceTabSelection = 1
     /// Shown when a set number is tapped — every past log of this exercise,
     /// History-tab styled.
     @State private var showFullHistory = false
@@ -1125,34 +1126,38 @@ struct ExercisePageView: View {
             // transition between any two rows below it.
             .padding(.top, -8)
 
-            // Pace panel — page 0 is the live comparisons (always shows all
-            // three; any with no prior data yet just says so instead of
-            // being omitted), page 1 lists up to the previous 3 logged
-            // workouts of this exercise, page 2 is the plate/dumbbell
-            // calculator (plus Notes) for today's own set weights, page 3
-            // is a suggested warm-up ramp toward today's top working
-            // weight. Page 4 is an invisible clone of page 0 — swiping
-            // right past page 3 lands there, and onChange below silently
-            // snaps back to the real page 0 right after, so it reads as
-            // wrapping around to the front instead of dead-ending.
+            // Pace panel — 4 real pages (Pace Calculator, Previous Workouts,
+            // Plate Calculator, Warm-Up Sets), each wrapped with an
+            // invisible clone of its opposite neighbor on either side (tags
+            // 0 and 5) so swiping past either end lands on a decoy that
+            // onChange below silently snaps to the real page right after —
+            // reads as wrapping around in both directions instead of
+            // dead-ending. Native page dots are off (they'd count all 6
+            // internal tags); paceDots below draws exactly 4, mapped from
+            // whichever tag is actually showing.
             TabView(selection: $paceTabSelection) {
-                comparisonsPage.tag(0)
-                previousLogsPage.tag(1)
-                plateCalculatorPage.tag(2)
-                warmupPage.tag(3)
-                comparisonsPage.tag(4)
+                warmupPage.tag(0)          // decoy: swiping back past page 1 lands here
+                comparisonsPage.tag(1)     // Pace Calculator (real "page 0")
+                previousLogsPage.tag(2)
+                plateCalculatorPage.tag(3)
+                warmupPage.tag(4)
+                comparisonsPage.tag(5)     // decoy: swiping forward past page 4 lands here
             }
-            .tabViewStyle(.page(indexDisplayMode: .automatic))
+            .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(height: pacePanelHeight)
             .padding(10)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             .padding(.top, 10)
+            .overlay(alignment: .bottom) {
+                paceDots
+            }
             .onChange(of: paceTabSelection) { _, newValue in
-                guard newValue == 4 else { return }
+                guard newValue == 0 || newValue == 5 else { return }
+                let real = newValue == 0 ? 4 : 1
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
-                    withTransaction(transaction) { paceTabSelection = 0 }
+                    withTransaction(transaction) { paceTabSelection = real }
                 }
             }
         }
@@ -1175,9 +1180,24 @@ struct ExercisePageView: View {
         // on instead of always starting fresh.
         .onChange(of: currentPageID) { _, newValue in
             if newValue == "ex-\(draft.id)" {
-                paceTabSelection = 0
+                paceTabSelection = 1
             }
         }
+    }
+
+    /// 4 dots standing in for the native page indicator (off, since it'd
+    /// count all 6 internal tags including the 2 wraparound decoys) — maps
+    /// whichever internal tag is showing back to one of the 4 real pages.
+    private var paceDots: some View {
+        let realPage = ((paceTabSelection - 1) % 4 + 4) % 4
+        return HStack(spacing: 6) {
+            ForEach(0..<4, id: \.self) { i in
+                Circle()
+                    .fill(i == realPage ? Color.primary : Color.secondary.opacity(0.35))
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .padding(.bottom, 4)
     }
 
     private var header: some View {
