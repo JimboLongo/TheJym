@@ -17,24 +17,24 @@ struct BodyWeightView: View {
     @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
 
     @State private var newWeightText = ""
+    @State private var selectedWeightDate = Formatters.nearestPastSunday()
     @FocusState private var weightFieldFocused: Bool
 
-    /// Weight is tracked weekly, dated to the nearest Sunday — not
-    /// user-editable to an arbitrary day.
-    private var loggingDate: Date { Formatters.nearestPastSunday() }
     private var existingEntryThisWeek: BodyWeightEntry? {
-        weights.first { Calendar.current.isDate($0.date, inSameDayAs: loggingDate) }
+        weights.first { Calendar.current.isDate($0.date, inSameDayAs: selectedWeightDate) }
     }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    HStack {
-                        Text("Week of")
-                        Spacer()
-                        Text(Formatters.date.string(from: loggingDate)).foregroundStyle(.secondary)
-                    }
+                    // Weight is tracked weekly, not daily — whatever day is
+                    // tapped snaps to that week's Sunday, so only a Sunday
+                    // is ever actually selectable.
+                    DatePicker("Date", selection: Binding(
+                        get: { selectedWeightDate },
+                        set: { selectedWeightDate = Formatters.nearestPastSunday(from: $0) }
+                    ), in: ...Date(), displayedComponents: .date)
                     if existingEntryThisWeek != nil {
                         Text("Already logged this week — logging again updates it.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -104,10 +104,11 @@ struct BodyWeightView: View {
         if let existing = existingEntryThisWeek {
             existing.weight = w
         } else {
-            context.insert(BodyWeightEntry(date: loggingDate, weight: w))
+            context.insert(BodyWeightEntry(date: selectedWeightDate, weight: w))
         }
         try? context.save()
         newWeightText = ""
+        selectedWeightDate = Formatters.nearestPastSunday()
         weightFieldFocused = false
     }
 }

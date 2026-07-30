@@ -100,9 +100,6 @@ struct WorkoutLogView: View {
         /// False after the user manually reopens a collapsed exercise, so it
         /// won't auto-collapse again until they close it themselves.
         var autoCollapseEnabled: Bool = true
-        /// Notes / plate-calculator panel toggle, lifted up here (instead of
-        /// local view state) so the sticky section header can drive it too.
-        var showingDetails: Bool = false
         var goalType: GoalType = .fixedSets
         /// When true, each set's weightText holds ADDED weight (not total
         /// load) — the resolved effective weight is only computed at save
@@ -695,16 +692,16 @@ struct ExercisePageView: View {
     /// page disappears from the paging list at that point.
     @Binding var currentPageID: String?
 
-    @State private var plateTargetText = ""
     @State private var showAddEquipmentSheet = false
     /// Which page of the pace panel is showing — 0 is the live pace
-    /// comparisons, 1 is all previous workouts together. Reset per exercise
-    /// implicitly since this view is recreated per exercise page.
+    /// comparisons, 1 is the plate calculator, 2 is all previous workouts
+    /// together. Reset per exercise implicitly since this view is recreated
+    /// per exercise page.
     @State private var paceTabSelection = 0
 
     /// Up to the 5 most recently logged workouts of this exercise (already
     /// saved — the one in progress right now isn't in allLogs yet), most
-    /// recent first — all shown together on the pace panel's second page.
+    /// recent first — all shown together on the pace panel's last page.
     private var previousLogs: [ExerciseLog] {
         Array(allLogs
             .filter { $0.exerciseName == draft.name && !$0.sets.isEmpty }
@@ -716,6 +713,7 @@ struct ExercisePageView: View {
     private var previousLogsPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
+                Text("Previous Workouts").font(.caption.bold()).foregroundStyle(.secondary)
                 if previousLogs.isEmpty {
                     Text("No previous workouts yet.").font(.caption2).foregroundStyle(.secondary)
                 }
@@ -731,6 +729,121 @@ struct ExercisePageView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Distinct, nonzero weights entered across today's sets for this
+    /// exercise, ascending — each gets its own plate/dumbbell-match
+    /// breakdown on the plate-calculator page, no manual target entry
+    /// needed.
+    private var uniqueSetWeights: [Double] {
+        Array(Set(draft.sets.compactMap(\.weight).filter { $0 > 0 })).sorted()
+    }
+
+    @ViewBuilder
+    private var plateCalculatorPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                if let bar = exerciseDef?.equipment {
+                    Text(bar.isDumbbell ? "Dumbbell Match" : "Plate Calculator")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                    if uniqueSetWeights.isEmpty {
+                        Text("No weights entered yet.").font(.caption2).foregroundStyle(.secondary)
+                    } else if bar.isDumbbell {
+                        ForEach(uniqueSetWeights, id: \.self) { target in
+                            dumbbellMatchRow(bar: bar, target: target)
+                        }
+                    } else {
+                        ForEach(uniqueSetWeights, id: \.self) { target in
+                            plateBreakdownRow(bar: bar, target: target)
+                        }
+                    }
+                } else if let def = exerciseDef {
+                    Text("No equipment tagged for this exercise yet.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Menu {
+                        ForEach(allBars) { bar in
+                            Button(bar.name) {
+                                def.equipment = bar
+                                try? context.save()
+                            }
+                        }
+                        if !allBars.isEmpty { Divider() }
+                        Button {
+                            showAddEquipmentSheet = true
+                        } label: {
+                            Label("New Equipment…", systemImage: "plus")
+                        }
+                    } label: {
+                        Label("Quick Add Equipment", systemImage: "plus.circle")
+                            .font(.caption.bold())
+                    }
+                    .sheet(isPresented: $showAddEquipmentSheet) {
+                        NewEquipmentSheet { bar in
+                            def.equipment = bar
+                            try? context.save()
+                        }
+                    }
+                } else {
+                    Text("Add this exercise in the Exercises tab to tag equipment for it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                if let def = exerciseDef, !def.notes.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
+                        Text(def.notes).font(.subheadline)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func plateBreakdownRow(bar: Bar, target: Double) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("\(Formatters.trim(target)) lbs").font(.caption.bold())
+            if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight,
+                                                               available: plateSizes, sides: bar.loadableSides) {
+                if plates.isEmpty && leftover == 0 {
+                    Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                ForEach(plates) { p in
+                    HStack {
+                        Text("\(Formatters.trim(p.plate)) lb plate")
+                            .font(.system(.caption2, design: .monospaced))
+                        Spacer()
+                        Text(bar.loadableSides == 1 ? "× \(p.countPerSide)" : "× \(p.countPerSide) per side")
+                            .font(.system(.caption2, design: .monospaced)).bold()
+                    }
+                }
+                if leftover > 0 {
+                    Text("Can't hit exactly — \(Formatters.trim(leftover)) lbs short.")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+            } else {
+                Text("Lighter than the \(Formatters.trim(bar.weight)) lb bar.")
+                    .font(.caption2).foregroundStyle(.red)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func dumbbellMatchRow(bar: Bar, target: Double) -> some View {
+        HStack {
+            Text("\(Formatters.trim(target)) lbs").font(.caption.bold())
+            Spacer()
+            if let closest = bar.dumbbellWeights.min(by: { abs($0 - target) < abs($1 - target) }) {
+                Text(closest == target ? "Exact match: \(Formatters.trim(closest)) lb" : "Closest: \(Formatters.trim(closest)) lb")
+                    .font(.caption2)
+                    .foregroundStyle(closest == target ? .green : .orange)
+            } else {
+                Text("No dumbbell weights set for \(bar.name)")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
     /// Sets a later set's weight was just shifted by via cascade, so the
@@ -797,20 +910,17 @@ struct ExercisePageView: View {
         currentBodyweight.map { "\(Formatters.trim($0)) (BW) +" } ?? "BW +"
     }
     private let weightColumnWidth: CGFloat = 100
+    /// The pace panel's fixed height — tall enough for all 5 previous
+    /// workouts (with a title) or the plate-calculator page's typical
+    /// content to fit without needing to scroll internally.
+    private let pacePanelHeight: CGFloat = 240
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
-    /// sets, plus the header, pace panel, and (when open) the notes/plate-
-    /// calculator details panel, fit within one page height.
+    /// sets, plus the header and pace panel, fit within one page height.
     private var wheelHeight: CGFloat {
-        // header + pace panel + paddings, estimated — the pace panel is a
-        // fixed 170pt paged TabView now (plus page-dot space) rather than a
-        // height that shrinks with its content, so this needs a bit more
-        // headroom than before.
-        let chromeHeight: CGFloat = 320
-        // The info-button details panel (notes + plate calculator/dumbbell
-        // match) adds real height above the set rows when open — without
-        // this, opening it could push sets off the bottom of the page.
-        let detailsHeight: CGFloat = draft.showingDetails ? 160 : 0
-        let available = pageHeight - chromeHeight - detailsHeight
+        // header + paddings, estimated, plus the pace panel's own fixed
+        // height and some room for its page dots.
+        let chromeHeight: CGFloat = 150 + pacePanelHeight
+        let available = pageHeight - chromeHeight
         let setCount = max(draft.sets.count, 1)
         let perSet = available / CGFloat(setCount)
         // Taller floor/ceiling than before so more of the previous/next row
@@ -833,9 +943,6 @@ struct ExercisePageView: View {
             // gap between the header and the first row.
             Group {
                 if draft.isExpanded {
-                    if draft.showingDetails {
-                        notesAndPlateCalc(exerciseDef)
-                    }
                     switch draft.goalType {
                     case .fixedSets:
                         setRows
@@ -856,8 +963,9 @@ struct ExercisePageView: View {
 
             // Pace panel — page 0 is the live comparisons (always shows all
             // three; any with no prior data yet just says so instead of
-            // being omitted). Swipe right from there to step back through
-            // up to the previous 5 logged workouts of this exercise.
+            // being omitted), page 1 is the plate/dumbbell calculator (plus
+            // Notes) for today's own set weights, page 2 lists up to the
+            // previous 5 logged workouts of this exercise.
             TabView(selection: $paceTabSelection) {
                 VStack(alignment: .leading, spacing: 6) {
                     switch draft.goalType {
@@ -879,11 +987,14 @@ struct ExercisePageView: View {
                 }
                 .tag(0)
 
-                previousLogsPage
+                plateCalculatorPage
                     .tag(1)
+
+                previousLogsPage
+                    .tag(2)
             }
             .tabViewStyle(.page(indexDisplayMode: .automatic))
-            .frame(height: 170)
+            .frame(height: pacePanelHeight)
             .padding(10)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             .padding(.top, 10)
@@ -905,13 +1016,6 @@ struct ExercisePageView: View {
                 }
                 Spacer()
                 if draft.isExpanded {
-                    Button {
-                        withAnimation { draft.showingDetails.toggle() }
-                    } label: {
-                        Image(systemName: draft.showingDetails ? "chevron.up.circle.fill" : "info.circle")
-                    }
-                    .buttonStyle(.plain)
-                    .imageScale(.large)
                     Button {
                         withAnimation { draft.isExpanded = false; currentPageID = "summary" }
                     } label: {
@@ -1308,117 +1412,6 @@ struct ExercisePageView: View {
         .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    @ViewBuilder
-    private func notesAndPlateCalc(_ def: ExerciseDef?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let def, !def.notes.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
-                    Text(def.notes).font(.subheadline)
-                }
-            }
-
-            if let bar = def?.equipment {
-                if bar.isDumbbell {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Dumbbell Match").font(.caption.bold()).foregroundStyle(.secondary)
-                        HStack {
-                            Text("Target")
-                            TextField("lbs", text: $plateTargetText)
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 90)
-                        }
-                        .font(.subheadline)
-
-                        if let target = Double(plateTargetText) {
-                            if let closest = bar.dumbbellWeights.min(by: { abs($0 - target) < abs($1 - target) }) {
-                                Text(closest == target
-                                     ? "You have that exact dumbbell: \(Formatters.trim(closest)) lb"
-                                     : "Closest you have: \(Formatters.trim(closest)) lb")
-                                    .font(.caption)
-                                    .foregroundStyle(closest == target ? .green : .orange)
-                            } else {
-                                Text("No dumbbell weights set for \(bar.name) — add some in Equipment.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Plate Calculator").font(.caption.bold()).foregroundStyle(.secondary)
-                        HStack {
-                            Text("Target")
-                            TextField("lbs", text: $plateTargetText)
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 90)
-                        }
-                        .font(.subheadline)
-
-                        if let target = Double(plateTargetText) {
-                            if let (plates, leftover) = PlateCalculator.plates(target: target, barWeight: bar.weight,
-                                                                               available: plateSizes, sides: bar.loadableSides) {
-                                if plates.isEmpty && leftover == 0 {
-                                    Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                ForEach(plates) { p in
-                                    HStack {
-                                        Text("\(Formatters.trim(p.plate)) lb plate")
-                                            .font(.system(.caption, design: .monospaced))
-                                        Spacer()
-                                        Text(bar.loadableSides == 1 ? "× \(p.countPerSide)" : "× \(p.countPerSide) per side")
-                                            .font(.system(.caption, design: .monospaced)).bold()
-                                    }
-                                }
-                                if leftover > 0 {
-                                    Text("Can't hit exactly — \(Formatters.trim(leftover)) lbs short.")
-                                        .font(.caption2).foregroundStyle(.orange)
-                                }
-                            } else {
-                                Text("Target is lighter than the \(Formatters.trim(bar.weight)) lb bar.")
-                                    .font(.caption).foregroundStyle(.red)
-                            }
-                        }
-                    }
-                }
-            } else if let def {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("No equipment tagged for this exercise yet.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Menu {
-                        ForEach(allBars) { bar in
-                            Button(bar.name) {
-                                def.equipment = bar
-                                try? context.save()
-                            }
-                        }
-                        if !allBars.isEmpty { Divider() }
-                        Button {
-                            showAddEquipmentSheet = true
-                        } label: {
-                            Label("New Equipment…", systemImage: "plus")
-                        }
-                    } label: {
-                        Label("Quick Add Equipment", systemImage: "plus.circle")
-                            .font(.caption.bold())
-                    }
-                }
-                .sheet(isPresented: $showAddEquipmentSheet) {
-                    NewEquipmentSheet { bar in
-                        def.equipment = bar
-                        try? context.save()
-                    }
-                }
-            } else {
-                Text("Add this exercise in the Exercises tab to tag equipment for it.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .padding(10)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
-    }
 }
 
 // MARK: - Quick "add new equipment" sheet, reachable from a workout
