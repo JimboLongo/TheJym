@@ -35,6 +35,29 @@ struct TrainingStats {
     // Active-Phase-only stats (nil with no active phase).
     var cyclePaceDelta: Int?        // actual sessions vs. floor(daysElapsed * pace)
     var adherencePercent: Double?   // sessions logged / sessions scheduled to date
+
+    // Perfect-cycle progress — populated only when there's an active phase.
+    var perfectCycleLifetimeCount: Int?
+    var perfectCycleCurrentStreak: Int?
+    var activePhaseCycleProgress: ActivePhaseCycleProgress?
+    // Shown instead of the three fields above when there's no active phase.
+    var perfectWeekFallback: PerfectWeekFallback?
+}
+
+/// "Phase N: X of Y perfect" — X of that phase's own completed cycles met
+/// the perfect-cycle bar.
+struct ActivePhaseCycleProgress {
+    let number: Int
+    let perfectCount: Int
+    let completedCount: Int
+}
+
+/// The no-active-phase substitute for perfect-cycle progress: a plain
+/// Mon-Sun week counts as perfect once its logged-session count meets the
+/// training-days-per-week setting in effect that week.
+struct PerfectWeekFallback {
+    let lifetimeCount: Int
+    let currentStreak: Int
 }
 
 enum StatsEngine {
@@ -110,6 +133,35 @@ enum StatsEngine {
         // YTD/MTD: "worked out" means an actual training session, not a rest
         // day activity — separate from loggedDays above (which is streak math).
         let workoutDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
+
+        // Perfect-cycle progress needs an active phase to judge cycles
+        // against its split pattern — with none, fall back to a simpler,
+        // phase-independent perfect-week count instead.
+        let perfectCycleLifetimeCount: Int?
+        let perfectCycleCurrentStreak: Int?
+        let activePhaseCycleProgress: ActivePhaseCycleProgress?
+        let perfectWeekFallback: PerfectWeekFallback?
+        if let activePhase {
+            let allFlags = allPhases.sorted { $0.startDate < $1.startDate }.flatMap { $0.perfectCycleFlags }
+            perfectCycleLifetimeCount = allFlags.filter { $0 }.count
+            var streak = 0
+            for flag in allFlags.reversed() {
+                if flag { streak += 1 } else { break }
+            }
+            perfectCycleCurrentStreak = streak
+            let flags = activePhase.perfectCycleFlags
+            activePhaseCycleProgress = ActivePhaseCycleProgress(number: activePhase.number,
+                                                                perfectCount: flags.filter { $0 }.count,
+                                                                completedCount: flags.count)
+            perfectWeekFallback = nil
+        } else {
+            perfectCycleLifetimeCount = nil
+            perfectCycleCurrentStreak = nil
+            activePhaseCycleProgress = nil
+            perfectWeekFallback = computePerfectWeekFallback(workoutDays: workoutDays, start: start, today: today,
+                                                             trainingDaysPerWeekChanges: trainingDaysPerWeekChanges,
+                                                             defaultTrainingDaysPerWeek: defaultTrainingDaysPerWeek)
+        }
         // Same "today is pending" rule as effectiveToday above — if today
         // hasn't been logged yet, the prior-year comparison shouldn't
         // include the prior-year equivalent of a day that hasn't happened
@@ -206,7 +258,62 @@ enum StatsEngine {
                              bestMonthLabel: bestMonthLabel,
                              bestMonthWorkouts: bestMonthWorkouts,
                              cyclePaceDelta: cyclePace,
-                             adherencePercent: adherence)
+                             adherencePercent: adherence,
+                             perfectCycleLifetimeCount: perfectCycleLifetimeCount,
+                             perfectCycleCurrentStreak: perfectCycleCurrentStreak,
+                             activePhaseCycleProgress: activePhaseCycleProgress,
+                             perfectWeekFallback: perfectWeekFallback)
+    }
+
+    /// Fallback progress stat for when there's no active phase to judge
+    /// cycles against a split pattern: counts a plain Mon-Sun calendar week
+    /// as perfect once its logged-session count meets whatever training-
+    /// days-per-week setting was in effect that week (looked up the same
+    /// way buildRatePeriods resolves the rest-bank earn rate over time).
+    /// Bounded to [start, today] like the rest of consistency stats, and
+    /// forces a Monday-first calendar regardless of the device's locale,
+    /// since "Mon-Sun" is part of the definition, not just a display choice.
+    private static func computePerfectWeekFallback(workoutDays: Set<Date>, start: Date, today: Date,
+                                                   trainingDaysPerWeekChanges: [(date: Date, value: Int)],
+                                                   defaultTrainingDaysPerWeek: Int) -> PerfectWeekFallback {
+        var mondayCal = Calendar.current
+        mondayCal.firstWeekday = 2
+        func required(on date: Date) -> Int {
+            let applicable = trainingDaysPerWeekChanges.filter { $0.date <= date }.max { $0.date < $1.date }
+            return applicable?.value ?? defaultTrainingDaysPerWeek
+        }
+
+        var weekCounts: [DateComponents: Int] = [:]
+        var weekStarts: [DateComponents: Date] = [:]
+        var walk = start
+        var iterations = 0
+        while walk <= today, iterations < 20_000 {
+            iterations += 1
+            let key = mondayCal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: walk)
+            weekCounts[key, default: 0] += workoutDays.contains(walk) ? 1 : 0
+            if weekStarts[key] == nil {
+                weekStarts[key] = mondayCal.date(from: key) ?? walk
+            }
+            guard let next = mondayCal.date(byAdding: .day, value: 1, to: walk) else { break }
+            walk = next
+        }
+
+        let currentWeekKey = mondayCal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: today)
+        let orderedWeeks = weekCounts.keys
+            .filter { $0 != currentWeekKey }
+            .compactMap { key -> (weekStart: Date, count: Int)? in
+                guard let weekStart = weekStarts[key] else { return nil }
+                return (weekStart, weekCounts[key] ?? 0)
+            }
+            .sorted { $0.weekStart < $1.weekStart }
+
+        let flags = orderedWeeks.map { $0.count >= required(on: $0.weekStart) }
+        let lifetime = flags.filter { $0 }.count
+        var streak = 0
+        for flag in flags.reversed() {
+            if flag { streak += 1 } else { break }
+        }
+        return PerfectWeekFallback(lifetimeCount: lifetime, currentStreak: streak)
     }
 
     // MARK: - Rest bank (replaces the old schedule-walking streak model)

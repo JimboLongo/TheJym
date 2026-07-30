@@ -26,6 +26,11 @@ struct StatsView: View {
     // (see StatsEngine.compute's loggedToday handling) can otherwise go
     // stale if the view sits open across a day rollover with no new data.
     @State private var refreshTick = false
+    /// Presented as a sheet (instead of the default inline compact picker)
+    /// so selecting a date can close it automatically — a bare DatePicker's
+    /// own popover has no way to dismiss itself on selection.
+    @State private var showTrainingStartDatePicker = false
+    @State private var pendingTrainingStartDate = Date()
 
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -54,13 +59,20 @@ struct StatsView: View {
     var body: some View {
         NavigationStack {
             List {
+                // Purely Training-Start-Date-based — no phase concepts here.
+                // Anything specific to whatever Phase is currently active
+                // lives in its own section below instead.
                 Section("Consistency") {
                     if let s = settings {
-                        DatePicker("Training start date",
-                                   selection: Binding(
-                                       get: { s.trainingStartDate },
-                                       set: { s.trainingStartDate = $0; try? context.save() }),
-                                   displayedComponents: .date)
+                        Button {
+                            pendingTrainingStartDate = s.trainingStartDate
+                            showTrainingStartDatePicker = true
+                        } label: {
+                            LabeledContent("Training start date") {
+                                Text(Formatters.date.string(from: s.trainingStartDate))
+                            }
+                        }
+                        .buttonStyle(.plain)
                     }
                     statRow("Days since start", "\(stats.daysSinceStart)")
                     statRow("Days logged", "\(stats.daysLogged)")
@@ -69,11 +81,31 @@ struct StatsView: View {
                     statRow("Rest days banked", String(format: "%.1f", stats.bankBalance))
                     statRow("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100))
                     statRow("Days per week", String(format: "%.2f", stats.daysPerWeek))
-                    if let delta = stats.cyclePaceDelta {
-                        statRow("Cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")")
+                }
+
+                if activePhase != nil {
+                    Section("Current Phase") {
+                        if let delta = stats.cyclePaceDelta {
+                            statRow("Cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")")
+                        }
+                        if let adherence = stats.adherencePercent {
+                            statRow("Adherence", String(format: "%.0f%%", adherence))
+                        }
+                        if let progress = stats.activePhaseCycleProgress {
+                            statRow("Phase \(progress.number)",
+                                    progress.completedCount == 0
+                                        ? "No completed cycles yet"
+                                        : "\(progress.perfectCount) of \(progress.completedCount) perfect")
+                        }
+                        statRow("Lifetime perfect cycles", "\(stats.perfectCycleLifetimeCount ?? 0)")
+                        statRow("Current perfect-cycle streak", "\(stats.perfectCycleCurrentStreak ?? 0)")
                     }
-                    if let adherence = stats.adherencePercent {
-                        statRow("Adherence", String(format: "%.0f%%", adherence))
+                } else if let fallback = stats.perfectWeekFallback {
+                    // No active phase to judge cycles against — a simpler,
+                    // phase-independent progress stat instead.
+                    Section("Progress") {
+                        statRow("Lifetime perfect weeks", "\(fallback.lifetimeCount)")
+                        statRow("Current perfect-week streak", "\(fallback.currentStreak)")
                     }
                 }
 
@@ -100,6 +132,22 @@ struct StatsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     OverflowMenuButton(overflowTab: $overflowTab)
+                }
+            }
+            .sheet(isPresented: $showTrainingStartDatePicker) {
+                NavigationStack {
+                    DatePicker("Training start date", selection: $pendingTrainingStartDate,
+                              displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .padding()
+                        .navigationTitle("Training Start Date")
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+                .presentationDetents([.medium])
+                .onChange(of: pendingTrainingStartDate) { _, newValue in
+                    settings?.trainingStartDate = newValue
+                    try? context.save()
+                    showTrainingStartDatePicker = false
                 }
             }
         }

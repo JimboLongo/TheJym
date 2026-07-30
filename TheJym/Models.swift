@@ -258,31 +258,50 @@ final class Phase {
         var currentCycle: Int
         var completedCycles: Int
         var filledSlotIDs: Set<PersistentIdentifier>
+        var perfectFlags: [Bool]
     }
 
     private var cycleWalk: CycleWalkResult {
         let slots = trainingDays
         guard !slots.isEmpty else {
-            return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [])
+            return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [], perfectFlags: [])
         }
+        let cal = Calendar.current
         let relevant = sessions
             .filter { $0.day != nil && $0.day!.isRest == false }
             .sorted { $0.date < $1.date }
 
         var filled: Set<PersistentIdentifier> = []
+        var cycleDates: [Date] = []
         var completedCycles = 0
+        var perfectFlags: [Bool] = []
         for session in relevant {
             guard let dayID = session.day?.persistentModelID else { continue }
             if filled.contains(dayID) { continue }   // bonus — already filled this cycle
             filled.insert(dayID)
+            cycleDates.append(session.date)
             if filled.count == slots.count {
                 completedCycles += 1
+                // "Perfect" needs every slot filled (guaranteed here, since a
+                // cycle only completes once that happens) inside a calendar
+                // span no wider than the pattern's own length (rest days
+                // included) plus one day of slack. Bonus-session dates never
+                // entered `cycleDates` above, so an extra session outside the
+                // exact split can't stretch the span and spoil an otherwise
+                // on-time cycle.
+                if let first = cycleDates.min(), let last = cycleDates.max() {
+                    let span = (cal.dateComponents([.day], from: cal.startOfDay(for: first),
+                                                   to: cal.startOfDay(for: last)).day ?? 0) + 1
+                    perfectFlags.append(span <= orderedDays.count + 1)
+                }
                 filled = []
+                cycleDates = []
             }
         }
         return CycleWalkResult(currentCycle: min(totalCycles, completedCycles + 1),
                                completedCycles: completedCycles,
-                               filledSlotIDs: filled)
+                               filledSlotIDs: filled,
+                               perfectFlags: perfectFlags)
     }
 
     /// True if `day`'s slot for the cycle currently in progress is already
@@ -313,6 +332,13 @@ final class Phase {
     var isComplete: Bool {
         cycleWalk.completedCycles >= totalCycles
     }
+
+    /// Whether each completed cycle so far met the "perfect cycle" bar —
+    /// see the span check above. Order matches completion order, oldest
+    /// first; the cycle currently in progress (not yet complete) isn't
+    /// included. Deload cycles aren't special-cased — they're just as
+    /// eligible as any other.
+    var perfectCycleFlags: [Bool] { cycleWalk.perfectFlags }
 
     /// This phase's own rest-bank earn rate, derived from its split pattern
     /// (e.g. Push/Pull/Legs/Rest -> 1 rest day / 3 training days -> ~0.33).
