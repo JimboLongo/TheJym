@@ -224,4 +224,67 @@ enum PaceEngine {
                           total: target.totalWeightMoved)
         return (m - loggedSoFar) / columnWeight
     }
+
+    /// One already-logged set's numbers, as needed to reconstruct what its
+    /// own pace requirement was at the time — `rawWeight` is what was
+    /// actually loaded (the countdown's own denominator, same convention as
+    /// paceCellValue's columnWeight), `effectiveWeightMoved` is what that
+    /// set contributed to the session's cumulative total (bodyweight-
+    /// resolved for a bodyweight exercise, matching ExerciseDraft.loggedTotal).
+    struct LoggedSetEntry {
+        let rawWeight: Double
+        let effectiveWeightMoved: Double
+        let reps: Int
+    }
+
+    /// Reps needed for the upcoming set, ratcheted against the previous
+    /// set's own requirement and whether it was met: hitting (or beating)
+    /// what a set asked for can never make the next set demand *more*, and
+    /// falling short of a set can never make the next set demand *less* —
+    /// without this, a lighter or heavier weight entered for the next set
+    /// can otherwise make the raw pro-rata countdown jump around in a way
+    /// that reads as broken (e.g. "need 4" -> hit 4 -> "need 5").
+    ///
+    /// Walks every already-logged set in order, recomputing what its own
+    /// requirement would have been and clamping it against the ratchet
+    /// carried from the set before it, then applies the same clamp to the
+    /// upcoming set. An ahead-of-pace set (raw <= 0) has no positive
+    /// "needed" number to carry forward, so the ratchet resets fresh right
+    /// after it — otherwise a big enough early lead would permanently pin
+    /// every later set's requirement to (near) zero even if you actually
+    /// fall behind on a much heavier set down the line.
+    ///
+    /// Returns nil under the same condition paceCellValue does (no usable
+    /// upcoming weight). A negative result still means "ahead of pace by
+    /// this many reps," same as paceCellValue, and is returned unclamped —
+    /// the ratchet only governs the positive ("reps still needed") side.
+    static func ratchetedPaceCellValue(target: ComparisonTarget, loggedSets: [LoggedSetEntry],
+                                       upcomingSetIndex: Int, upcomingRawWeight: Double) -> Double? {
+        guard upcomingRawWeight > 0 else { return nil }
+        var cumulative = 0.0
+        var lastRequirement: Int?
+        for (i, entry) in loggedSets.enumerated() {
+            defer { cumulative += entry.effectiveWeightMoved }
+            guard entry.rawWeight > 0 else { lastRequirement = nil; continue }
+            let m = milestone(atSetIndex: i + 1, setWeightsMoved: target.setWeightsMoved,
+                              total: target.totalWeightMoved)
+            let raw = (m - cumulative) / entry.rawWeight
+            guard raw > 0 else { lastRequirement = nil; continue }
+            var req = Int(ceil(raw))
+            if let last = lastRequirement {
+                req = entry.reps >= last ? min(req, last) : max(req, last)
+            }
+            lastRequirement = req
+        }
+        let m = milestone(atSetIndex: upcomingSetIndex, setWeightsMoved: target.setWeightsMoved,
+                          total: target.totalWeightMoved)
+        let raw = (m - cumulative) / upcomingRawWeight
+        guard raw > 0 else { return raw }
+        var req = Int(ceil(raw))
+        if let last = lastRequirement {
+            let metLast = (loggedSets.last?.reps ?? 0) >= last
+            req = metLast ? min(req, last) : max(req, last)
+        }
+        return Double(req)
+    }
 }

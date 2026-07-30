@@ -61,6 +61,26 @@ struct SettingsView: View {
                         }
 
                         Section {
+                            Toggle("Custom Weight Increase Rule", isOn: Binding(
+                                get: { s.customWeightIncreaseEnabled },
+                                set: { s.customWeightIncreaseEnabled = $0; try? context.save() }))
+                            if s.customWeightIncreaseEnabled {
+                                Stepper("Beat target \(s.customWeightIncreaseStreak) time\(s.customWeightIncreaseStreak == 1 ? "" : "s") in a row",
+                                       value: Binding(
+                                           get: { s.customWeightIncreaseStreak },
+                                           set: { s.customWeightIncreaseStreak = $0; try? context.save() }),
+                                       in: 1...10)
+                                Stepper("Increase by \(Formatters.trim(s.customWeightIncreaseAmount)) lbs",
+                                       value: Binding(
+                                           get: { s.customWeightIncreaseAmount },
+                                           set: { s.customWeightIncreaseAmount = $0; try? context.save() }),
+                                       in: 1.25...25, step: 1.25)
+                            }
+                        } footer: {
+                            Text("Overrides the aggressiveness preset above with a flat rule: bump every set's weight by this amount once you've met or beaten every target rep this many sessions in a row at the same weight.")
+                        }
+
+                        Section {
                             Toggle("Deload Weeks", isOn: Binding(
                                 get: { s.deloadWeeksEnabled },
                                 set: { s.deloadWeeksEnabled = $0; try? context.save() }))

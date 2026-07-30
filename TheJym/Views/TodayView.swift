@@ -31,6 +31,9 @@ struct TodayView: View {
     @State private var showingNextPhasePlanner = false
     @State private var statsPhase: Phase?
     @State private var quickJumpDay: PhaseDay?
+    /// Today's already-logged session for the featured day, opened for
+    /// editing when that day is tapped after it's already done.
+    @State private var editingTodaySession: WorkoutSession?
     @State private var expandedDayIDs: Set<PersistentIdentifier> = []
     @State private var startingQuickWorkout: PhaseDay?
     @State private var showingNewQuickWorkout = false
@@ -97,6 +100,9 @@ struct TodayView: View {
             }
             .navigationDestination(item: $statsPhase) { phase in
                 PhaseStatsView(phase: phase)
+            }
+            .navigationDestination(item: $editingTodaySession) { session in
+                SessionDetailView(session: session)
             }
         }
     }
@@ -338,12 +344,32 @@ struct TodayView: View {
     /// name, since this row already stands out by being first + having the
     /// play button). Fades and strikes through once it's done for today —
     /// still the featured row until midnight, just visibly complete.
+    /// Today's own session for this day, if it's already been logged —
+    /// tapping the featured row once it's done reopens this for editing
+    /// instead of starting a brand new workout on top of it.
+    private func todaySession(for day: PhaseDay) -> WorkoutSession? {
+        let cal = Calendar.current
+        return allSessionsForToday.first {
+            cal.isDateInToday($0.date) && $0.day?.persistentModelID == day.persistentModelID
+        }
+    }
+
+    /// Reopens today's already-logged session for editing if this day is
+    /// done, otherwise jumps into starting it fresh.
+    private func tapFeaturedDay(_ day: PhaseDay, isDone: Bool) {
+        if isDone, let session = todaySession(for: day) {
+            editingTodaySession = session
+        } else {
+            quickJumpDay = day
+        }
+    }
+
     @ViewBuilder
     private func featuredDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
         let isDone = isFeaturedDayDoneToday(day)
         HStack(alignment: .top, spacing: 12) {
             Button {
-                quickJumpDay = day
+                tapFeaturedDay(day, isDone: isDone)
             } label: {
                 Image(systemName: isDone ? "checkmark.circle.fill" : "play.circle.fill")
                     .font(.system(size: 30))
@@ -380,6 +406,8 @@ struct TodayView: View {
         }
         .padding(.vertical, 2)
         .opacity(isDone ? 0.5 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { tapFeaturedDay(day, isDone: isDone) }
     }
 
     /// Any other day in the cycle: just its name, with a disclosure to

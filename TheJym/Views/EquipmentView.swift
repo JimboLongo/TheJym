@@ -9,6 +9,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct EquipmentView: View {
     @Environment(\.dismiss) private var dismiss
@@ -56,6 +57,7 @@ struct EquipmentView: View {
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 70)
+                            Spacer().frame(width: 16)
                             Picker("Sides", selection: Binding(
                                 get: { bar.loadableSides },
                                 set: { bar.loadableSides = $0; try? context.save() })) {
@@ -204,6 +206,16 @@ struct EquipmentView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
+                }
+                // The decimal pad has no Return key of its own — this
+                // accessory bar gives every weight field here a way to
+                // dismiss the keyboard instead of being stuck open.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                        to: nil, from: nil, for: nil)
+                    }
                 }
             }
         }

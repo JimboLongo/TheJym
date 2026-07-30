@@ -60,6 +60,15 @@ struct WorkoutLogView: View {
         guard let phase else { return false }
         return settings?.deloadWeeksEnabled == true && phase.deloadCycle == phase.currentCycle
     }
+    /// The custom auto weight-increase rule's threshold/amount, only when
+    /// the Settings toggle for it is on — nil otherwise, which tells
+    /// suggestNextWeights to fall back to the aggressiveness preset.
+    private var customIncreaseStreak: Int? {
+        settings?.customWeightIncreaseEnabled == true ? settings?.customWeightIncreaseStreak : nil
+    }
+    private var customIncreaseAmount: Double? {
+        settings?.customWeightIncreaseEnabled == true ? settings?.customWeightIncreaseAmount : nil
+    }
 
     /// This day's planned exercises, in order — works whether or not the day
     /// belongs to a Phase (a standalone "quick workout" day has phase nil).
@@ -494,7 +503,9 @@ struct WorkoutLogView: View {
                 var weights = aiOn
                     ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
                                                             aggressiveness: agg, roundingIncrement: increment,
-                                                            isBodyweight: pe.isBodyweight)
+                                                            isBodyweight: pe.isBodyweight,
+                                                            customIncreaseStreak: customIncreaseStreak,
+                                                            customIncreaseAmount: customIncreaseAmount)
                        ?? pe.suggestedWeights)
                     : (logs.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
                        ?? pe.suggestedWeights)
@@ -558,7 +569,9 @@ struct WorkoutLogView: View {
                 var weights = aiOn
                     ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
                                                             aggressiveness: agg, roundingIncrement: increment,
-                                                            isBodyweight: pe.isBodyweight)
+                                                            isBodyweight: pe.isBodyweight,
+                                                            customIncreaseStreak: customIncreaseStreak,
+                                                            customIncreaseAmount: customIncreaseAmount)
                        ?? pe.suggestedWeights)
                     : (logs.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
                        ?? pe.suggestedWeights)
@@ -673,7 +686,8 @@ struct WorkoutLogView: View {
                 let streak = ProgressionEngine.currentStreak(targetReps: d.targetReps, history: combinedHistory)
                 let suggestion = ProgressionEngine.suggestNextWeights(
                     targetReps: d.targetReps, history: combinedHistory,
-                    aggressiveness: agg, roundingIncrement: increment, isBodyweight: d.isBodyweight)
+                    aggressiveness: agg, roundingIncrement: increment, isBodyweight: d.isBodyweight,
+                    customIncreaseStreak: customIncreaseStreak, customIncreaseAmount: customIncreaseAmount)
                 let currentWeights = log.sortedSets.map { d.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
                 entries.append(RecapEntry(exerciseName: d.name,
                                           previousTotal: priorLogs.last?.totalWeightMoved,
@@ -728,6 +742,8 @@ struct WorkoutLogView: View {
 struct ExercisePageView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Bar.name) private var allBars: [Bar]
+    @Query private var settingsList: [AppSettings]
+    private var settings: AppSettings? { settingsList.first }
 
     @Binding var draft: WorkoutLogView.ExerciseDraft
     let allLogs: [ExerciseLog]
@@ -754,6 +770,13 @@ struct ExercisePageView: View {
     /// together. Reset per exercise implicitly since this view is recreated
     /// per exercise page.
     @State private var paceTabSelection = 0
+    /// Shown when a set number is tapped — every past log of this exercise,
+    /// History-tab styled.
+    @State private var showFullHistory = false
+    /// Non-nil briefly right after this exercise collapses, if today's
+    /// total beat one of the three comparisons — drives the celebration
+    /// overlay, sized to whichever one it was.
+    @State private var celebrationTier: CelebrationBurst.Tier?
 
     /// Up to the 3 most recently logged workouts of this exercise (already
     /// saved — the one in progress right now isn't in allLogs yet), most
@@ -765,26 +788,88 @@ struct ExercisePageView: View {
             .prefix(3))
     }
 
+    /// Page 0's content — the live pace comparisons — pulled out into its
+    /// own property so it can also back page 4, the invisible wraparound
+    /// clone the TabView briefly lands on when swiping right past the last
+    /// real page.
+    @ViewBuilder
+    private var comparisonsPage: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch draft.goalType {
+            case .fixedSets:
+                ForEach(comparisons) { c in
+                    PaceRow(target: c, draft: draft, currentBodyweight: currentBodyweight)
+                }
+            case .repTotal(let target):
+                ForEach(repTotalComparisons(target: target)) { c in
+                    RepTotalPaceRow(target: c,
+                                   setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
+                                   loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                }
+            }
+        }
+        // Without this, a page shorter than the panel's fixed height
+        // centers vertically instead of hugging the top like the other
+        // pages do.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
     @ViewBuilder
     private var previousLogsPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Previous Workouts").font(.caption.bold()).foregroundStyle(.secondary)
-                if previousLogs.isEmpty {
-                    Text("No previous workouts yet.").font(.caption2).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Previous Workouts").font(.caption.bold()).foregroundStyle(.secondary)
+            if previousLogs.isEmpty {
+                Text("No previous workouts yet.").font(.caption2).foregroundStyle(.secondary)
+            }
+            ForEach(previousLogs, id: \.persistentModelID) { log in
+                VStack(alignment: .leading, spacing: 2) {
+                    if let date = log.session?.date {
+                        Text(Formatters.date.string(from: date)).font(.caption2.bold())
+                    }
+                    SetsGrid(weightLabels: PaceEngine.weightLabels(for: log),
+                            repLabels: log.sortedSets.map { String($0.reps) })
                 }
-                ForEach(previousLogs, id: \.persistentModelID) { log in
-                    VStack(alignment: .leading, spacing: 2) {
-                        if let date = log.session?.date {
-                            Text(Formatters.date.string(from: date)).font(.caption2.bold())
-                        }
-                        SetsGrid(weightLabels: PaceEngine.weightLabels(for: log),
-                                repLabels: log.sortedSets.map { String($0.reps) })
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Suggested warm-up ramp (40/60/80% of today's heaviest entered
+    /// working weight, tapering reps down as the weight climbs) — based on
+    /// what's actually been typed in for today, not history.
+    private var warmupSets: [(weight: Double, reps: Int)] {
+        guard let top = uniqueSetWeights.max(), top > 0 else { return [] }
+        let increment = exerciseDef?.equipment?.isDumbbell == true ? dumbbellIncrement : (plateSizes.min() ?? 2.5)
+        let scheme: [(pct: Double, reps: Int)] = [(0.4, 8), (0.6, 5), (0.8, 3)]
+        return scheme.map { pct, reps in
+            let raw = top * pct
+            let rounded = increment > 0 ? (raw / increment).rounded() * increment : raw
+            return (max(0, rounded), reps)
+        }
+    }
+
+    @ViewBuilder
+    private var warmupPage: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Warm-Up Sets").font(.caption.bold()).foregroundStyle(.secondary)
+            if warmupSets.isEmpty {
+                Text("Enter today's working weight to see suggested warm-up sets.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(warmupSets.enumerated()), id: \.offset) { i, s in
+                    HStack(spacing: 12) {
+                        Text("Set \(i + 1)").font(.caption.bold()).foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .leading)
+                        Text("\(Formatters.trim(s.weight)) lbs")
+                            .font(.system(.caption, design: .monospaced))
+                        Spacer()
+                        Text("\(s.reps) reps")
+                            .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     /// Distinct, nonzero weights entered across today's sets for this
@@ -797,63 +882,61 @@ struct ExercisePageView: View {
 
     @ViewBuilder
     private var plateCalculatorPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                if let bar = exerciseDef?.equipment {
-                    Text(bar.isDumbbell ? "Dumbbell Match" : "Plate Calculator")
-                        .font(.caption.bold()).foregroundStyle(.secondary)
-                    if uniqueSetWeights.isEmpty {
-                        Text("No weights entered yet.").font(.caption2).foregroundStyle(.secondary)
-                    } else if bar.isDumbbell {
-                        ForEach(uniqueSetWeights, id: \.self) { target in
-                            dumbbellMatchRow(bar: bar, target: target)
-                        }
-                    } else {
-                        ForEach(uniqueSetWeights, id: \.self) { target in
-                            plateBreakdownRow(bar: bar, target: target)
-                        }
+        VStack(alignment: .leading, spacing: 10) {
+            if let bar = exerciseDef?.equipment {
+                Text(bar.isDumbbell ? "Dumbbell Match" : "Plate Calculator")
+                    .font(.caption.bold()).foregroundStyle(.secondary)
+                if uniqueSetWeights.isEmpty {
+                    Text("No weights entered yet.").font(.caption2).foregroundStyle(.secondary)
+                } else if bar.isDumbbell {
+                    ForEach(uniqueSetWeights, id: \.self) { target in
+                        dumbbellMatchRow(bar: bar, target: target)
                     }
-                } else if let def = exerciseDef {
-                    Text("No equipment tagged for this exercise yet.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Menu {
-                        ForEach(allBars) { bar in
-                            Button(bar.name) {
-                                def.equipment = bar
-                                try? context.save()
-                            }
-                        }
-                        if !allBars.isEmpty { Divider() }
-                        Button {
-                            showAddEquipmentSheet = true
-                        } label: {
-                            Label("New Equipment…", systemImage: "plus")
-                        }
-                    } label: {
-                        Label("Quick Add Equipment", systemImage: "plus.circle")
-                            .font(.caption.bold())
+                } else {
+                    ForEach(uniqueSetWeights, id: \.self) { target in
+                        plateBreakdownRow(bar: bar, target: target)
                     }
-                    .sheet(isPresented: $showAddEquipmentSheet) {
-                        NewEquipmentSheet { bar in
+                }
+            } else if let def = exerciseDef {
+                Text("No equipment tagged for this exercise yet.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Menu {
+                    ForEach(allBars) { bar in
+                        Button(bar.name) {
                             def.equipment = bar
                             try? context.save()
                         }
                     }
-                } else {
-                    Text("Add this exercise in the Exercises tab to tag equipment for it.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if !allBars.isEmpty { Divider() }
+                    Button {
+                        showAddEquipmentSheet = true
+                    } label: {
+                        Label("New Equipment…", systemImage: "plus")
+                    }
+                } label: {
+                    Label("Quick Add Equipment", systemImage: "plus.circle")
+                        .font(.caption.bold())
                 }
-
-                if let def = exerciseDef, !def.notes.isEmpty {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
-                        Text(def.notes).font(.subheadline)
+                .sheet(isPresented: $showAddEquipmentSheet) {
+                    NewEquipmentSheet { bar in
+                        def.equipment = bar
+                        try? context.save()
                     }
                 }
+            } else {
+                Text("Add this exercise in the Exercises tab to tag equipment for it.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let def = exerciseDef, !def.notes.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
+                    Text(def.notes).font(.subheadline)
+                }
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -897,15 +980,41 @@ struct ExercisePageView: View {
         }
     }
 
+    /// Owned clip-on attachment sizes (1.25 / 2.5 lb), from Settings — lets
+    /// the dumbbell match below hit a target between two owned dumbbell
+    /// weights instead of only ever reporting the closest bare one.
+    private var dumbbellAttachmentSizes: [Double] {
+        var sizes: [Double] = []
+        if settings?.hasDumbbell125Attachment == true { sizes.append(1.25) }
+        if settings?.hasDumbbell25Attachment == true { sizes.append(2.5) }
+        return sizes
+    }
+
+    private func attachmentSummary(_ attachments: [Double]) -> String {
+        var counts: [Double: Int] = [:]
+        for a in attachments { counts[a, default: 0] += 1 }
+        return counts.sorted { $0.key > $1.key }.map { size, count in
+            count == 1 ? "one \(Formatters.trim(size)) lb attachment" : "\(Formatters.trim(size)) lb attachment ×\(count)"
+        }.joined(separator: " + ")
+    }
+
     @ViewBuilder
     private func dumbbellMatchRow(bar: Bar, target: Double) -> some View {
         HStack {
             Text("\(Formatters.trim(target)) lbs").font(.caption.bold())
             Spacer()
-            if let closest = bar.dumbbellWeights.min(by: { abs($0 - target) < abs($1 - target) }) {
-                Text(closest == target ? "Exact match: \(Formatters.trim(closest)) lb" : "Closest: \(Formatters.trim(closest)) lb")
-                    .font(.caption2)
-                    .foregroundStyle(closest == target ? .green : .orange)
+            if let match = PlateCalculator.dumbbellMatch(target: target, ownedWeights: bar.dumbbellWeights,
+                                                         attachmentSizes: dumbbellAttachmentSizes) {
+                if match.attachments.isEmpty {
+                    Text("Exact match: \(Formatters.trim(match.baseWeight)) lb")
+                        .font(.caption2).foregroundStyle(.green)
+                } else {
+                    Text("\(Formatters.trim(match.baseWeight)) lb + \(attachmentSummary(match.attachments))")
+                        .font(.caption2).foregroundStyle(.green)
+                }
+            } else if let closest = bar.dumbbellWeights.min(by: { abs($0 - target) < abs($1 - target) }) {
+                Text("Closest: \(Formatters.trim(closest)) lb")
+                    .font(.caption2).foregroundStyle(.orange)
             } else {
                 Text("No dumbbell weights set for \(bar.name)")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -942,17 +1051,6 @@ struct ExercisePageView: View {
         return PaceEngine.repTotalComparisons(for: draft.name, target: target,
                                               currentWeightsKey: weightsKey, allLogs: allLogs)
     }
-    /// Weights for sets not yet logged (reps missing), using entered weight or 0.
-    private var remainingWeights: [Double] {
-        draft.sets.filter { $0.reps == nil }.map { $0.weight ?? 0 }
-    }
-    /// Average weight moved per rep so far this workout — used to translate
-    /// a beaten-by/fell-short-by weight delta into an equivalent rep count.
-    private var avgWeightPerRep: Double {
-        let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)
-        guard totalReps > 0 else { return 0 }
-        return draft.loggedTotal(bodyweight: currentBodyweight) / Double(totalReps)
-    }
     /// The +/- step for this exercise's weight fields: the smallest plate
     /// you own for barbell/plate work, or the finest dumbbell increment
     /// (attachments considered) for a dumbbell exercise.
@@ -976,10 +1074,10 @@ struct ExercisePageView: View {
         currentBodyweight.map { "\(Formatters.trim($0)) (BW) +" } ?? "BW +"
     }
     private let weightColumnWidth: CGFloat = 100
-    /// The pace panel's fixed height — tall enough for all 5 previous
-    /// workouts (with a title) or the plate-calculator page's typical
-    /// content to fit without needing to scroll internally.
-    private let pacePanelHeight: CGFloat = 240
+    /// The pace panel's fixed height — tall enough for the previous-
+    /// workouts, plate-calculator, and warm-up pages' typical content to
+    /// fit without any of them needing to scroll internally.
+    private let pacePanelHeight: CGFloat = 260
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
     /// sets, plus the header and pace panel, fit within one page height.
     private var wheelHeight: CGFloat {
@@ -1029,50 +1127,57 @@ struct ExercisePageView: View {
 
             // Pace panel — page 0 is the live comparisons (always shows all
             // three; any with no prior data yet just says so instead of
-            // being omitted), page 1 is the plate/dumbbell calculator (plus
-            // Notes) for today's own set weights, page 2 lists up to the
-            // previous 3 logged workouts of this exercise.
+            // being omitted), page 1 lists up to the previous 3 logged
+            // workouts of this exercise, page 2 is the plate/dumbbell
+            // calculator (plus Notes) for today's own set weights, page 3
+            // is a suggested warm-up ramp toward today's top working
+            // weight. Page 4 is an invisible clone of page 0 — swiping
+            // right past page 3 lands there, and onChange below silently
+            // snaps back to the real page 0 right after, so it reads as
+            // wrapping around to the front instead of dead-ending.
             TabView(selection: $paceTabSelection) {
-                VStack(alignment: .leading, spacing: 6) {
-                    switch draft.goalType {
-                    case .fixedSets:
-                        ForEach(comparisons) { c in
-                            PaceRow(target: c,
-                                    loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
-                                    setIndex: draft.sets.filter(\.isLogged).count + 1,
-                                    remainingWeights: remainingWeights,
-                                    avgWeightPerRep: avgWeightPerRep)
-                        }
-                    case .repTotal(let target):
-                        ForEach(repTotalComparisons(target: target)) { c in
-                            RepTotalPaceRow(target: c,
-                                           setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
-                                           loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
-                        }
-                    }
-                }
-                // Without this, a page shorter than the panel's fixed
-                // height centers vertically instead of hugging the top,
-                // unlike the other two pages (both ScrollViews, which
-                // already start at the top by default).
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .tag(0)
-
-                plateCalculatorPage
-                    .tag(1)
-
-                previousLogsPage
-                    .tag(2)
+                comparisonsPage.tag(0)
+                previousLogsPage.tag(1)
+                plateCalculatorPage.tag(2)
+                warmupPage.tag(3)
+                comparisonsPage.tag(4)
             }
             .tabViewStyle(.page(indexDisplayMode: .automatic))
             .frame(height: pacePanelHeight)
             .padding(10)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             .padding(.top, 10)
+            .onChange(of: paceTabSelection) { _, newValue in
+                guard newValue == 4 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { paceTabSelection = 0 }
+                }
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
         .frame(height: pageHeight, alignment: .top)
+        .sheet(isPresented: $showFullHistory) {
+            ExerciseFullHistoryView(exerciseName: draft.name, allLogs: allLogs)
+        }
+        .overlay {
+            if let tier = celebrationTier {
+                CelebrationBurst(tier: tier)
+                    .allowsHitTesting(false)
+            }
+        }
+        // Swiping to (or back to) this exercise from another one resets its
+        // pace panel to the Pace Calculator page — a LazyVStack can keep
+        // this view's @State alive across a round trip, so without this a
+        // revisited exercise could reopen on whatever sub-page it was left
+        // on instead of always starting fresh.
+        .onChange(of: currentPageID) { _, newValue in
+            if newValue == "ex-\(draft.id)" {
+                paceTabSelection = 0
+            }
+        }
     }
 
     private var header: some View {
@@ -1088,7 +1193,7 @@ struct ExercisePageView: View {
                 Spacer()
                 if draft.isExpanded {
                     Button {
-                        withAnimation { draft.isExpanded = false; currentPageID = "summary" }
+                        withAnimation { collapseAndCelebrate() }
                     } label: {
                         Image(systemName: "checkmark.circle")
                     }
@@ -1167,6 +1272,8 @@ struct ExercisePageView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { showFullHistory = true }
 
                     weightCell(for: i, height: wheelHeight)
 
@@ -1314,8 +1421,46 @@ struct ExercisePageView: View {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard generation == collapseGeneration,
                   draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
-            withAnimation { draft.isExpanded = false; currentPageID = "summary" }
+            withAnimation { collapseAndCelebrate() }
         }
+    }
+
+    /// Collapses the exercise to its summary and, if today's total beat one
+    /// of the three comparisons, briefly shows a celebration scaled to the
+    /// best one beaten — All-Time Best is the biggest, Best at Weights is
+    /// medium, and just beating the Previous Workout is the smallest.
+    private func collapseAndCelebrate() {
+        celebrationTier = bestBeatenTier()
+        draft.isExpanded = false
+        currentPageID = "summary"
+        if celebrationTier != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
+                withAnimation { celebrationTier = nil }
+            }
+        }
+    }
+
+    /// The most prestigious comparison today's total actually beat, if any
+    /// — same "beaten" definition PaceRow/RepTotalPaceRow use (today's
+    /// resolved total vs. that comparison's), just picking the best one
+    /// among however many got beaten instead of showing each individually.
+    private func bestBeatenTier() -> CelebrationBurst.Tier? {
+        let loggedTotal = draft.loggedTotal(bodyweight: currentBodyweight)
+        let beatenKinds: Set<ComparisonTarget.Kind>
+        switch draft.goalType {
+        case .fixedSets:
+            beatenKinds = Set(comparisons
+                .filter { $0.hasData && loggedTotal > $0.totalWeightMoved }
+                .map(\.kind))
+        case .repTotal(let target):
+            beatenKinds = Set(repTotalComparisons(target: target)
+                .filter { $0.hasData && loggedTotal > $0.totalWeightMoved }
+                .map(\.kind))
+        }
+        if beatenKinds.contains(.bestForExercise) { return .allTimeBest }
+        if beatenKinds.contains(.bestAtTheseWeights) { return .bestAtWeights }
+        if beatenKinds.contains(.lastLogged) { return .previousWorkout }
+        return nil
     }
 
     /// Shared weight-entry cell for one set — a plate/dumbbell wheel picker
@@ -1484,11 +1629,7 @@ struct ExercisePageView: View {
             switch draft.goalType {
             case .fixedSets:
                 ForEach(comparisons) { c in
-                    PaceRow(target: c,
-                            loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
-                            setIndex: draft.sets.filter(\.isLogged).count + 1,
-                            remainingWeights: remainingWeights,
-                            avgWeightPerRep: avgWeightPerRep)
+                    PaceRow(target: c, draft: draft, currentBodyweight: currentBodyweight)
                 }
             case .repTotal(let target):
                 ForEach(repTotalComparisons(target: target)) { c in
@@ -1597,6 +1738,89 @@ struct ExplosionBurst: View {
     }
 }
 
+// MARK: - Scaled celebration for beating a pace-calculator comparison on
+// exercise completion — bigger the more prestigious the comparison beaten.
+
+struct CelebrationBurst: View {
+    enum Tier {
+        case previousWorkout
+        case bestAtWeights
+        case allTimeBest
+
+        var particleCount: Int {
+            switch self {
+            case .previousWorkout: return 10
+            case .bestAtWeights: return 20
+            case .allTimeBest: return 36
+            }
+        }
+        var radius: Double {
+            switch self {
+            case .previousWorkout: return 34
+            case .bestAtWeights: return 58
+            case .allTimeBest: return 90
+            }
+        }
+        var duration: Double {
+            switch self {
+            case .previousWorkout: return 0.45
+            case .bestAtWeights: return 0.65
+            case .allTimeBest: return 0.9
+            }
+        }
+        var label: String? {
+            switch self {
+            case .previousWorkout: return nil
+            case .bestAtWeights: return "PR! 🔥"
+            case .allTimeBest: return "ALL-TIME BEST! 🏆"
+            }
+        }
+        var colors: [Color] {
+            switch self {
+            case .previousWorkout: return [.green]
+            case .bestAtWeights: return [.green, .yellow]
+            case .allTimeBest: return [.yellow, .orange, .red]
+            }
+        }
+    }
+
+    let tier: Tier
+    @State private var expanded = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<tier.particleCount, id: \.self) { i in
+                Circle()
+                    .fill(tier.colors[i % tier.colors.count])
+                    .frame(width: 6, height: 6)
+                    .offset(expanded ? offset(for: i) : .zero)
+                    .opacity(expanded ? 0 : 1)
+                    .scaleEffect(expanded ? 0.3 : 1)
+            }
+            if let label = tier.label {
+                Text(label)
+                    .font(.headline.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.black.opacity(0.75), in: Capsule())
+                    .opacity(expanded ? 1 : 0)
+                    .scaleEffect(expanded ? 1 : 0.5)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: tier.duration)) {
+                expanded = true
+            }
+        }
+    }
+
+    private func offset(for index: Int) -> CGSize {
+        let angle = (Double(index) / Double(tier.particleCount)) * 2 * .pi
+        return CGSize(width: cos(angle) * tier.radius, height: sin(angle) * tier.radius)
+    }
+}
+
 /// Weights over reps, Grid-aligned by set so every "/" lands in the same
 /// horizontal spot on both lines — same layout convention History uses for
 /// a logged exercise's sets, just without History's optional target-reps
@@ -1696,14 +1920,30 @@ struct RepTotalPaceRow: View {
 
 struct PaceRow: View {
     let target: ComparisonTarget
-    let loggedSoFar: Double
-    /// 1-based index of the set about to be attempted (already-logged count
-    /// + 1) — looked up against the target's own set-by-set pacing.
-    let setIndex: Int
-    let remainingWeights: [Double]
+    let draft: WorkoutLogView.ExerciseDraft
+    let currentBodyweight: Double?
+
+    private var loggedSoFar: Double { draft.loggedTotal(bodyweight: currentBodyweight) }
+    private var remainingWeights: [Double] {
+        draft.sets.filter { $0.reps == nil }.map { $0.weight ?? 0 }
+    }
     /// Average weight moved per rep so far — converts a beaten-by/fell-
     /// short-by weight delta into an equivalent whole-rep count.
-    let avgWeightPerRep: Double
+    private var avgWeightPerRep: Double {
+        let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)
+        guard totalReps > 0 else { return 0 }
+        return loggedSoFar / Double(totalReps)
+    }
+    /// Each already-logged set's own numbers, in the shape the ratcheted
+    /// pace math needs to reconstruct what each set's own requirement was.
+    private var loggedSetEntries: [PaceEngine.LoggedSetEntry] {
+        draft.sets.filter(\.isLogged).map { s in
+            let raw = s.weight ?? 0
+            let effective = draft.isBodyweight ? raw + (currentBodyweight ?? 0) : raw
+            return PaceEngine.LoggedSetEntry(rawWeight: raw, effectiveWeightMoved: effective * Double(s.reps ?? 0),
+                                             reps: s.reps ?? 0)
+        }
+    }
 
     /// Whole reps (rounded up — a partial rep still costs you a full one).
     private func repsEquivalent(_ lbsDelta: Double) -> String {
@@ -1761,14 +2001,16 @@ struct PaceRow: View {
         }
     }
 
-    /// The pro-rata pace cell for the upcoming set (PaceEngine.paceCellValue)
-    /// — nil (and so nothing rendered here) once there's no next set left to
+    /// The pro-rata pace cell for the upcoming set, ratcheted against the
+    /// previous set's own requirement (PaceEngine.ratchetedPaceCellValue) —
+    /// nil (and so nothing rendered here) once there's no next set left to
     /// give a pace reading for.
     @ViewBuilder
     private var paceCellLabel: some View {
-        if let cell = PaceEngine.paceCellValue(target: target, setIndex: setIndex,
-                                               loggedSoFar: loggedSoFar,
-                                               columnWeight: remainingWeights.first ?? 0) {
+        let setIndex = draft.sets.filter(\.isLogged).count + 1
+        if let cell = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: loggedSetEntries,
+                                                        upcomingSetIndex: setIndex,
+                                                        upcomingRawWeight: remainingWeights.first ?? 0) {
             // Whole reps only — you can't do a fractional one. Round toward
             // whichever direction doesn't overstate the claim: floor "ahead"
             // (don't claim more cushion than's actually banked), ceil "need"

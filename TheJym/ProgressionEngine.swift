@@ -28,11 +28,19 @@ enum ProgressionEngine {
     /// suggestions should only ever move the added load, never bodyweight.
     /// Every other caller (the vast majority — non-bodyweight exercises)
     /// leaves this at its default and sees byte-identical behavior.
+    /// `customIncreaseStreak`/`customIncreaseAmount`: when both are
+    /// provided (Settings' custom auto weight-increase rule, enabled),
+    /// they completely replace the aggressiveness preset's own jump logic
+    /// below — a flat "streak >= N -> +X lb" rule instead of the
+    /// surplus-scaled small/big/huge jumps. Leave both nil (the default)
+    /// to keep using the aggressiveness preset.
     static func suggestNextWeights(targetReps: [Int],
                                    history: [ExerciseLog],
                                    aggressiveness: AIAggressiveness,
                                    roundingIncrement: Double = 2.5,
-                                   isBodyweight: Bool = false) -> [Double]? {
+                                   isBodyweight: Bool = false,
+                                   customIncreaseStreak: Int? = nil,
+                                   customIncreaseAmount: Double? = nil) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
         let latestWeights = isBodyweight
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
@@ -44,15 +52,19 @@ enum ProgressionEngine {
         let hugeJump: Double = 10
 
         var increment: Double = 0
-        switch aggressiveness {
-        case .conservative:
-            if streak >= 3 { increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? bigJump : smallJump }
-        case .moderate:
-            if streak >= 2 { increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? bigJump : smallJump }
-            else if streak >= 1 && avgSurplus(latest, targetReps: targetReps) >= 3 { increment = smallJump }
-        case .aggressive:
-            if metAll(latest, targetReps: targetReps) {
-                increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? hugeJump : bigJump
+        if let customStreak = customIncreaseStreak, let customAmount = customIncreaseAmount {
+            if streak >= customStreak { increment = customAmount }
+        } else {
+            switch aggressiveness {
+            case .conservative:
+                if streak >= 3 { increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? bigJump : smallJump }
+            case .moderate:
+                if streak >= 2 { increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? bigJump : smallJump }
+                else if streak >= 1 && avgSurplus(latest, targetReps: targetReps) >= 3 { increment = smallJump }
+            case .aggressive:
+                if metAll(latest, targetReps: targetReps) {
+                    increment = avgSurplus(latest, targetReps: targetReps) >= 2 ? hugeJump : bigJump
+                }
             }
         }
 

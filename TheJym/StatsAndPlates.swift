@@ -516,4 +516,44 @@ enum PlateCalculator {
         if abs(remaining) < 1e-6 { remaining = 0 }
         return (out, remaining)
     }
+
+    struct DumbbellMatch {
+        let baseWeight: Double
+        /// One entry per clip-on attachment used, largest first.
+        let attachments: [Double]
+    }
+
+    /// Finds an owned dumbbell weight that, topped up with owned clip-on
+    /// attachments (1.25 / 2.5 lb), hits `target` exactly — e.g. a 35 lb
+    /// dumbbell + one 1.25 lb attachment for 36.25, or + two for 37.5.
+    /// Prefers whichever owned base weight needs the fewest attachments;
+    /// nil if no owned weight/attachment combination reaches it exactly.
+    static func dumbbellMatch(target: Double, ownedWeights: [Double],
+                              attachmentSizes: [Double]) -> DumbbellMatch? {
+        var best: (base: Double, combo: [Double])?
+        for base in ownedWeights {
+            let gap = target - base
+            guard gap >= -1e-6 else { continue }
+            if abs(gap) < 1e-6 {
+                if best == nil || best!.combo.count > 0 || base > best!.base {
+                    best = (base, [])
+                }
+                continue
+            }
+            guard !attachmentSizes.isEmpty else { continue }
+            var remaining = gap
+            var combo: [Double] = []
+            for size in attachmentSizes.sorted(by: >) {
+                let count = Int((remaining / size) + 1e-9)
+                for _ in 0..<count { combo.append(size) }
+                remaining -= Double(count) * size
+            }
+            guard abs(remaining) < 1e-6 else { continue }
+            if best == nil || combo.count < best!.combo.count {
+                best = (base, combo)
+            }
+        }
+        guard let best else { return nil }
+        return DumbbellMatch(baseWeight: best.base, attachments: best.combo)
+    }
 }

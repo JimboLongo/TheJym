@@ -65,6 +65,14 @@ final class AppSettings {
     /// it — cancelled if you already have that week's entry.
     var weightRemindersEnabled: Bool = false
     var weightReminderHour: Int = 9   // 24-hour clock, local time
+    /// Custom auto weight-increase rule — when enabled, replaces the AI
+    /// Assistant's aggressiveness-preset jump logic with a flat rule: bump
+    /// every set's weight by customWeightIncreaseAmount once every target
+    /// rep's been met or beaten customWeightIncreaseStreak sessions in a
+    /// row at the same weight.
+    var customWeightIncreaseEnabled: Bool = false
+    var customWeightIncreaseStreak: Int = 2
+    var customWeightIncreaseAmount: Double = 5
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }

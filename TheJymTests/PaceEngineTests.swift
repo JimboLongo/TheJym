@@ -51,4 +51,40 @@ final class PaceEngineTests: XCTestCase {
     func testPaceCellValueNilWithoutAColumnWeight() {
         XCTAssertNil(PaceEngine.paceCellValue(target: target, setIndex: 3, loggedSoFar: 500, columnWeight: 0))
     }
+
+    // MARK: - Ratcheted pace cell (monotonic across sets)
+
+    private let ratchetTarget = ComparisonTarget(
+        kind: .lastLogged, date: .now, totalWeightMoved: 200,
+        setWeightsMoved: [100, 100], reps: [2, 2], weightLabels: ["50", "50"])
+
+    func testRatchetedPaceCellClampsDownAfterMeetingRequirement() {
+        // Set 1 needed 3 (raw ceil of 2.01) and got exactly 3 -- met it.
+        let logged = [PaceEngine.LoggedSetEntry(rawWeight: 50, effectiveWeightMoved: 150, reps: 3)]
+        // Unclamped, a much lighter set-2 weight would raw out to needing 6
+        // reps -- but since set 1 was met, set 2 must not demand more than 3.
+        guard let cell = PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: logged,
+                                                           upcomingSetIndex: 2, upcomingRawWeight: 10) else {
+            return XCTFail("Expected a cell value")
+        }
+        XCTAssertEqual(cell, 3, accuracy: 1e-9)
+    }
+
+    func testRatchetedPaceCellClampsUpAfterFallingShort() {
+        // Set 1 needed 3 but only got 1 -- fell short.
+        let logged = [PaceEngine.LoggedSetEntry(rawWeight: 50, effectiveWeightMoved: 50, reps: 1)]
+        // Unclamped, a much heavier set-2 weight would raw out to needing
+        // only 2 reps -- but since set 1 fell short, set 2 must not demand
+        // fewer than 3.
+        guard let cell = PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: logged,
+                                                           upcomingSetIndex: 2, upcomingRawWeight: 100) else {
+            return XCTFail("Expected a cell value")
+        }
+        XCTAssertEqual(cell, 3, accuracy: 1e-9)
+    }
+
+    func testRatchetedPaceCellNilWithoutAnUpcomingWeight() {
+        XCTAssertNil(PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: [],
+                                                       upcomingSetIndex: 1, upcomingRawWeight: 0))
+    }
 }

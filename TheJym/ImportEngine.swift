@@ -40,6 +40,10 @@
 //  creates a new placeholder there (weight TBD, 2-sided) instead of being
 //  dropped, so just fill in its real weight afterward.
 //
+//  An optional Notes column is imported as plain text onto that exercise's
+//  own Notes field (Exercises tab) — only applies to real exercise rows,
+//  since rest-day activities and body weight logs have no notes field.
+//
 //  For a rest-day activity (a walk, yoga, etc. — not a logged exercise),
 //  write Day as "Rest" (requires a Day column). Exercise becomes the
 //  activity's name; Reps optionally holds a distance (e.g. "3.1mi", "5 km"
@@ -100,6 +104,21 @@ enum ImportEngine {
         let phaseNumber: Int?      // optional "Phase" column
         let dayLabel: String?      // optional "Day" column, e.g. "Push A"
         let equipmentName: String? // optional "Equipment" column — "Bodyweight" or a Bar name
+        /// Optional "Notes" column, imported as plain text onto the matching
+        /// exercise's ExerciseDef.notes — there's no per-log notes field, so
+        /// this only applies to real exercise rows, not rest/weight rows.
+        let notes: String?
+
+        init(date: Date, exerciseName: String, kind: ImportedRowKind, phaseNumber: Int?,
+             dayLabel: String?, equipmentName: String?, notes: String? = nil) {
+            self.date = date
+            self.exerciseName = exerciseName
+            self.kind = kind
+            self.phaseNumber = phaseNumber
+            self.dayLabel = dayLabel
+            self.equipmentName = equipmentName
+            self.notes = notes
+        }
     }
 
     /// "Rest" and "Rest Day" both mark a rest-day row — the app's own
@@ -241,6 +260,7 @@ enum ImportEngine {
         let phaseIdx = header.firstIndex(where: { $0.hasPrefix("phase") })
         let dayIdx = header.firstIndex(where: { $0.hasPrefix("day") })
         let equipmentIdx = header.firstIndex(where: { $0.hasPrefix("equipment") })
+        let notesIdx = header.firstIndex(where: { $0.hasPrefix("note") })
 
         var out: [ImportedEntry] = []
         var skipped = 0
@@ -257,9 +277,11 @@ enum ImportEngine {
             let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let equipmentStr = equipmentIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
+            let notesStr = notesIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let phaseNumber = phaseStr.flatMap { Int($0) }
             let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
             let matchedEquipment = (equipmentStr?.isEmpty == false) ? equipmentStr : nil
+            let matchedNotes = (notesStr?.isEmpty == false) ? notesStr : nil
 
             // Exercise == "Weight" (case-insensitive) marks a body weight
             // log instead of a real exercise — the weight itself is read
@@ -308,7 +330,7 @@ enum ImportEngine {
             out.append(ImportedEntry(date: date, exerciseName: name,
                                      kind: .exercise(goalType: goalType, targetReps: targetReps, weights: weights, reps: reps),
                                      phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
-                                     equipmentName: matchedEquipment))
+                                     equipmentName: matchedEquipment, notes: matchedNotes))
         }
         return (out, skipped)
     }
@@ -494,6 +516,11 @@ enum ImportEngine {
                         ExerciseDef.ensureVariantExists(name: entry.exerciseName, targetReps: targetReps,
                                                         knownDefs: &knownDefs, context: context)
                     }
+                }
+                // Plain text onto the exercise's own Notes field — there's
+                // no per-log notes field, so this is the closest match.
+                if let notes = entry.notes, let def = knownDefs[entry.exerciseName] {
+                    def.notes = notes
                 }
             }
         }
