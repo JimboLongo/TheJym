@@ -722,9 +722,8 @@ struct ExercisePageView: View {
                         if let date = log.session?.date {
                             Text(Formatters.date.string(from: date)).font(.caption2.bold())
                         }
-                        Text(log.sortedSets.map { String($0.reps) }.joined(separator: "/") + " reps @ " + PaceEngine.weightsSummaryString(for: log))
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                        SetsGrid(weightLabels: PaceEngine.weightLabels(for: log),
+                                repLabels: log.sortedSets.map { String($0.reps) })
                     }
                 }
             }
@@ -812,10 +811,9 @@ struct ExercisePageView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 ForEach(plates) { p in
-                    HStack {
+                    HStack(spacing: 6) {
                         Text("\(Formatters.trim(p.plate)) lb plate")
                             .font(.system(.caption2, design: .monospaced))
-                        Spacer()
                         Text(bar.loadableSides == 1 ? "× \(p.countPerSide)" : "× \(p.countPerSide) per side")
                             .font(.system(.caption2, design: .monospaced)).bold()
                     }
@@ -1393,25 +1391,44 @@ struct ExercisePageView: View {
     }
 
     /// Compact summary of today's entered weights/reps, shown once the
-    /// exercise auto-collapses (mirrors the historical pace-calc rows).
+    /// exercise auto-collapses (or is manually collapsed) — grid-aligned by
+    /// set like the historical pace-calc rows, and includes each of those
+    /// same three comparisons' results so how today stacks up is visible at
+    /// a glance without swiping the pace panel back open.
     private var currentWorkoutRow: some View {
-        let weights = draft.sets
+        let weightLabels = draft.sets
             .map { $0.weightText.isEmpty ? "—" : (draft.isBodyweight ? "BW+\($0.weightText)" : $0.weightText) }
-            .joined(separator: "/")
-        let reps = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }.joined(separator: "/")
+        let repLabels = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }
         let totalLine: String? = {
             guard case .repTotal(let target) = draft.goalType else { return nil }
             return "\(draft.repTotalSoFar)/\(target) reps"
         }()
 
-        return VStack(alignment: .leading, spacing: 2) {
-            Text("Current Workout").font(.caption.bold())
-            if let totalLine {
-                Text(totalLine).font(.caption2.bold()).foregroundStyle(.blue)
+        return VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Current Workout").font(.caption.bold())
+                if let totalLine {
+                    Text(totalLine).font(.caption2.bold()).foregroundStyle(.blue)
+                }
+                SetsGrid(weightLabels: weightLabels, repLabels: repLabels)
             }
-            Text("\(reps) reps @ \(weights) lbs")
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.secondary)
+
+            switch draft.goalType {
+            case .fixedSets:
+                ForEach(comparisons) { c in
+                    PaceRow(target: c,
+                            loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
+                            setIndex: draft.sets.filter(\.isLogged).count + 1,
+                            remainingWeights: remainingWeights,
+                            avgWeightPerRep: avgWeightPerRep)
+                }
+            case .repTotal(let target):
+                ForEach(repTotalComparisons(target: target)) { c in
+                    RepTotalPaceRow(target: c,
+                                   setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
+                                   loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                }
+            }
         }
         .padding(10)
         .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
@@ -1512,6 +1529,40 @@ struct ExplosionBurst: View {
     }
 }
 
+/// Weights over reps, Grid-aligned by set so every "/" lands in the same
+/// horizontal spot on both lines — same layout convention History uses for
+/// a logged exercise's sets, just without History's optional target-reps
+/// row. Reps are strings (not Int) so a still-in-progress set can show a
+/// "—" placeholder alongside a completed log's real numbers.
+struct SetsGrid: View {
+    let weightLabels: [String]
+    let repLabels: [String]
+
+    var body: some View {
+        let columnCount = max(weightLabels.count, repLabels.count)
+        Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
+            GridRow {
+                ForEach(0..<columnCount, id: \.self) { idx in
+                    Text(idx < weightLabels.count ? weightLabels[idx] : "")
+                    if idx < columnCount - 1 {
+                        Text("/").foregroundStyle(.secondary.opacity(0.5))
+                    }
+                }
+            }
+            GridRow {
+                ForEach(0..<columnCount, id: \.self) { idx in
+                    Text(idx < repLabels.count ? repLabels[idx] : "")
+                    if idx < columnCount - 1 {
+                        Text("/").foregroundStyle(.secondary.opacity(0.5))
+                    }
+                }
+            }
+        }
+        .font(.system(.caption2, design: .monospaced))
+        .foregroundStyle(.secondary)
+    }
+}
+
 // MARK: - repTotal pace row (sets-to-complete, not reps-to-beat)
 
 struct RepTotalPaceRow: View {
@@ -1538,9 +1589,7 @@ struct RepTotalPaceRow: View {
                 }
             }
             if target.hasData {
-                Text(target.setsSummary)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                SetsGrid(weightLabels: target.weightLabels, repLabels: target.reps.map(String.init))
                 comparisonLine
             } else {
                 Text(noDataMessage)
@@ -1615,9 +1664,7 @@ struct PaceRow: View {
                 }
             }
             if target.hasData {
-                Text(target.setsSummary)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                SetsGrid(weightLabels: target.weightLabels, repLabels: target.reps.map(String.init))
                 loggedComparison
             } else {
                 Text(noDataMessage)

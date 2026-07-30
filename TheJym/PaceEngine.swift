@@ -24,7 +24,10 @@ struct ComparisonTarget: Identifiable {
     /// pro-rata pace milestone, which needs to know how the target's own
     /// total was distributed across its sets, not just the final number.
     let setWeightsMoved: [Double]
-    let setsSummary: String        // "6/6/5/4/4/3 reps @ 135/135/135/145/145/145 lbs"
+    let reps: [Int]
+    /// Per-set weight label, bodyweight-aware ("BW+25" vs a plain trimmed
+    /// weight) — paired with `reps` (same index) in a SetsGrid.
+    let weightLabels: [String]
     var hasData: Bool { date != nil }
 }
 
@@ -71,15 +74,15 @@ enum PaceEngine {
 
     private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> ComparisonTarget {
         guard let log else {
-            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], setsSummary: "")
+            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], reps: [], weightLabels: [])
         }
         let sortedSets = log.sortedSets
-        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
                                 setWeightsMoved: sortedSets.map { $0.weight * Double($0.reps) },
-                                setsSummary: "\(reps) reps @ \(weightsSummaryString(for: log))")
+                                reps: sortedSets.map(\.reps),
+                                weightLabels: weightLabels(for: log))
     }
 
     /// "135/135/135 lbs" for a normal log, or "BW+25/BW+25/BW+25 (172 BW)
@@ -96,6 +99,15 @@ enum PaceEngine {
         return "\(addedSeq) (\(bw) BW) lbs"
     }
 
+    /// Per-set weight label, bodyweight-aware ("BW+25" vs a plain trimmed
+    /// weight) — same convention as weightsSummaryString, just not joined
+    /// into one line, so a caller can grid-align them with reps instead.
+    static func weightLabels(for log: ExerciseLog) -> [String] {
+        log.sortedSets.map { set in
+            log.isBodyweight ? "BW+\(Formatters.trim(set.addedWeight ?? 0))" : Formatters.trim(set.weight)
+        }
+    }
+
     // MARK: - repTotal comparisons (sets-to-complete, not reps-to-beat)
 
     struct RepTotalComparisonTarget: Identifiable {
@@ -109,7 +121,8 @@ enum PaceEngine {
         let setsToComplete: Int?
         let firstSetReps: Int?
         let totalWeightMoved: Double
-        let setsSummary: String
+        let reps: [Int]
+        let weightLabels: [String]
         var hasData: Bool { date != nil }
     }
 
@@ -151,16 +164,16 @@ enum PaceEngine {
     private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> RepTotalComparisonTarget {
         guard let log else {
             return RepTotalComparisonTarget(kind: kind, date: nil, setsToComplete: nil,
-                                            firstSetReps: nil, totalWeightMoved: 0, setsSummary: "")
+                                            firstSetReps: nil, totalWeightMoved: 0, reps: [], weightLabels: [])
         }
         let sortedSets = log.sortedSets
-        let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
         return RepTotalComparisonTarget(kind: kind,
                                         date: log.session?.date ?? .distantPast,
                                         setsToComplete: log.repTotalReached ? sortedSets.count : nil,
                                         firstSetReps: sortedSets.first?.reps,
                                         totalWeightMoved: log.totalWeightMoved,
-                                        setsSummary: "\(reps) reps @ \(weightsSummaryString(for: log))")
+                                        reps: sortedSets.map(\.reps),
+                                        weightLabels: weightLabels(for: log))
     }
 
     /// "Finish in N more sets for a PR" — how many sets of room are left

@@ -16,7 +16,8 @@ import XCTest
 final class PaceEngineTests: XCTestCase {
     private let target = ComparisonTarget(
         kind: .lastLogged, date: .now, totalWeightMoved: 1000,
-        setWeightsMoved: [200, 200, 200, 200, 200], setsSummary: "")
+        setWeightsMoved: [200, 200, 200, 200, 200],
+        reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"])
 
     func testMilestoneAtSetIndexWithinTargetsOwnSetCount() {
         // Through set 3: cumulative 600, share 0.6 of 1000 -> 0.6 * 1001 = 600.6
