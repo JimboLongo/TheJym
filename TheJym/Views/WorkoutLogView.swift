@@ -985,6 +985,11 @@ struct ExercisePageView: View {
                         }
                     }
                 }
+                // Without this, a page shorter than the panel's fixed
+                // height centers vertically instead of hugging the top,
+                // unlike the other two pages (both ScrollViews, which
+                // already start at the top by default).
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .tag(0)
 
                 plateCalculatorPage
@@ -1631,11 +1636,13 @@ struct PaceRow: View {
         } else {
             VStack(alignment: .leading, spacing: 1) {
                 paceCellLabel
-                // Overall gap kept as a secondary line regardless of the
-                // pace cell above — the cell alone only speaks to the next
-                // set, not the whole remaining deficit.
-                Text("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar)) overall")
-                    .font(.caption2).foregroundStyle(.secondary)
+                // Only meaningful once there's no next set left to give a
+                // pace reading for instead — while sets remain, you haven't
+                // actually fallen short yet, just not finished.
+                if remainingWeights.isEmpty {
+                    Text("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar)) overall")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
         }
     }
