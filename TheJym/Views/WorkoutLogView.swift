@@ -762,10 +762,15 @@ struct ExercisePageView: View {
     }
     private let weightColumnWidth: CGFloat = 100
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
-    /// sets, plus the header and pace panel, fit within one page height.
+    /// sets, plus the header, pace panel, and (when open) the notes/plate-
+    /// calculator details panel, fit within one page height.
     private var wheelHeight: CGFloat {
         let chromeHeight: CGFloat = 300   // header + pace panel + paddings, estimated
-        let available = pageHeight - chromeHeight
+        // The info-button details panel (notes + plate calculator/dumbbell
+        // match) adds real height above the set rows when open — without
+        // this, opening it could push sets off the bottom of the page.
+        let detailsHeight: CGFloat = draft.showingDetails ? 160 : 0
+        let available = pageHeight - chromeHeight - detailsHeight
         let setCount = max(draft.sets.count, 1)
         let perSet = available / CGFloat(setCount)
         // Taller floor/ceiling than before so more of the previous/next row

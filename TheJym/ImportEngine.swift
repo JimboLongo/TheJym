@@ -51,6 +51,16 @@
 //  History entry, and counts toward the rest-bank streak, same as logging
 //  it live from a Rest day.
 //
+//  For a body weight log (not a real exercise), write Exercise as "Weight"
+//  — the weight itself goes in Reps, not Weights; Sets/Weights are unused:
+//
+//    2026-01-06 |       |        | Weight      |           |                      | 172.5
+//
+//  Creates a BodyWeightEntry for that date — same one the Weight tab and
+//  live logging both read/write. A date that already has an entry (from
+//  before this import, or an earlier "Weight" row in the same file) is
+//  skipped rather than duplicated.
+//
 //  Phase is that phase's number; Day is the day's name (e.g. "Push A"),
 //  matched case-insensitively against that phase's days. If either is
 //  missing or doesn't match an existing Phase/PhaseDay, the row still
@@ -77,6 +87,10 @@ enum ImportEngine {
         case exercise(goalType: GoalType, targetReps: [Int], weights: [Double], reps: [Int])
         /// Sets == "rest" — Weights holds an optional distance (e.g. "3.1mi").
         case restActivity(distance: Double?, distanceUnit: String)
+        /// Exercise == "Weight" — a body weight log, not a real exercise.
+        /// The weight itself is read from the Reps column (Sets/Weights are
+        /// unused), so a body-weight-only row doesn't need real Sets data.
+        case bodyWeight(weight: Double)
     }
 
     struct ImportedEntry {
@@ -101,6 +115,7 @@ enum ImportEngine {
     struct ImportResult {
         var sessionsCreated: Int
         var setsImported: Int
+        var bodyWeightEntriesCreated: Int = 0
     }
 
     // MARK: - Last-cycle pattern detection (import -> auto-drafted Phase)
@@ -246,6 +261,21 @@ enum ImportEngine {
             let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
             let matchedEquipment = (equipmentStr?.isEmpty == false) ? equipmentStr : nil
 
+            // Exercise == "Weight" (case-insensitive) marks a body weight
+            // log instead of a real exercise — the weight itself is read
+            // from Reps (Sets/Weights are unused), so it can share the file
+            // with real exercise rows without needing its own columns.
+            if name.lowercased() == "weight" {
+                if let weight = Double(repsStr) {
+                    out.append(ImportedEntry(date: date, exerciseName: name,
+                                             kind: .bodyWeight(weight: weight),
+                                             phaseNumber: nil, dayLabel: nil, equipmentName: nil))
+                } else {
+                    skipped += 1
+                }
+                continue
+            }
+
             // "Rest" or "Rest Day" (case-insensitive) in Day marks a rest-day
             // activity row instead of an exercise — Exercise is the
             // activity's name, Reps optionally holds a distance (e.g.
@@ -315,7 +345,7 @@ enum ImportEngine {
         let existingBars = (try? context.fetch(FetchDescriptor<Bar>())) ?? []
         var knownBars = Dictionary(uniqueKeysWithValues: existingBars.map { ($0.name.lowercased(), $0) })
         let existingPhases = (try? context.fetch(FetchDescriptor<Phase>())) ?? []
-        let bodyWeights = ((try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? [])
+        var bodyWeights = ((try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? [])
             .sorted { $0.date < $1.date }
 
         /// "Bodyweight" flags the exercise bodyweight; any other non-blank
@@ -376,12 +406,34 @@ enum ImportEngine {
         }
         let exerciseRows = rows.filter { if case .exercise = $0.kind { return true }; return false }
         let restRows = rows.filter { if case .restActivity = $0.kind { return true }; return false }
+        let bodyWeightRows = rows.filter { if case .bodyWeight = $0.kind { return true }; return false }
         let grouped = Dictionary(grouping: exerciseRows) { row in
             GroupKey(day: cal.startOfDay(for: row.date), phaseNumber: row.phaseNumber, dayLabel: row.dayLabel)
         }
 
         var sessionsCreated = 0
         var setsImported = 0
+        var bodyWeightEntriesCreated = 0
+
+        // Processed before the exercise-row loop below (not just before it
+        // in insertion order, but into the same `bodyWeights` array
+        // resolvedBodyweight reads) so a "Weight" row earlier in the file
+        // than a bodyweight exercise row it should back is actually visible
+        // to that lookup. Skips a date that already has an entry (from
+        // before this import, or an earlier "Weight" row in the same file)
+        // rather than creating a duplicate for the same day.
+        var knownBodyWeightDays = Set(bodyWeights.map { cal.startOfDay(for: $0.date) })
+        for entry in bodyWeightRows.sorted(by: { $0.date < $1.date }) {
+            guard case .bodyWeight(let weight) = entry.kind else { continue }
+            let day = cal.startOfDay(for: entry.date)
+            guard !knownBodyWeightDays.contains(day) else { continue }
+            let bwEntry = BodyWeightEntry(date: entry.date, weight: weight)
+            context.insert(bwEntry)
+            bodyWeights.append(bwEntry)
+            knownBodyWeightDays.insert(day)
+            bodyWeightEntriesCreated += 1
+        }
+        bodyWeights.sort { $0.date < $1.date }
 
         for (groupIndex, (key, dayRows)) in grouped.sorted(by: { $0.key.day < $1.key.day }).enumerated() {
             if groupIndex > 0, groupIndex % checkpointInterval == 0 {
@@ -480,7 +532,8 @@ enum ImportEngine {
         }
 
         try? context.save()
-        return ImportResult(sessionsCreated: sessionsCreated, setsImported: setsImported)
+        return ImportResult(sessionsCreated: sessionsCreated, setsImported: setsImported,
+                           bodyWeightEntriesCreated: bodyWeightEntriesCreated)
     }
 
     // MARK: - Delimited line splitting (quote-aware, handles embedded

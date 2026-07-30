@@ -362,6 +362,9 @@ struct HistoryView: View {
                 let outcome = await ImportEngine.importIntoStore(rows, context: context)
                 WorkoutSession.backfillRestDays(context: context)
                 var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s")."
+                if outcome.bodyWeightEntriesCreated > 0 {
+                    msg += " Logged \(outcome.bodyWeightEntriesCreated) body weight entr\(outcome.bodyWeightEntriesCreated == 1 ? "y" : "ies")."
+                }
                 if skipped > 0 { msg += " Skipped \(skipped) row\(skipped == 1 ? "" : "s") that didn't parse." }
                 importResultMessage = msg
                 isImporting = false
@@ -414,6 +417,9 @@ struct HistoryView: View {
             }
             WorkoutSession.backfillRestDays(context: context)
             var msg = "Imported \(outcome.setsImported) sets across \(outcome.sessionsCreated) day\(outcome.sessionsCreated == 1 ? "" : "s"), attributed to Phase \(phase.number)."
+            if outcome.bodyWeightEntriesCreated > 0 {
+                msg += " Logged \(outcome.bodyWeightEntriesCreated) body weight entr\(outcome.bodyWeightEntriesCreated == 1 ? "y" : "ies")."
+            }
             if pendingImportSkipped > 0 {
                 msg += " Skipped \(pendingImportSkipped) row\(pendingImportSkipped == 1 ? "" : "s") that didn't parse."
             }
@@ -467,6 +473,15 @@ struct CSVFormatHelpView: View {
                     .textSelection(.enabled)
                 }
 
+                Section("Body Weight Example") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Date,Exercise,Sets,Weights,Reps")
+                        Text("2026-01-06,Weight,,,172.5")
+                    }
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                }
+
                 Section {
                     Label("Sets is the target rep scheme (e.g. 5/5/5/3/3) — it becomes a saved Set for that exercise in the Exercises tab.",
                           systemImage: "list.bullet.rectangle")
@@ -482,6 +497,8 @@ struct CSVFormatHelpView: View {
                           systemImage: "questionmark.circle")
                     Label("Write Day as \"Rest\" or \"Rest Day\" for a rest-day activity instead of an exercise (requires a Day column) — Exercise becomes the activity's name, Reps optionally holds a distance (e.g. \"3.1mi\"), Sets/Weights are unused. Counts toward the rest-bank streak, same as logging it live.",
                           systemImage: "figure.walk")
+                    Label("Write Exercise as \"Weight\" to log body weight instead of a real exercise — the weight itself goes in Reps (Sets/Weights are unused). Creates a body weight entry for that date, same as the Weight tab.",
+                          systemImage: "scalemass")
                     Label("Phase is that phase's number; Day is the day's name (e.g. \"Push A\"), matched case-insensitively. If given and matched, the imported workout is attributed to that real Phase/Day, just like one logged live. Leave them out (or leave them unmatched) and the row still imports fine as a generic \"Imported\" entry.",
                           systemImage: "calendar.badge.checkmark")
                     Label("If your Day column shows a repeating pattern (Push A / Pull A / Legs A / Rest, over and over), you'll be shown a Phase auto-drafted from the most recently completed cycle to review and edit before anything imports — saving it attributes every matching row in the file to it, not just the last cycle.",
