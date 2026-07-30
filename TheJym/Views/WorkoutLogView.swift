@@ -2093,9 +2093,10 @@ struct PaceRow: View {
         let milestone = PaceEngine.milestone(atSetIndex: n, setWeightsMoved: target.setWeightsMoved,
                                              total: target.totalWeightMoved)
         let deltaLbs = cumulative - milestone
-        // Always rounds up, and never shows 0 — a hair ahead is still a
-        // whole rep ahead, and a hair behind still costs a whole rep.
-        let reps = max(1, Int(ceil(abs(deltaLbs) / avgWeightPerRep)))
+        // Always rounds up — a hair ahead is still a whole rep ahead, and a
+        // hair behind still costs a whole rep — so 0 only ever comes out
+        // when deltaLbs is exactly 0, i.e. genuinely, exactly on pace.
+        let reps = Int(ceil(abs(deltaLbs) / avgWeightPerRep))
         return (reps, deltaLbs >= 0)
     }
 
