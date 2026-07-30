@@ -1824,23 +1824,22 @@ struct CompletedSummaryPageView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Completed")
-                    .font(.title2.bold())
-                if completedIndices.isEmpty {
-                    Text("Nothing checked off yet — swipe back to an exercise and finish it, or save now to end the workout early.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(completedIndices, id: \.self) { i in
-                        row(for: i)
-                    }
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Completed")
+                .font(.title2.bold())
+            if completedIndices.isEmpty {
+                Text("Nothing checked off yet — swipe back to an exercise and finish it, or save now to end the workout early.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(completedIndices, id: \.self) { i in
+                    row(for: i)
                 }
             }
-            .padding()
-            .frame(minHeight: pageHeight, alignment: .top)
+            Spacer(minLength: 0)
         }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .safeAreaInset(edge: .bottom) {
             if !drafts.isEmpty {
                 Button(action: onFinish) {
@@ -1871,13 +1870,50 @@ struct CompletedSummaryPageView: View {
         return PaceEngine.repTotalComparisons(for: draft.name, target: target,
                                               currentWeightsKey: weightsKey, allLogs: allLogs)
     }
-    private func remainingWeights(for draft: WorkoutLogView.ExerciseDraft) -> [Double] {
-        draft.sets.filter { $0.reps == nil }.map { $0.weight ?? 0 }
-    }
     private func avgWeightPerRep(for draft: WorkoutLogView.ExerciseDraft) -> Double {
         let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)
         guard totalReps > 0 else { return 0 }
         return draft.loggedTotal(bodyweight: currentBodyweight) / Double(totalReps)
+    }
+
+    /// Condensed "Beaten by N reps"/"Fell short by N reps" verdict, without
+    /// the target's own weight/rep grid — the summary page just needs the
+    /// result, not the historical detail behind it.
+    private func fixedSetsResult(_ target: ComparisonTarget, draft: WorkoutLogView.ExerciseDraft) -> (text: String, color: Color) {
+        guard target.hasData else { return ("First time — set the baseline 💪", .secondary) }
+        let loggedSoFar = draft.loggedTotal(bodyweight: currentBodyweight)
+        let avg = avgWeightPerRep(for: draft)
+        func repsEquivalent(_ lbsDelta: Double) -> String {
+            guard avg > 0 else { return "0 reps" }
+            let reps = max(1, Int(ceil(abs(lbsDelta) / avg)))
+            return "\(reps) rep\(reps == 1 ? "" : "s")"
+        }
+        if loggedSoFar > target.totalWeightMoved {
+            return ("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥", .green)
+        } else {
+            return ("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar)) 😔", .red)
+        }
+    }
+
+    /// Same condensing treatment as `fixedSetsResult`, for a repTotal exercise.
+    private func repTotalResult(_ target: PaceEngine.RepTotalComparisonTarget,
+                                setsLoggedSoFar: Int, loggedTotal: Double) -> (text: String, color: Color) {
+        guard target.hasData else { return ("First time — set the baseline 💪", .secondary) }
+        if let setsToComplete = target.setsToComplete {
+            if target.kind == .lastLogged {
+                return ("Finished in \(setsToComplete) set\(setsToComplete == 1 ? "" : "s")", .secondary)
+            } else if let room = PaceEngine.repTotalPRRoom(setsLoggedSoFar: setsLoggedSoFar, bestSetsToComplete: setsToComplete) {
+                return ("Finish in \(room) more set\(room == 1 ? "" : "s") for a PR", .orange)
+            } else if setsLoggedSoFar >= setsToComplete {
+                return ("Matched or beat the \(setsToComplete)-set record 🔥", .green)
+            } else {
+                return ("Best: \(setsToComplete) set\(setsToComplete == 1 ? "" : "s") to finish", .secondary)
+            }
+        } else if loggedTotal > target.totalWeightMoved {
+            return ("Beaten on total weight moved 🔥", .green)
+        } else {
+            return ("Unfinished last time — \(Formatters.trim(target.totalWeightMoved)) lbs moved", .secondary)
+        }
     }
 
     private func row(for i: Int) -> some View {
@@ -1913,17 +1949,18 @@ struct CompletedSummaryPageView: View {
             switch draft.goalType {
             case .fixedSets:
                 ForEach(comparisons(for: draft)) { c in
-                    PaceRow(target: c,
-                            loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
-                            setIndex: draft.sets.filter(\.isLogged).count + 1,
-                            remainingWeights: remainingWeights(for: draft),
-                            avgWeightPerRep: avgWeightPerRep(for: draft))
+                    let result = fixedSetsResult(c, draft: draft)
+                    (Text("\(c.kind.rawValue): ").foregroundStyle(.secondary)
+                     + Text(result.text).foregroundStyle(result.color))
+                        .font(.caption2)
                 }
             case .repTotal(let target):
                 ForEach(repTotalComparisons(for: draft, target: target)) { c in
-                    RepTotalPaceRow(target: c,
-                                   setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
-                                   loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                    let result = repTotalResult(c, setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
+                                                loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                    (Text("\(c.kind.rawValue): ").foregroundStyle(.secondary)
+                     + Text(result.text).foregroundStyle(result.color))
+                        .font(.caption2)
                 }
             }
         }
