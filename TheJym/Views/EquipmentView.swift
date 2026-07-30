@@ -23,12 +23,6 @@ struct EquipmentView: View {
     @State private var newBandWeightText = ""
 
     private var bars: [Bar] { allBars.filter { !$0.isDumbbell } }
-    /// Dumbbells/Bands, in the order they should appear listed alongside the
-    /// plain bars — they're structured like plates (a shared bar + a table
-    /// of individual weights you own) rather than a single fixed weight, so
-    /// they're listed here for visibility but edited via their own weight
-    /// tables below, not the weight/sides fields plain bars use.
-    private var presetWeightBars: [Bar] { allBars.filter(\.isDumbbell) }
     private var dumbbellBar: Bar? { allBars.first { $0.isDumbbell && $0.name == "Dumbbells" } }
     private var bandsBar: Bar? { allBars.first { $0.isDumbbell && $0.name == "Bands" } }
     private var settings: AppSettings? { settingsList.first }
@@ -76,13 +70,6 @@ struct EquipmentView: View {
                         for i in idx { context.delete(bars[i]) }
                         try? context.save()
                     }
-                    ForEach(presetWeightBars, id: \.persistentModelID) { bar in
-                        HStack {
-                            Text(bar.name)
-                            Spacer()
-                            Text("See below").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
                     HStack {
                         TextField("Name e.g. Barbell", text: $newBarName)
                         TextField("lbs", text: $newBarWeightText)
@@ -100,7 +87,7 @@ struct EquipmentView: View {
                 } header: {
                     Text("Bars")
                 } footer: {
-                    Text("Sides is how many sides of that bar you can load plates on — 2 for a standard barbell, 1 for something like a landmine attachment where all the plate weight loads on a single side. Dumbbells and Bands are listed here too, but — like plates — are edited as a table of individual weights you own, below.")
+                    Text("Sides is how many sides of that bar you can load plates on — 2 for a standard barbell, 1 for something like a landmine attachment where all the plate weight loads on a single side.")
                 }
 
                 Section {
