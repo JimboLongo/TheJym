@@ -20,6 +20,10 @@ struct ComparisonTarget: Identifiable {
     /// (e.g. the first time at this exact weight).
     let date: Date?
     let totalWeightMoved: Double
+    /// Weight moved per set, in order (reps × weight for each) — powers the
+    /// pro-rata pace milestone, which needs to know how the target's own
+    /// total was distributed across its sets, not just the final number.
+    let setWeightsMoved: [Double]
     let setsSummary: String        // "6/6/5/4/4/3 reps @ 135/135/135/145/145/145 lbs"
     var hasData: Bool { date != nil }
 }
@@ -67,13 +71,14 @@ enum PaceEngine {
 
     private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> ComparisonTarget {
         guard let log else {
-            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setsSummary: "")
+            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], setsSummary: "")
         }
         let sortedSets = log.sortedSets
         let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
+                                setWeightsMoved: sortedSets.map { $0.weight * Double($0.reps) },
                                 setsSummary: "\(reps) reps @ \(weightsSummaryString(for: log))")
     }
 
@@ -167,18 +172,43 @@ enum PaceEngine {
         return room >= 1 ? room : nil
     }
 
-    // MARK: Reps-to-beat math
+    // MARK: - Pro-rata pace math
 
-    /// Reps needed in just the NEXT set (at its current, possibly just-
-    /// adjusted weight) to beat the target outright — doesn't spread the
-    /// deficit across every remaining set, so a weight bump on the next set
-    /// is reflected immediately in the pace needed for that one set.
-    static func repsToClinch(targetTotal: Double,
-                             loggedSoFar: Double,
-                             nextWeight: Double) -> Int? {
-        guard nextWeight > 0 else { return nil }
-        let deficit = targetTotal - loggedSoFar + 1
-        if deficit <= 0 { return 0 }
-        return Int(ceil(deficit / nextWeight))
+    /// How far into its own total the target was by its own set `n` (1-based)
+    /// — e.g. 0.6 means the target had moved 60% of its eventual total by
+    /// then. `n` beyond the target's own set count has no defined share.
+    private static func share(atSetIndex n: Int, setWeightsMoved: [Double], total: Double) -> Double? {
+        guard n >= 1, n <= setWeightsMoved.count, total > 0 else { return nil }
+        return setWeightsMoved.prefix(n).reduce(0, +) / total
+    }
+
+    /// "By set n, you should have moved this much to be on the target's own
+    /// pace toward actually beating it" — the target's share through its own
+    /// set n, scaled to (total + 1) rather than just its total, so matching
+    /// the target's pace exactly still isn't quite enough to win (it takes at
+    /// least one more unit than the target moved). Once n runs past however
+    /// many sets the target itself took, there's no further pacing signal to
+    /// follow — the milestone just becomes the full win threshold.
+    static func milestone(atSetIndex n: Int, setWeightsMoved: [Double], total: Double) -> Double {
+        guard let share = share(atSetIndex: n, setWeightsMoved: setWeightsMoved, total: total) else {
+            return total + 1
+        }
+        return share * (total + 1)
+    }
+
+    /// Pro-rata pace cell: how many reps (fractional) `columnWeight` — the
+    /// weight for set `setIndex` (1-based, the set about to be attempted) —
+    /// needs to reach that set's milestone, given `loggedSoFar` (this
+    /// session's cumulative through set `setIndex - 1`). Replaces a flat
+    /// "beat the whole total by the last set" countdown with one that tracks
+    /// whether THIS set is keeping pace with how the target distributed its
+    /// own total across its own sets. Negative means already past the
+    /// milestone — ahead of pace, not behind.
+    static func paceCellValue(target: ComparisonTarget, setIndex: Int,
+                              loggedSoFar: Double, columnWeight: Double) -> Double? {
+        guard columnWeight > 0 else { return nil }
+        let m = milestone(atSetIndex: setIndex, setWeightsMoved: target.setWeightsMoved,
+                          total: target.totalWeightMoved)
+        return (m - loggedSoFar) / columnWeight
     }
 }

@@ -817,6 +817,7 @@ struct ExercisePageView: View {
                     ForEach(comparisons) { c in
                         PaceRow(target: c,
                                 loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
+                                setIndex: draft.sets.filter(\.isLogged).count + 1,
                                 remainingWeights: remainingWeights,
                                 avgWeightPerRep: avgWeightPerRep)
                     }
@@ -1526,6 +1527,9 @@ struct RepTotalPaceRow: View {
 struct PaceRow: View {
     let target: ComparisonTarget
     let loggedSoFar: Double
+    /// 1-based index of the set about to be attempted (already-logged count
+    /// + 1) — looked up against the target's own set-by-set pacing.
+    let setIndex: Int
     let remainingWeights: [Double]
     /// Average weight moved per rep so far — converts a beaten-by/fell-
     /// short-by weight delta into an equivalent whole-rep count.
@@ -1572,21 +1576,39 @@ struct PaceRow: View {
     @ViewBuilder
     private var loggedComparison: some View {
         let beaten = loggedSoFar > target.totalWeightMoved
-        let paceReps = PaceEngine.repsToClinch(targetTotal: target.totalWeightMoved,
-                                               loggedSoFar: loggedSoFar,
-                                               nextWeight: remainingWeights.first ?? 0)
         if beaten {
             Label("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥",
                   systemImage: "flame.fill")
                 .font(.caption).foregroundStyle(.green)
-        } else if remainingWeights.isEmpty {
-            Label("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar))",
-                  systemImage: "arrow.down.right")
-                .font(.caption).foregroundStyle(.red)
-        } else if let reps = paceReps {
-            Label("Need \(reps) reps in your next set to stay on pace",
-                  systemImage: "target")
-                .font(.caption).foregroundStyle(.orange)
+        } else {
+            VStack(alignment: .leading, spacing: 1) {
+                paceCellLabel
+                // Overall gap kept as a secondary line regardless of the
+                // pace cell above — the cell alone only speaks to the next
+                // set, not the whole remaining deficit.
+                Text("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar)) overall")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// The pro-rata pace cell for the upcoming set (PaceEngine.paceCellValue)
+    /// — nil (and so nothing rendered here) once there's no next set left to
+    /// give a pace reading for.
+    @ViewBuilder
+    private var paceCellLabel: some View {
+        if let cell = PaceEngine.paceCellValue(target: target, setIndex: setIndex,
+                                               loggedSoFar: loggedSoFar,
+                                               columnWeight: remainingWeights.first ?? 0) {
+            let formatted = String(format: "%.1f", abs(cell))
+            if cell < 0 {
+                Label("\(formatted) reps ahead of pace", systemImage: "arrow.up.right")
+                    .font(.caption).foregroundStyle(.green)
+            } else {
+                Label("Need \(formatted) reps in your next set to stay on pace",
+                      systemImage: "target")
+                    .font(.caption).foregroundStyle(.orange)
+            }
         }
     }
 }
