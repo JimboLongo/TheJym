@@ -699,14 +699,14 @@ struct ExercisePageView: View {
     /// per exercise page.
     @State private var paceTabSelection = 0
 
-    /// Up to the 5 most recently logged workouts of this exercise (already
+    /// Up to the 3 most recently logged workouts of this exercise (already
     /// saved — the one in progress right now isn't in allLogs yet), most
     /// recent first — all shown together on the pace panel's last page.
     private var previousLogs: [ExerciseLog] {
         Array(allLogs
             .filter { $0.exerciseName == draft.name && !$0.sets.isEmpty }
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
-            .prefix(5))
+            .prefix(3))
     }
 
     @ViewBuilder
@@ -810,12 +810,24 @@ struct ExercisePageView: View {
                     Text("Empty \(Formatters.trim(bar.weight)) lb bar — no plates needed")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                ForEach(plates) { p in
-                    HStack(spacing: 6) {
-                        Text("\(Formatters.trim(p.plate)) lb plate")
-                            .font(.system(.caption2, design: .monospaced))
-                        Text(bar.loadableSides == 1 ? "× \(p.countPerSide)" : "× \(p.countPerSide) per side")
-                            .font(.system(.caption2, design: .monospaced)).bold()
+                // A separate, right-aligned "per side" column so that word
+                // lines up across every plate size regardless of how wide
+                // "× N" happens to be — sized to its own content (no
+                // Spacer), so it sits right after the count instead of
+                // being pushed to the far edge of the box.
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 3) {
+                    ForEach(plates) { p in
+                        GridRow {
+                            Text("\(Formatters.trim(p.plate)) lb plate")
+                                .font(.system(.caption2, design: .monospaced))
+                            Text("× \(p.countPerSide)")
+                                .font(.system(.caption2, design: .monospaced)).bold()
+                            if bar.loadableSides != 1 {
+                                Text("per side")
+                                    .font(.system(.caption2, design: .monospaced)).bold()
+                                    .gridColumnAlignment(.trailing)
+                            }
+                        }
                     }
                 }
                 if leftover > 0 {
@@ -963,7 +975,7 @@ struct ExercisePageView: View {
             // three; any with no prior data yet just says so instead of
             // being omitted), page 1 is the plate/dumbbell calculator (plus
             // Notes) for today's own set weights, page 2 lists up to the
-            // previous 5 logged workouts of this exercise.
+            // previous 3 logged workouts of this exercise.
             TabView(selection: $paceTabSelection) {
                 VStack(alignment: .leading, spacing: 6) {
                     switch draft.goalType {
@@ -1677,8 +1689,7 @@ struct PaceRow: View {
     private var loggedComparison: some View {
         let beaten = loggedSoFar > target.totalWeightMoved
         if beaten {
-            Label("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥",
-                  systemImage: "flame.fill")
+            Text("Beaten by \(repsEquivalent(loggedSoFar - target.totalWeightMoved)) 🔥")
                 .font(.caption).foregroundStyle(.green)
         } else {
             VStack(alignment: .leading, spacing: 1) {
@@ -1687,8 +1698,8 @@ struct PaceRow: View {
                 // pace reading for instead — while sets remain, you haven't
                 // actually fallen short yet, just not finished.
                 if remainingWeights.isEmpty {
-                    Text("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar)) overall")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    Text("Fell short by \(repsEquivalent(target.totalWeightMoved - loggedSoFar)) overall 😔")
+                        .font(.caption).foregroundStyle(.red)
                 }
             }
         }
