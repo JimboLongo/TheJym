@@ -180,7 +180,9 @@ struct WorkoutLogView: View {
                                                 currentPageID: $currentPageID)
                                     .id("ex-\(drafts[i].id)")
                             case .completedSummary:
-                                CompletedSummaryPageView(drafts: $drafts, pageHeight: geo.size.height,
+                                CompletedSummaryPageView(drafts: $drafts, allLogs: allExerciseLogs,
+                                                        currentBodyweight: currentBodyweight,
+                                                        pageHeight: geo.size.height,
                                                         currentPageID: $currentPageID,
                                                         onFinish: { showDatePicker = true })
                                     .id("summary")
@@ -1806,6 +1808,8 @@ struct WorkoutRecapView: View {
 
 struct CompletedSummaryPageView: View {
     @Binding var drafts: [WorkoutLogView.ExerciseDraft]
+    let allLogs: [ExerciseLog]
+    let currentBodyweight: Double?
     let pageHeight: CGFloat
     @Binding var currentPageID: String?
     /// Called when the finish button here is tapped — starts the date
@@ -1853,13 +1857,35 @@ struct CompletedSummaryPageView: View {
         }
     }
 
+    private func comparisons(for draft: WorkoutLogView.ExerciseDraft) -> [ComparisonTarget] {
+        PaceEngine.comparisons(for: draft.name,
+                               targetReps: draft.targetReps,
+                               currentWeights: draft.sets.map { $0.weight ?? 0 },
+                               isBodyweight: draft.isBodyweight,
+                               allLogs: allLogs)
+    }
+    private func repTotalComparisons(for draft: WorkoutLogView.ExerciseDraft, target: Int) -> [PaceEngine.RepTotalComparisonTarget] {
+        let weightsKey = draft.isBodyweight
+            ? draft.sets.map { "BW+\(Formatters.trim($0.weight ?? 0))" }.joined(separator: "/")
+            : draft.sets.map { Formatters.trim($0.weight ?? 0) }.joined(separator: "/")
+        return PaceEngine.repTotalComparisons(for: draft.name, target: target,
+                                              currentWeightsKey: weightsKey, allLogs: allLogs)
+    }
+    private func remainingWeights(for draft: WorkoutLogView.ExerciseDraft) -> [Double] {
+        draft.sets.filter { $0.reps == nil }.map { $0.weight ?? 0 }
+    }
+    private func avgWeightPerRep(for draft: WorkoutLogView.ExerciseDraft) -> Double {
+        let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)
+        guard totalReps > 0 else { return 0 }
+        return draft.loggedTotal(bodyweight: currentBodyweight) / Double(totalReps)
+    }
+
     private func row(for i: Int) -> some View {
         let draft = drafts[i]
-        let weights = draft.sets
+        let weightLabels = draft.sets
             .map { $0.weightText.isEmpty ? "—" : (draft.isBodyweight ? "BW+\($0.weightText)" : $0.weightText) }
-            .joined(separator: "/")
-        let reps = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }.joined(separator: "/")
-        return VStack(alignment: .leading, spacing: 4) {
+        let repLabels = draft.sets.map { $0.repsText.isEmpty ? "—" : $0.repsText }
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(draft.name).font(.headline)
                 Spacer()
@@ -1882,9 +1908,24 @@ struct CompletedSummaryPageView: View {
                     .font(.caption.bold())
                     .foregroundStyle(.blue)
             }
-            Text("\(reps) reps @ \(weights) lbs")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
+            SetsGrid(weightLabels: weightLabels, repLabels: repLabels)
+
+            switch draft.goalType {
+            case .fixedSets:
+                ForEach(comparisons(for: draft)) { c in
+                    PaceRow(target: c,
+                            loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
+                            setIndex: draft.sets.filter(\.isLogged).count + 1,
+                            remainingWeights: remainingWeights(for: draft),
+                            avgWeightPerRep: avgWeightPerRep(for: draft))
+                }
+            case .repTotal(let target):
+                ForEach(repTotalComparisons(for: draft, target: target)) { c in
+                    RepTotalPaceRow(target: c,
+                                   setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
+                                   loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                }
+            }
         }
         .padding(10)
         .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
