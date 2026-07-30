@@ -263,18 +263,28 @@ enum PaceEngine {
         guard upcomingRawWeight > 0 else { return nil }
         var cumulative = 0.0
         var lastRequirement: Int?
+        // Whether the set that produced lastRequirement actually met ITS
+        // OWN (already-clamped) requirement — this, not the requirement
+        // number itself, is what decides which direction the next set's
+        // clamp goes. Comparing a set's reps against a DIFFERENT set's
+        // requirement (e.g. set 2's reps against set 1's number) was the
+        // bug: two sets can need completely different rep counts at
+        // completely different weights, so 9 reps "failing" a 13-rep bar
+        // set by a heavier set doesn't mean anything.
+        var lastMet = true
         for (i, entry) in loggedSets.enumerated() {
             defer { cumulative += entry.effectiveWeightMoved }
-            guard entry.rawWeight > 0 else { lastRequirement = nil; continue }
+            guard entry.rawWeight > 0 else { lastRequirement = nil; lastMet = true; continue }
             let m = milestone(atSetIndex: i + 1, setWeightsMoved: target.setWeightsMoved,
                               total: target.totalWeightMoved)
             let raw = (m - cumulative) / entry.rawWeight
-            guard raw > 0 else { lastRequirement = nil; continue }
+            guard raw > 0 else { lastRequirement = nil; lastMet = true; continue }
             var req = Int(ceil(raw))
             if let last = lastRequirement {
-                req = entry.reps >= last ? min(req, last) : max(req, last)
+                req = lastMet ? min(req, last) : max(req, last)
             }
             lastRequirement = req
+            lastMet = entry.reps >= req
         }
         let m = milestone(atSetIndex: upcomingSetIndex, setWeightsMoved: target.setWeightsMoved,
                           total: target.totalWeightMoved)
@@ -282,8 +292,7 @@ enum PaceEngine {
         guard raw > 0 else { return raw }
         var req = Int(ceil(raw))
         if let last = lastRequirement {
-            let metLast = (loggedSets.last?.reps ?? 0) >= last
-            req = metLast ? min(req, last) : max(req, last)
+            req = lastMet ? min(req, last) : max(req, last)
         }
         return Double(req)
     }

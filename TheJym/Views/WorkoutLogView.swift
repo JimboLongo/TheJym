@@ -765,6 +765,8 @@ struct ExercisePageView: View {
     @Binding var currentPageID: String?
 
     @State private var showAddEquipmentSheet = false
+    /// Shown from the Warm-Up Sets page's Edit/Add button.
+    @State private var showEditNotesSheet = false
     /// Which internal tag of the pace panel's TabView is showing — 1 is the
     /// live pace comparisons (the "real" first page), 2 is previous
     /// workouts, 3 is the plate calculator, 4 is warm-up sets; 0 and 5 are
@@ -869,8 +871,30 @@ struct ExercisePageView: View {
                     }
                 }
             }
+            if let def = exerciseDef {
+                Divider()
+                HStack {
+                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        showEditNotesSheet = true
+                    } label: {
+                        Label(def.notes.isEmpty ? "Add" : "Edit", systemImage: "pencil")
+                            .font(.caption2)
+                    }
+                }
+                if !def.notes.isEmpty {
+                    Text(def.notes).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(isPresented: $showEditNotesSheet) {
+            NotesEditSheet(initialText: exerciseDef?.notes ?? "") { newText in
+                exerciseDef?.notes = newText
+                try? context.save()
+            }
+        }
     }
 
     /// Distinct, nonzero weights entered across today's sets for this
@@ -881,63 +905,79 @@ struct ExercisePageView: View {
         Array(Set(draft.sets.compactMap(\.weight).filter { $0 > 0 })).sorted()
     }
 
+    /// Current equipment (or "None"), with a menu to switch to any other
+    /// owned bar/dumbbell set or add a new one — shown regardless of
+    /// whether something's already tagged, so switching equipment doesn't
+    /// require leaving the workout for the Exercises tab.
+    @ViewBuilder
+    private func equipmentSelectorRow(def: ExerciseDef) -> some View {
+        HStack(spacing: 6) {
+            Text("Equipment").font(.caption2).foregroundStyle(.secondary)
+            Spacer()
+            Menu {
+                ForEach(allBars) { bar in
+                    Button {
+                        def.equipment = bar
+                        try? context.save()
+                    } label: {
+                        if def.equipment?.persistentModelID == bar.persistentModelID {
+                            Label(bar.name, systemImage: "checkmark")
+                        } else {
+                            Text(bar.name)
+                        }
+                    }
+                }
+                if !allBars.isEmpty { Divider() }
+                Button {
+                    showAddEquipmentSheet = true
+                } label: {
+                    Label("New Equipment…", systemImage: "plus")
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(def.equipment?.name ?? "None")
+                    Image(systemName: "chevron.up.chevron.down")
+                }
+                .font(.caption2.bold())
+            }
+        }
+    }
+
     @ViewBuilder
     private var plateCalculatorPage: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let bar = exerciseDef?.equipment {
-                Text(bar.isDumbbell ? "Dumbbell Match" : "Plate Calculator")
-                    .font(.caption.bold()).foregroundStyle(.secondary)
-                if uniqueSetWeights.isEmpty {
-                    Text("No weights entered yet.").font(.caption2).foregroundStyle(.secondary)
-                } else if bar.isDumbbell {
-                    ForEach(uniqueSetWeights, id: \.self) { target in
-                        dumbbellMatchRow(bar: bar, target: target)
-                    }
-                } else {
-                    ForEach(uniqueSetWeights, id: \.self) { target in
-                        plateBreakdownRow(bar: bar, target: target)
-                    }
-                }
-            } else if let def = exerciseDef {
-                Text("No equipment tagged for this exercise yet.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Menu {
-                    ForEach(allBars) { bar in
-                        Button(bar.name) {
-                            def.equipment = bar
-                            try? context.save()
+            if let def = exerciseDef {
+                equipmentSelectorRow(def: def)
+                if let bar = def.equipment {
+                    Text(bar.isDumbbell ? "Dumbbell Match" : "Plate Calculator")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                    if uniqueSetWeights.isEmpty {
+                        Text("No weights entered yet.").font(.caption2).foregroundStyle(.secondary)
+                    } else if bar.isDumbbell {
+                        ForEach(uniqueSetWeights, id: \.self) { target in
+                            dumbbellMatchRow(bar: bar, target: target)
+                        }
+                    } else {
+                        ForEach(uniqueSetWeights, id: \.self) { target in
+                            plateBreakdownRow(bar: bar, target: target)
                         }
                     }
-                    if !allBars.isEmpty { Divider() }
-                    Button {
-                        showAddEquipmentSheet = true
-                    } label: {
-                        Label("New Equipment…", systemImage: "plus")
-                    }
-                } label: {
-                    Label("Quick Add Equipment", systemImage: "plus.circle")
-                        .font(.caption.bold())
-                }
-                .sheet(isPresented: $showAddEquipmentSheet) {
-                    NewEquipmentSheet { bar in
-                        def.equipment = bar
-                        try? context.save()
-                    }
+                } else {
+                    Text("No equipment tagged yet — pick one above.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             } else {
                 Text("Add this exercise in the Exercises tab to tag equipment for it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-
-            if let def = exerciseDef, !def.notes.isEmpty {
-                Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
-                    Text(def.notes).font(.subheadline)
-                }
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(isPresented: $showAddEquipmentSheet) {
+            NewEquipmentSheet { bar in
+                exerciseDef?.equipment = bar
+                try? context.save()
+            }
+        }
     }
 
     @ViewBuilder
@@ -1665,6 +1705,36 @@ struct ExercisePageView: View {
 
 }
 
+// MARK: - Quick notes editor, reachable from the Warm-Up Sets page
+
+struct NotesEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    let onSave: (String) -> Void
+
+    init(initialText: String, onSave: @escaping (String) -> Void) {
+        _text = State(initialValue: initialText)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            TextEditor(text: $text)
+                .padding()
+                .navigationTitle("Notes")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { onSave(text); dismiss() }
+                    }
+                }
+        }
+    }
+}
+
 // MARK: - Quick "add new equipment" sheet, reachable from a workout
 
 struct NewEquipmentSheet: View {
@@ -2005,7 +2075,9 @@ struct PaceRow: View {
         let milestone = PaceEngine.milestone(atSetIndex: n, setWeightsMoved: target.setWeightsMoved,
                                              total: target.totalWeightMoved)
         let deltaLbs = cumulative - milestone
-        let reps = Int((abs(deltaLbs) / avgWeightPerRep).rounded())
+        // Always rounds up, and never shows 0 — a hair ahead is still a
+        // whole rep ahead, and a hair behind still costs a whole rep.
+        let reps = max(1, Int(ceil(abs(deltaLbs) / avgWeightPerRep)))
         return (reps, deltaLbs >= 0)
     }
 

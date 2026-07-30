@@ -87,4 +87,32 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertNil(PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: [],
                                                        upcomingSetIndex: 1, upcomingRawWeight: 0))
     }
+
+    /// Reproduces a real reported bug: Low Incline DB Press, previous
+    /// workout 12/9/5 reps @ 25/30/35. Set 1 needed 13 and got exactly 13
+    /// (met); set 2 needed 9 (a lighter requirement than set 1's 13, since
+    /// it's a different weight) and got exactly 9 (also met). Set 3 should
+    /// then need 5 -- just enough to beat the 745 lb total outright -- not
+    /// 13, which is what a version of the ratchet that compared set 2's 9
+    /// reps against set 1's 13-rep requirement (instead of set 2's own
+    /// 9-rep requirement) incorrectly produced.
+    func testRatchetDoesNotCompareASetAgainstADifferentSetsRequirement() {
+        let set1: Double = 300   // 25 lbs x 12 reps
+        let set2: Double = 270   // 30 lbs x 9 reps
+        let set3: Double = 175   // 35 lbs x 5 reps
+        let total: Double = 745
+        let previousWorkout = ComparisonTarget(
+            kind: .lastLogged, date: .now, totalWeightMoved: total,
+            setWeightsMoved: [set1, set2, set3],
+            reps: [12, 9, 5], weightLabels: ["25", "30", "35"])
+        let logged = [
+            PaceEngine.LoggedSetEntry(rawWeight: 25, effectiveWeightMoved: 325, reps: 13),
+            PaceEngine.LoggedSetEntry(rawWeight: 30, effectiveWeightMoved: 270, reps: 9),
+        ]
+        guard let cell = PaceEngine.ratchetedPaceCellValue(target: previousWorkout, loggedSets: logged,
+                                                           upcomingSetIndex: 3, upcomingRawWeight: 35) else {
+            return XCTFail("Expected a cell value")
+        }
+        XCTAssertEqual(cell, 5, accuracy: 1e-9)
+    }
 }
