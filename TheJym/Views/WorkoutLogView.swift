@@ -697,6 +697,38 @@ struct ExercisePageView: View {
 
     @State private var plateTargetText = ""
     @State private var showAddEquipmentSheet = false
+    /// Which page of the pace panel is showing — 0 is the live pace
+    /// comparisons, 1...5 step back through previousLogs. Reset per exercise
+    /// implicitly since this view is recreated per exercise page.
+    @State private var paceTabSelection = 0
+
+    /// Up to the 5 most recently logged workouts of this exercise (already
+    /// saved — the one in progress right now isn't in allLogs yet), most
+    /// recent first — swiped through via the pace panel, one per page.
+    private var previousLogs: [ExerciseLog] {
+        Array(allLogs
+            .filter { $0.exerciseName == draft.name && !$0.sets.isEmpty }
+            .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
+            .prefix(5))
+    }
+
+    @ViewBuilder
+    private func previousLogPage(_ log: ExerciseLog) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                if let date = log.session?.date {
+                    Text(Formatters.date.string(from: date)).font(.caption.bold())
+                }
+                Spacer()
+                Text("\(Formatters.trim(log.totalWeightMoved)) lbs total")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(log.sortedSets.map { String($0.reps) }.joined(separator: "/") + " reps @ " + PaceEngine.weightsSummaryString(for: log))
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+    }
     /// Sets a later set's weight was just shifted by via cascade, so the
     /// field can flash a "+10"/"-5" badge before fading out.
     @State private var cascadeIndicator: [Int: Double] = [:]
@@ -765,7 +797,11 @@ struct ExercisePageView: View {
     /// sets, plus the header, pace panel, and (when open) the notes/plate-
     /// calculator details panel, fit within one page height.
     private var wheelHeight: CGFloat {
-        let chromeHeight: CGFloat = 300   // header + pace panel + paddings, estimated
+        // header + pace panel + paddings, estimated — the pace panel is a
+        // fixed 170pt paged TabView now (plus page-dot space) rather than a
+        // height that shrinks with its content, so this needs a bit more
+        // headroom than before.
+        let chromeHeight: CGFloat = 320
         // The info-button details panel (notes + plate calculator/dumbbell
         // match) adds real height above the set rows when open — without
         // this, opening it could push sets off the bottom of the page.
@@ -814,26 +850,37 @@ struct ExercisePageView: View {
             // transition between any two rows below it.
             .padding(.top, -8)
 
-            // Pace panel — always shows all three comparisons; any with no
-            // prior data yet just says so instead of being omitted.
-            VStack(alignment: .leading, spacing: 6) {
-                switch draft.goalType {
-                case .fixedSets:
-                    ForEach(comparisons) { c in
-                        PaceRow(target: c,
-                                loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
-                                setIndex: draft.sets.filter(\.isLogged).count + 1,
-                                remainingWeights: remainingWeights,
-                                avgWeightPerRep: avgWeightPerRep)
-                    }
-                case .repTotal(let target):
-                    ForEach(repTotalComparisons(target: target)) { c in
-                        RepTotalPaceRow(target: c,
-                                       setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
-                                       loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+            // Pace panel — page 0 is the live comparisons (always shows all
+            // three; any with no prior data yet just says so instead of
+            // being omitted). Swipe right from there to step back through
+            // up to the previous 5 logged workouts of this exercise.
+            TabView(selection: $paceTabSelection) {
+                VStack(alignment: .leading, spacing: 6) {
+                    switch draft.goalType {
+                    case .fixedSets:
+                        ForEach(comparisons) { c in
+                            PaceRow(target: c,
+                                    loggedSoFar: draft.loggedTotal(bodyweight: currentBodyweight),
+                                    setIndex: draft.sets.filter(\.isLogged).count + 1,
+                                    remainingWeights: remainingWeights,
+                                    avgWeightPerRep: avgWeightPerRep)
+                        }
+                    case .repTotal(let target):
+                        ForEach(repTotalComparisons(target: target)) { c in
+                            RepTotalPaceRow(target: c,
+                                           setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
+                                           loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                        }
                     }
                 }
+                .tag(0)
+
+                ForEach(Array(previousLogs.enumerated()), id: \.offset) { index, log in
+                    previousLogPage(log).tag(index + 1)
+                }
             }
+            .tabViewStyle(.page(indexDisplayMode: previousLogs.isEmpty ? .never : .automatic))
+            .frame(height: 170)
             .padding(10)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             .padding(.top, 10)
