@@ -1600,12 +1600,17 @@ struct PaceRow: View {
         if let cell = PaceEngine.paceCellValue(target: target, setIndex: setIndex,
                                                loggedSoFar: loggedSoFar,
                                                columnWeight: remainingWeights.first ?? 0) {
-            let formatted = String(format: "%.1f", abs(cell))
+            // Whole reps only — you can't do a fractional one. Round toward
+            // whichever direction doesn't overstate the claim: floor "ahead"
+            // (don't claim more cushion than's actually banked), ceil "need"
+            // (11.7 needed really means 12 whole reps, not 11).
             if cell < 0 {
-                Label("\(formatted) reps ahead of pace", systemImage: "arrow.up.right")
+                let repsAhead = Int(floor(abs(cell)))
+                Label("\(repsAhead) rep\(repsAhead == 1 ? "" : "s") ahead of pace", systemImage: "arrow.up.right")
                     .font(.caption).foregroundStyle(.green)
             } else {
-                Label("Need \(formatted) reps in your next set to stay on pace",
+                let repsNeeded = Int(ceil(cell))
+                Label("Need \(repsNeeded) rep\(repsNeeded == 1 ? "" : "s") in your next set to stay on pace",
                       systemImage: "target")
                     .font(.caption).foregroundStyle(.orange)
             }

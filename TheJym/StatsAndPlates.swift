@@ -96,7 +96,8 @@ enum StatsEngine {
         let ratePeriods = buildRatePeriods(phases: allPhases,
                                           trainingDaysPerWeekChanges: trainingDaysPerWeekChanges,
                                           defaultTrainingDaysPerWeek: defaultTrainingDaysPerWeek)
-        let bank = computeRestBank(creditedDates: sessionDates + activeRecoveryDates,
+        let bank = computeRestBank(trainingCreditedDates: sessionDates,
+                                   restCreditedDates: activeRecoveryDates,
                                    ratePeriods: ratePeriods, now: now)
         let cyclePace = activePhase.map { cyclePaceDelta(for: $0, now: effectiveNow) }
         let adherence = activePhase.map { adherencePercent(for: $0, now: effectiveNow) }
@@ -109,7 +110,11 @@ enum StatsEngine {
         // YTD/MTD: "worked out" means an actual training session, not a rest
         // day activity — separate from loggedDays above (which is streak math).
         let workoutDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
-        let priorYearToday = cal.date(byAdding: .year, value: -1, to: today) ?? today
+        // Same "today is pending" rule as effectiveToday above — if today
+        // hasn't been logged yet, the prior-year comparison shouldn't
+        // include the prior-year equivalent of a day that hasn't happened
+        // yet this year either.
+        let priorYearToday = cal.date(byAdding: .year, value: -1, to: effectiveToday) ?? effectiveToday
 
         func dayCount(from windowStart: Date, through windowEnd: Date) -> Int {
             workoutDays.filter { $0 >= windowStart && $0 <= windowEnd }.count
@@ -124,9 +129,11 @@ enum StatsEngine {
         let priorYearYtdWorkoutDays = dayCount(from: priorYearStart, through: priorYearToday)
         let priorYearMtdWorkoutDays = dayCount(from: priorYearMonthStart, through: priorYearToday)
 
-        // Perfect weeks/months + best month all-time: walk day-by-day again,
-        // bucketing scheduled-vs-logged training days by week and by month.
-        struct Bucket { var scheduled = 0; var logged = 0; var sessions = 0 }
+        // Perfect weeks/months: walk day-by-day again, bucketing
+        // scheduled-vs-logged training days by week and by month. Bounded to
+        // [start, today] since "scheduled" is only meaningful within the
+        // tracked training window.
+        struct Bucket { var scheduled = 0; var logged = 0 }
         var weekBuckets: [DateComponents: Bucket] = [:]
         var monthBuckets: [DateComponents: Bucket] = [:]
         var walk = start
@@ -147,9 +154,6 @@ enum StatsEngine {
                     monthBuckets[monthKey, default: Bucket()].logged += 1
                 }
             }
-            if wasLogged {
-                monthBuckets[monthKey, default: Bucket()].sessions += 1
-            }
             guard let next = cal.date(byAdding: .day, value: 1, to: walk) else { break }
             walk = next
         }
@@ -164,12 +168,21 @@ enum StatsEngine {
             key != currentMonthKey && bucket.scheduled > 0 && bucket.logged == bucket.scheduled
         }.count
 
+        // Best month all-time: tallied directly from every logged workout
+        // date, independent of `start` (Training Start Date) — a month of
+        // real history (e.g. from an import) shouldn't be invisible just
+        // because it happened before that setting's date.
+        var allTimeMonthCounts: [DateComponents: Int] = [:]
+        for dayLogged in workoutDays {
+            let monthKey = cal.dateComponents([.year, .month], from: dayLogged)
+            allTimeMonthCounts[monthKey, default: 0] += 1
+        }
         var bestMonthLabel: String?
         var bestMonthWorkouts = 0
-        if let best = monthBuckets.filter({ $0.key != currentMonthKey })
-            .max(by: { $0.value.sessions < $1.value.sessions }),
-           best.value.sessions > 0 {
-            bestMonthWorkouts = best.value.sessions
+        if let best = allTimeMonthCounts.filter({ $0.key != currentMonthKey })
+            .max(by: { $0.value < $1.value }),
+           best.value > 0 {
+            bestMonthWorkouts = best.value
             if let monthDate = cal.date(from: best.key) {
                 let f = DateFormatter()
                 f.dateFormat = "MMMM yyyy"
@@ -257,21 +270,30 @@ enum StatsEngine {
     }
 
     /// Pure day-by-day walk of the rest-bank model. A streak begins on a
-    /// credited day with the bank reset to 1.0 (capped at `bankCap`); every
-    /// other credited day within that same streak adds that day's earn
-    /// rate. Uncredited days spend 1.0 — but only while the streak is still
-    /// open. The moment the bank drops below 0, the streak ends right there
-    /// and the ledger closes: further uncredited days do nothing (no more
+    /// training day with the bank reset to 1.0 (capped at `bankCap`); every
+    /// other training day within that same streak adds that day's earn
+    /// rate — that's how rest days get "earned" in the first place. A
+    /// logged rest day (no training, just an explicit "I rested today"
+    /// credit) keeps the streak alive but *spends* a day from the bank
+    /// (floored at 0, never breaking the streak by itself) — it's drawing
+    /// down the reserve training built up, not adding to it. A day with
+    /// neither spends the same 1.0, but — unlike a logged rest day — can
+    /// actually break the streak if the bank goes negative, since it's
+    /// unaccounted for rather than an intentional rest. The moment the bank
+    /// drops below 0 from an unlogged day, the streak ends right there and
+    /// the ledger closes: further unlogged days do nothing (no more
     /// spending) until the next credited day starts a brand-new streak,
     /// fresh at 1.0 rather than inheriting whatever debt was left. Today is
     /// left pending — neither earned nor spent — if nothing's logged yet.
-    static func computeRestBank(creditedDates: [Date],
+    static func computeRestBank(trainingCreditedDates: [Date],
+                                restCreditedDates: [Date],
                                 ratePeriods: [RatePeriod],
                                 now: Date = .now) -> RestBankResult {
         let cal = Calendar.current
-        let credited = Set(creditedDates.map { cal.startOfDay(for: $0) })
+        let trainingCredited = Set(trainingCreditedDates.map { cal.startOfDay(for: $0) })
+        let restCredited = Set(restCreditedDates.map { cal.startOfDay(for: $0) })
         let today = cal.startOfDay(for: now)
-        guard let firstDay = credited.min() else {
+        guard let firstDay = (trainingCredited.union(restCredited)).min() else {
             return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0)
         }
         let sortedPeriods = ratePeriods.sorted { $0.start < $1.start }
@@ -290,12 +312,19 @@ enum StatsEngine {
         while day <= today, iterations < 20_000 {
             iterations += 1
             let isToday = day == today
-            let isCredited = credited.contains(day)
+            let isTraining = trainingCredited.contains(day)
+            let isRest = restCredited.contains(day)
+            let isCredited = isTraining || isRest
 
             if isToday && !isCredited { break }   // pending — stop without processing today
 
-            if isCredited {
+            if isTraining {
                 bank = streakOpen ? min(bankCap, bank + rate(on: day)) : 1.0
+                streakOpen = true
+                streak += 1
+                maxStreak = max(maxStreak, streak)
+            } else if isRest {
+                bank = streakOpen ? max(0, bank - 1.0) : 1.0
                 streakOpen = true
                 streak += 1
                 maxStreak = max(maxStreak, streak)
@@ -310,7 +339,7 @@ enum StatsEngine {
                     bank = 0   // ledger closed — no meaningful balance until the next streak starts
                 }
             }
-            // else: ledger already closed, an uncredited day has no effect.
+            // else: ledger already closed, an unlogged day has no effect.
 
             guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
             day = next

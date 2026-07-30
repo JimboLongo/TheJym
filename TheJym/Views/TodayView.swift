@@ -693,12 +693,13 @@ struct PhaseStatsView: View {
     /// inactive/completed phase is bounded at its last logged session
     /// rather than walking all the way to today.
     private var bestStreak: Int {
-        let dates = phaseSessions.map(\.date)
-            + activeRecoveries.filter { $0.date >= phase.startDate }.map(\.date)
-        guard !dates.isEmpty else { return 0 }
-        let end = phase.isActive ? Date() : (dates.max() ?? phase.startDate)
+        let trainingDates = phaseSessions.map(\.date)
+        let restDates = activeRecoveries.filter { $0.date >= phase.startDate }.map(\.date)
+        guard !(trainingDates + restDates).isEmpty else { return 0 }
+        let end = phase.isActive ? Date() : ((trainingDates + restDates).max() ?? phase.startDate)
         let ratePeriods = [StatsEngine.RatePeriod(start: phase.startDate, earnRate: phase.restBankEarnRate)]
-        return StatsEngine.computeRestBank(creditedDates: dates, ratePeriods: ratePeriods, now: end).maxStreak
+        return StatsEngine.computeRestBank(trainingCreditedDates: trainingDates, restCreditedDates: restDates,
+                                           ratePeriods: ratePeriods, now: end).maxStreak
     }
 
     /// One entry per exercise logged in this phase — its best session, by

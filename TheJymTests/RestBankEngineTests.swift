@@ -46,7 +46,7 @@ final class RestBankEngineTests: XCTestCase {
         // `now` lands on the 5th Rest day, which is still pending (nothing
         // logged there yet today), so the walk stops after the 15th
         // credited day without processing it.
-        let result = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(i - 1))
+        let result = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(i - 1))
 
         XCTAssertEqual(result.currentStreak, 15)
         XCTAssertEqual(result.maxStreak, 15)
@@ -76,11 +76,11 @@ final class RestBankEngineTests: XCTestCase {
         // never got reset to 0 by the two rest days that preceded it — if
         // it had broken, day 7's credit would restart the streak at 1
         // instead of continuing on to 5.
-        let afterGap = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(7))
+        let afterGap = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(7))
         XCTAssertEqual(afterGap.currentStreak, 5, "streak must survive the double rest-day gap")
         XCTAssertGreaterThanOrEqual(afterGap.bankBalance, 0)
 
-        let final = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(i - 1))
+        let final = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(i - 1))
         XCTAssertEqual(final.currentStreak, 7)
         XCTAssertEqual(final.maxStreak, 7)
     }
@@ -95,11 +95,47 @@ final class RestBankEngineTests: XCTestCase {
         let rate = StatsEngine.earnRate(restDays: 1, trainingDays: 3)
         let credited = [day(1)]
         let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
-        let result = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(5))
+        let result = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(5))
 
         XCTAssertEqual(result.currentStreak, 0)
         XCTAssertEqual(result.maxStreak, 1)
         XCTAssertEqual(result.bankBalance, 0, accuracy: 1e-9)
+    }
+
+    // MARK: - Logging a rest day spends the bank instead of growing it
+
+    /// Day 1 trains (bank -> 1.0). Day 2 logs a plain rest day (the "Log
+    /// Rest Day" button, ActiveRecovery) — spends 1.0 from the bank rather
+    /// than earning at the rate, floored at 0, streak stays open. Day 3
+    /// logs another rest day — bank is already 0, stays at 0 (floor, not
+    /// negative), streak still doesn't break. Day 4 has nothing logged at
+    /// all — that DOES spend into negative and breaks the streak, since an
+    /// unlogged day (unlike an intentionally-logged rest day) isn't
+    /// accounted for.
+    func testLoggedRestDaySpendsBankButNeverBreaksStreak() {
+        let rate = StatsEngine.earnRate(restDays: 1, trainingDays: 3)
+        let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
+
+        let afterOneRest = StatsEngine.computeRestBank(
+            trainingCreditedDates: [day(1)], restCreditedDates: [day(2)],
+            ratePeriods: periods, now: day(2))
+        XCTAssertEqual(afterOneRest.currentStreak, 2, "Logging a rest day keeps the streak alive")
+        XCTAssertEqual(afterOneRest.bankBalance, 0, accuracy: 1e-9, "Spent the 1.0 earned on day 1")
+
+        let afterTwoRests = StatsEngine.computeRestBank(
+            trainingCreditedDates: [day(1)], restCreditedDates: [day(2), day(3)],
+            ratePeriods: periods, now: day(3))
+        XCTAssertEqual(afterTwoRests.currentStreak, 3, "Still alive — floored at 0, never went negative")
+        XCTAssertEqual(afterTwoRests.bankBalance, 0, accuracy: 1e-9)
+
+        // now: day(5), not day(4) — "today" is left pending (neither earned
+        // nor spent) if nothing's logged for it yet, so day 4 needs to
+        // already be in the past to be processed as an actual miss.
+        let afterSilentDay = StatsEngine.computeRestBank(
+            trainingCreditedDates: [day(1)], restCreditedDates: [day(2), day(3)],
+            ratePeriods: periods, now: day(5))
+        XCTAssertEqual(afterSilentDay.currentStreak, 0, "An unlogged day, unlike a logged rest day, breaks the streak")
+        XCTAssertEqual(afterSilentDay.bankBalance, 0, accuracy: 1e-9)
     }
 
     // MARK: - No-phase user, 4 days/week
@@ -118,7 +154,7 @@ final class RestBankEngineTests: XCTestCase {
         i += 2   // two rest days
 
         let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
-        let result = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(i))
+        let result = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(i))
 
         XCTAssertEqual(result.currentStreak, 4)
         XCTAssertEqual(result.bankBalance, 0, accuracy: 1e-9)
@@ -139,7 +175,7 @@ final class RestBankEngineTests: XCTestCase {
             StatsEngine.RatePeriod(start: boundary, earnRate: 1.0),
         ]
         let credited = [day(1), day(5), day(6), day(8)]
-        let result = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(8))
+        let result = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(8))
 
         // Day 6 adds the new 1.0 rate on top of day 5's fresh 1.0 start,
         // reaching the 2.0 cap — that only happens if the new rate (not the
@@ -161,7 +197,7 @@ final class RestBankEngineTests: XCTestCase {
         credited.append(day(17))   // 14 uncredited days (3...16) in between
 
         let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
-        let result = StatsEngine.computeRestBank(creditedDates: credited, ratePeriods: periods, now: day(17))
+        let result = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(17))
 
         XCTAssertEqual(result.currentStreak, 1, "the new streak must start at 1, not inherit the old one")
         XCTAssertEqual(result.bankBalance, 1.0, accuracy: 1e-9, "bank must reset to 1.0, not carry forward debt")
