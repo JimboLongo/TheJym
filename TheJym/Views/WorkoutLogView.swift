@@ -45,6 +45,12 @@ struct WorkoutLogView: View {
     /// that date to resolve its effective weight against.
     @State private var showBodyWeightPrompt = false
     @State private var bodyWeightPromptText = ""
+    /// Shown on appear instead of silently resuming when a saved draft has
+    /// at least one actually-logged set — asks whether to pick up where it
+    /// left off or discard it and rebuild fresh (AI-suggested/last-time
+    /// weights). A draft that's only ever had its suggested starting
+    /// weights auto-filled (nothing logged yet) resumes silently as before.
+    @State private var showResumePrompt = false
     /// Last time the user touched anything in this workout — used to keep
     /// the screen from auto-locking for up to 3 minutes of idle time.
     @State private var lastInteraction = Date()
@@ -308,8 +314,47 @@ struct WorkoutLogView: View {
                 .transition(.opacity)
             }
         }
+        .overlay {
+            if showResumePrompt {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Text("Resume this workout?")
+                            .font(.headline)
+                        Text("You have sets already logged from earlier in this workout.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        HStack {
+                            Button(role: .destructive) {
+                                clearSavedDraft()
+                                showResumePrompt = false
+                                buildDrafts()
+                            } label: {
+                                Text("Start Fresh")
+                            }
+                            Spacer()
+                            Button {
+                                showResumePrompt = false
+                                buildDrafts()
+                            } label: {
+                                Text("Continue").font(.headline)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .padding(32)
+                    .shadow(radius: 20)
+                }
+                .transition(.opacity)
+            }
+        }
         .animation(.easeInOut(duration: 0.2), value: showDatePicker)
         .animation(.easeInOut(duration: 0.2), value: showBodyWeightPrompt)
+        .animation(.easeInOut(duration: 0.2), value: showResumePrompt)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -367,7 +412,13 @@ struct WorkoutLogView: View {
             }
         }
         .onAppear {
-            buildDrafts()
+            if drafts.isEmpty {
+                if let saved = loadDraftFromDisk(), saved.contains(where: { $0.sets.contains(where: \.isLogged) }) {
+                    showResumePrompt = true
+                } else {
+                    buildDrafts()
+                }
+            }
             UIApplication.shared.isIdleTimerDisabled = true
             lastInteraction = Date()
         }
@@ -569,6 +620,9 @@ struct WorkoutLogView: View {
         // Must be read BEFORE the new session is linked to the phase, since
         // it reflects slot-fill state as of right now.
         let isBonus = !day.isRest && (phase?.isSlotFilled(for: day) ?? false)
+        // A logged workout overrides a gap-filled "nothing happened" Rest
+        // Day placeholder for this same date — they shouldn't coexist.
+        WorkoutSession.removeBackfilledRestPlaceholder(on: loggedDate, context: context)
         let session = WorkoutSession(date: loggedDate, day: day, dayLabel: day.name,
                                      cycleNumber: phase?.currentCycle ?? 0,
                                      isDeload: isDeloadCycle, isBonusSession: isBonus)

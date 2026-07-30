@@ -550,6 +550,31 @@ final class WorkoutSession {
         context.insert(WorkoutSession(date: yesterday, dayLabel: "Rest Day", cycleNumber: 0))
         try? context.save()
     }
+
+    /// A gap-filling placeholder inserted by backfillRestDays /
+    /// creditYesterdayAsRestIfNothingLogged for a day nothing was logged
+    /// for at all — distinct from an actual scheduled Rest day (which has
+    /// `day` set to that PhaseDay) or a logged rest-day activity (which has
+    /// its own exercise log). A real workout logged or imported for the
+    /// same calendar day should override this placeholder, not coexist
+    /// alongside it.
+    var isBackfilledRestPlaceholder: Bool {
+        day == nil && dayLabel == "Rest Day" && exerciseLogs.isEmpty
+    }
+
+    /// Deletes any backfilled rest-day placeholder session on `date` —
+    /// called right before inserting a real session (a workout, or a
+    /// logged rest-day activity) for that same calendar day, so logging or
+    /// importing something for a day assumed missed overrides the
+    /// placeholder instead of leaving both around.
+    @MainActor
+    static func removeBackfilledRestPlaceholder(on date: Date, context: ModelContext) {
+        let cal = Calendar.current
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        for session in sessions where cal.isDate(session.date, inSameDayAs: date) && session.isBackfilledRestPlaceholder {
+            context.delete(session)
+        }
+    }
 }
 
 @Model

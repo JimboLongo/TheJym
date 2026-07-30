@@ -441,6 +441,9 @@ enum ImportEngine {
                 await Task.yield()
             }
             let (matchedPhase, matchedDay) = matchPhaseDay(phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
+            // An imported workout overrides a gap-filled "nothing happened"
+            // Rest Day placeholder for this same date.
+            WorkoutSession.removeBackfilledRestPlaceholder(on: key.day, context: context)
             let session = WorkoutSession(date: key.day, day: matchedDay,
                                          dayLabel: key.dayLabel ?? "Imported", cycleNumber: 0)
             session.phase = matchedPhase
@@ -517,6 +520,9 @@ enum ImportEngine {
 
             let (matchedRestPhase, matchedDay) = matchPhaseDay(phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
             let displayName = distance.map { "\(entry.exerciseName) (\(Formatters.trim($0)) \(unit))" } ?? entry.exerciseName
+            // A logged rest-day activity overrides a gap-filled no-activity
+            // Rest Day placeholder for this same date.
+            WorkoutSession.removeBackfilledRestPlaceholder(on: entry.date, context: context)
             let session = WorkoutSession(date: entry.date, day: matchedDay,
                                          dayLabel: entry.dayLabel ?? "Rest Day", cycleNumber: 0)
             session.phase = forcedPhase != nil ? matchedRestPhase : nil
