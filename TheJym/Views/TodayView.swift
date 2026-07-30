@@ -20,6 +20,11 @@ struct TodayView: View {
     /// style quick workouts you can start anytime or reuse.
     @Query(filter: #Predicate<PhaseDay> { $0.phase == nil }, sort: \PhaseDay.name)
     private var quickWorkoutDays: [PhaseDay]
+    /// Used only to tell whether the currently-featured cycle day has
+    /// already been logged today (featuredDayRow's fade/strikethrough) —
+    /// the row itself doesn't otherwise need every session/recovery.
+    @Query(sort: \WorkoutSession.date) private var allSessionsForToday: [WorkoutSession]
+    @Query(sort: \ActiveRecovery.date) private var activeRecoveriesForToday: [ActiveRecovery]
 
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
@@ -259,11 +264,18 @@ struct TodayView: View {
     /// progression math) — you can still train out of order or skip a Rest
     /// day entirely and slot-filling behaves exactly as it always has; this
     /// only decides what's featured as "next" here.
+    ///
+    /// Deliberately excludes anything logged TODAY from "last logged" — the
+    /// featured slot stays put all day (however it's completed, it just
+    /// shows as done — see featuredDayRow) and only actually rotates at the
+    /// next real midnight, once today's own log is no longer "today."
     private func templateNextDay(_ phase: Phase) -> PhaseDay? {
         let ordered = phase.orderedDays
         guard !ordered.isEmpty else { return nil }
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
         let lastLoggedDay = phase.sessions
-            .filter { $0.day != nil }
+            .filter { $0.day != nil && cal.startOfDay(for: $0.date) < today }
             .sorted { $0.date < $1.date }
             .last?.day
         guard let lastDay = lastLoggedDay,
@@ -288,31 +300,47 @@ struct TodayView: View {
         return rotated
     }
 
+    /// True once today's featured day has something logged for it — a real
+    /// session tied to this exact PhaseDay, or (for a Rest day) any plain
+    /// rest credit today. The row stays featured regardless (see
+    /// templateNextDay) until the actual midnight rollover; this only
+    /// controls whether it's shown as already-done in the meantime.
+    private func isFeaturedDayDoneToday(_ day: PhaseDay) -> Bool {
+        let cal = Calendar.current
+        let hasSessionForDay = allSessionsForToday.contains {
+            cal.isDateInToday($0.date) && $0.day?.persistentModelID == day.persistentModelID
+        }
+        guard day.isRest else { return hasSessionForDay }
+        return hasSessionForDay || activeRecoveriesForToday.contains { cal.isDateInToday($0.date) }
+    }
+
     /// The day up next in the cycle: a play button to jump straight into it,
     /// with its planned exercises previewed underneath (smaller than the
     /// name, since this row already stands out by being first + having the
-    /// play button).
+    /// play button). Fades and strikes through once it's done for today —
+    /// still the featured row until midnight, just visibly complete.
     @ViewBuilder
     private func featuredDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
+        let isDone = isFeaturedDayDoneToday(day)
         HStack(alignment: .top, spacing: 12) {
             Button {
                 quickJumpDay = day
             } label: {
-                Image(systemName: "play.circle.fill")
+                Image(systemName: isDone ? "checkmark.circle.fill" : "play.circle.fill")
                     .font(.system(size: 30))
             }
             .buttonStyle(.plain)
 
             if day.isRest {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(day.name).font(.headline)
+                    Text(day.name).font(.headline).strikethrough(isDone)
                     Text("Log a rest-day activity, or just take it easy.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             } else {
                 let plan = phase.plan(for: day)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(day.name).font(.headline)
+                    Text(day.name).font(.headline).strikethrough(isDone)
                     if plan.isEmpty {
                         Text("No exercises planned — edit the phase to add some.")
                             .font(.caption2).foregroundStyle(.secondary)
@@ -332,6 +360,7 @@ struct TodayView: View {
             }
         }
         .padding(.vertical, 2)
+        .opacity(isDone ? 0.5 : 1)
     }
 
     /// Any other day in the cycle: just its name, with a disclosure to

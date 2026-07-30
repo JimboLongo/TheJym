@@ -101,6 +101,7 @@ struct ContentView: View {
         .onAppear {
             bootstrap()
             WorkoutSession.backfillRestDays(context: context)
+            WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
             ensureBandsBarExists()
@@ -111,8 +112,15 @@ struct ContentView: View {
         // launch — so the reminder reflects whatever was just logged (on
         // backgrounding) and picks up a day rollover or a settings change
         // (on foregrounding), without needing every individual logging
-        // action to remember to call this itself.
+        // action to remember to call this itself. Re-running the
+        // yesterday-credit check here too catches the overnight rollover
+        // for someone who leaves the app backgrounded (not fully quit)
+        // across midnight instead of relaunching it.
         .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                WorkoutSession.backfillRestDays(context: context)
+                WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
+            }
             if newPhase == .active || newPhase == .background {
                 refreshStreakNotification()
             }

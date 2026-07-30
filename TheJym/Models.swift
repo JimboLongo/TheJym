@@ -491,6 +491,34 @@ final class WorkoutSession {
         }
         try? context.save()
     }
+
+    /// If yesterday — just yesterday, not the whole historical backlog
+    /// backfillRestDays covers — has nothing logged at all (no session, no
+    /// rest-day activity, no plain rest credit), credits it as a rest day:
+    /// the same ActiveRecovery + no-activity session the "Log Rest Day"
+    /// button creates live, just applied a day late since it already ended
+    /// before the app could prompt for it. This is what makes the cycle
+    /// actually rotate past a day you never opened the app for — without
+    /// it, a day with nothing logged has no credited day for
+    /// TodayView.templateNextDay to advance past. Deliberately scoped to
+    /// just yesterday so it doesn't retroactively rewrite rest-bank credit
+    /// for older gaps (e.g. from an import) that predate this behavior.
+    @MainActor
+    static func creditYesterdayAsRestIfNothingLogged(context: ModelContext) {
+        let cal = Calendar.current
+        guard let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: Date())) else { return }
+
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        guard !sessions.contains(where: { cal.isDate($0.date, inSameDayAs: yesterday) }) else { return }
+        let activeRecoveries = (try? context.fetch(FetchDescriptor<ActiveRecovery>())) ?? []
+        guard !activeRecoveries.contains(where: { cal.isDate($0.date, inSameDayAs: yesterday) }) else { return }
+        let restActivities = (try? context.fetch(FetchDescriptor<RestDayActivity>())) ?? []
+        guard !restActivities.contains(where: { cal.isDate($0.date, inSameDayAs: yesterday) }) else { return }
+
+        context.insert(ActiveRecovery(date: yesterday, type: .rest))
+        context.insert(WorkoutSession(date: yesterday, dayLabel: "Rest Day", cycleNumber: 0))
+        try? context.save()
+    }
 }
 
 @Model
