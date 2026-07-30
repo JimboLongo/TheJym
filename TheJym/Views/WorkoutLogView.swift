@@ -1961,11 +1961,36 @@ struct PaceRow: View {
         }
     }
 
+    /// Cumulative reps ahead (green) or behind (red) this target's own pace
+    /// as of the most recently logged set — recomputed off `draft` every
+    /// time it changes, so it updates the moment a new set is logged. Nil
+    /// once nothing's logged yet, or exactly on pace (nothing to show).
+    private var cumulativeDelta: (reps: Int, ahead: Bool)? {
+        let loggedCount = draft.sets.filter(\.isLogged).count
+        guard target.hasData, loggedCount > 0, avgWeightPerRep > 0 else { return nil }
+        let milestone = PaceEngine.milestone(atSetIndex: loggedCount, setWeightsMoved: target.setWeightsMoved,
+                                             total: target.totalWeightMoved)
+        let deltaLbs = loggedSoFar - milestone
+        let reps = Int((abs(deltaLbs) / avgWeightPerRep).rounded())
+        guard reps > 0 else { return nil }
+        return (reps, deltaLbs >= 0)
+    }
+
+    @ViewBuilder
+    private var cumulativeDeltaBadge: some View {
+        if let delta = cumulativeDelta {
+            Text(delta.ahead ? "+\(delta.reps)" : "(\(delta.reps))")
+                .font(.system(.caption2, design: .monospaced)).bold()
+                .foregroundStyle(delta.ahead ? .green : .red)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(target.kind.rawValue).font(.caption.bold())
                 Spacer()
+                cumulativeDeltaBadge
                 if let date = target.date {
                     Text(Formatters.date.string(from: date))
                         .font(.caption2).foregroundStyle(.secondary)
