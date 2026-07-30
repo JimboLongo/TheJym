@@ -1824,22 +1824,27 @@ struct CompletedSummaryPageView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Completed")
-                .font(.title2.bold())
-            if completedIndices.isEmpty {
-                Text("Nothing checked off yet — swipe back to an exercise and finish it, or save now to end the workout early.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(completedIndices, id: \.self) { i in
-                    row(for: i)
+        // Indicators left on (unlike the outer paging ScrollView) so a
+        // visible scrollbar signals there's more below when the completed
+        // list is too long for one screen — otherwise it'd look identical
+        // to a page that simply ended.
+        ScrollView(showsIndicators: true) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Completed")
+                    .font(.title2.bold())
+                if completedIndices.isEmpty {
+                    Text("Nothing checked off yet — swipe back to an exercise and finish it, or save now to end the workout early.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(completedIndices, id: \.self) { i in
+                        row(for: i)
+                    }
                 }
             }
-            Spacer(minLength: 0)
+            .padding()
+            .frame(minHeight: pageHeight, alignment: .topLeading)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .safeAreaInset(edge: .bottom) {
             if !drafts.isEmpty {
                 Button(action: onFinish) {
