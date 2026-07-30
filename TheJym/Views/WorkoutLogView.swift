@@ -1117,8 +1117,9 @@ struct ExercisePageView: View {
     private let weightColumnWidth: CGFloat = 100
     /// The pace panel's fixed height — tall enough for the previous-
     /// workouts, plate-calculator, and warm-up pages' typical content to
-    /// fit without any of them needing to scroll internally.
-    private let pacePanelHeight: CGFloat = 260
+    /// fit without any of them needing to scroll internally, plus room for
+    /// the Pace Calculator page's 3rd (per-set delta) grid row.
+    private let pacePanelHeight: CGFloat = 290
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
     /// sets, plus the header and pace panel, fit within one page height.
     private var wheelHeight: CGFloat {
@@ -1921,12 +1922,17 @@ struct SetsGrid: View {
     let repLabels: [String]
     /// Optional per-column color override for the reps row only — an index
     /// left nil (or past the array's end) keeps the default secondary
-    /// color. Lets a caller (e.g. PaceRow, once a set's been logged) recolor
-    /// one rep cell at a time without touching the weights row.
+    /// color.
     var repColors: [Color?] = []
+    /// Optional 3rd row beneath reps — e.g. PaceRow's per-set cumulative
+    /// pace delta, shown only once today's matching set has been logged (an
+    /// empty string at that index leaves the cell blank). Row is omitted
+    /// entirely when this is empty.
+    var deltaLabels: [String] = []
+    var deltaColors: [Color?] = []
 
     var body: some View {
-        let columnCount = max(weightLabels.count, repLabels.count)
+        let columnCount = max(weightLabels.count, repLabels.count, deltaLabels.count)
         Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
             GridRow {
                 ForEach(0..<columnCount, id: \.self) { idx in
@@ -1943,6 +1949,18 @@ struct SetsGrid: View {
                         .foregroundStyle((idx < repColors.count ? repColors[idx] : nil) ?? .secondary)
                     if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
+                    }
+                }
+            }
+            if !deltaLabels.isEmpty {
+                GridRow {
+                    ForEach(0..<columnCount, id: \.self) { idx in
+                        Text(idx < deltaLabels.count ? deltaLabels[idx] : "")
+                            .foregroundStyle((idx < deltaColors.count ? deltaColors[idx] : nil) ?? .secondary)
+                            .bold()
+                        if idx < columnCount - 1 {
+                            Text("")
+                        }
                     }
                 }
             }
@@ -2081,17 +2099,17 @@ struct PaceRow: View {
         return (reps, deltaLbs >= 0)
     }
 
-    /// The target's own historical rep count for each set, except once
-    /// today's session has logged that many sets — from there on, that
-    /// cell shows the cumulative pace delta as of that set instead.
-    private var paceRepLabels: [String] {
-        target.reps.enumerated().map { i, rep in
-            guard let delta = cumulativeDelta(throughSet: i + 1) else { return String(rep) }
+    /// A 3rd grid row beneath the target's own weights/reps — blank until
+    /// today's matching set is logged, then shows that set's cumulative
+    /// pace delta ("+N" ahead / "(N)" behind).
+    private var paceDeltaLabels: [String] {
+        target.reps.indices.map { i in
+            guard let delta = cumulativeDelta(throughSet: i + 1) else { return "" }
             return delta.ahead ? "+\(delta.reps)" : "(\(delta.reps))"
         }
     }
-    private var paceRepColors: [Color?] {
-        target.reps.enumerated().map { i, _ in
+    private var paceDeltaColors: [Color?] {
+        target.reps.indices.map { i in
             guard let delta = cumulativeDelta(throughSet: i + 1) else { return nil }
             return delta.ahead ? .green : .red
         }
@@ -2108,7 +2126,8 @@ struct PaceRow: View {
                 }
             }
             if target.hasData {
-                SetsGrid(weightLabels: target.weightLabels, repLabels: paceRepLabels, repColors: paceRepColors)
+                SetsGrid(weightLabels: target.weightLabels, repLabels: target.reps.map(String.init),
+                        deltaLabels: paceDeltaLabels, deltaColors: paceDeltaColors)
                 loggedComparison
             } else {
                 Text(noDataMessage)
