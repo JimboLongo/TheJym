@@ -107,6 +107,7 @@ struct ContentView: View {
             ensureBandsBarExists()
             fixPhaseStartDatesFromHistory()
             refreshStreakNotification()
+            refreshWeightNotification()
         }
         // Re-evaluated on every foreground/background transition — not just
         // launch — so the reminder reflects whatever was just logged (on
@@ -123,6 +124,7 @@ struct ContentView: View {
             }
             if newPhase == .active || newPhase == .background {
                 refreshStreakNotification()
+                refreshWeightNotification()
             }
         }
     }
@@ -142,6 +144,21 @@ struct ContentView: View {
             || activeRecoveries.contains { cal.isDateInToday($0.date) }
         StreakNotificationManager.refresh(enabled: true, loggedToday: loggedToday,
                                           reminderHour: settings.streakReminderHour)
+    }
+
+    /// "Already logged this week" mirrors BodyWeightView/TodayView's own
+    /// upsert check — an entry dated to this week's Sunday
+    /// (Formatters.nearestPastSunday) already exists.
+    private func refreshWeightNotification() {
+        guard let settings = settingsList.first, settings.weightRemindersEnabled else {
+            WeightNotificationManager.cancel()
+            return
+        }
+        let sunday = Formatters.nearestPastSunday()
+        let bodyWeights = (try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? []
+        let alreadyLoggedThisWeek = bodyWeights.contains { Calendar.current.isDate($0.date, inSameDayAs: sunday) }
+        WeightNotificationManager.refresh(enabled: true, alreadyLoggedThisWeek: alreadyLoggedThisWeek,
+                                          reminderHour: settings.weightReminderHour)
     }
 
     /// cyclePaceDelta/adherencePercent both assume every one of a Phase's

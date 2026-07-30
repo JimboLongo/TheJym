@@ -128,6 +128,36 @@ struct SettingsView: View {
                     }
                 }
 
+                if let s = settingsList.first {
+                    Section {
+                        Toggle("Weight Reminders", isOn: Binding(
+                            get: { s.weightRemindersEnabled },
+                            set: { newValue in
+                                s.weightRemindersEnabled = newValue
+                                try? context.save()
+                                if newValue {
+                                    Task {
+                                        await StreakNotificationManager.requestAuthorizationIfNeeded()
+                                    }
+                                } else {
+                                    WeightNotificationManager.cancel()
+                                }
+                            }))
+                        if s.weightRemindersEnabled {
+                            Picker("Remind Me At", selection: Binding(
+                                get: { s.weightReminderHour },
+                                set: { s.weightReminderHour = $0; try? context.save() })) {
+                                ForEach(0..<24, id: \.self) { hour in
+                                    Text(Formatters.hourLabel(hour)).tag(hour)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    } footer: {
+                        Text("Weight is only ever logged to the nearest Sunday — a notification on Sunday reminding you to log it, if you haven't yet that week.")
+                    }
+                }
+
                 Section {
                     if let url = exportCSVURL {
                         ShareLink(item: url) {

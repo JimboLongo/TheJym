@@ -25,6 +25,7 @@ struct TodayView: View {
     /// the row itself doesn't otherwise need every session/recovery.
     @Query(sort: \WorkoutSession.date) private var allSessionsForToday: [WorkoutSession]
     @Query(sort: \ActiveRecovery.date) private var activeRecoveriesForToday: [ActiveRecovery]
+    @Query(sort: \BodyWeightEntry.date) private var bodyWeightsForQuickAdd: [BodyWeightEntry]
 
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
@@ -36,8 +37,14 @@ struct TodayView: View {
     @State private var editingQuickWorkout: PhaseDay?
 
     @State private var newWeightText = ""
-    @State private var newWeightDate = Date()
     @FocusState private var weightFieldFocused: Bool
+
+    /// Weight is tracked weekly, dated to the nearest Sunday — not
+    /// user-editable to an arbitrary day.
+    private var weightLoggingDate: Date { Formatters.nearestPastSunday() }
+    private var existingWeightEntryThisWeek: BodyWeightEntry? {
+        bodyWeightsForQuickAdd.first { Calendar.current.isDate($0.date, inSameDayAs: weightLoggingDate) }
+    }
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
@@ -101,7 +108,15 @@ struct TodayView: View {
     /// copy), just a faster path than switching tabs.
     private var bodyWeightQuickAddSection: some View {
         Section("Body Weight") {
-            DatePicker("Date", selection: $newWeightDate, in: ...Date(), displayedComponents: .date)
+            HStack {
+                Text("Week of")
+                Spacer()
+                Text(Formatters.date.string(from: weightLoggingDate)).foregroundStyle(.secondary)
+            }
+            if existingWeightEntryThisWeek != nil {
+                Text("Already logged this week — logging again updates it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
                 TextField("Weight (lbs)", text: $newWeightText)
                     .keyboardType(.decimalPad)
@@ -130,10 +145,13 @@ struct TodayView: View {
 
     private func logWeight() {
         guard let w = Double(newWeightText) else { return }
-        context.insert(BodyWeightEntry(date: newWeightDate, weight: w))
+        if let existing = existingWeightEntryThisWeek {
+            existing.weight = w
+        } else {
+            context.insert(BodyWeightEntry(date: weightLoggingDate, weight: w))
+        }
         try? context.save()
         newWeightText = ""
-        newWeightDate = Date()
         weightFieldFocused = false
     }
 

@@ -60,6 +60,11 @@ final class AppSettings {
     /// moment something is), so it never fires once the streak's covered.
     var streakRemindersEnabled: Bool = false
     var streakReminderHour: Int = 20   // 24-hour clock, local time
+    /// A local notification on Sundays (weight is only ever logged to the
+    /// nearest Sunday — see BodyWeightView/TodayView) reminding you to log
+    /// it — cancelled if you already have that week's entry.
+    var weightRemindersEnabled: Bool = false
+    var weightReminderHour: Int = 9   // 24-hour clock, local time
 
     var aiAggressiveness: AIAggressiveness {
         get { AIAggressiveness(rawValue: aiAggressivenessRaw) ?? .moderate }
@@ -755,6 +760,15 @@ enum Formatters {
         let f = DateFormatter()
         f.dateFormat = "h:mm a"
         return f.string(from: date)
+    }
+    /// Body weight is tracked weekly, not daily — every entry is dated to
+    /// the most recent Sunday on or before `date` (today's own Sunday if
+    /// today IS one), never an arbitrary day.
+    static func nearestPastSunday(from date: Date = .now) -> Date {
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: date)   // 1 = Sunday
+        let today = cal.startOfDay(for: date)
+        return cal.date(byAdding: .day, value: -(weekday - 1), to: today) ?? today
     }
     /// Full weekday name alone, e.g. "Sunday" — first line of the workout
     /// log's two-line date button.

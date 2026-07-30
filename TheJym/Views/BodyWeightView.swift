@@ -2,8 +2,8 @@
 //  BodyWeightView.swift
 //  TheJym
 //
-//  Log body weight (any date, defaults to today), see the trend as a chart,
-//  and browse/delete past entries.
+//  Log body weight — weekly, dated to the nearest Sunday, not any arbitrary
+//  day — see the trend as a chart, and browse/delete past entries.
 //
 
 import SwiftUI
@@ -17,14 +17,28 @@ struct BodyWeightView: View {
     @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
 
     @State private var newWeightText = ""
-    @State private var newWeightDate = Date()
     @FocusState private var weightFieldFocused: Bool
+
+    /// Weight is tracked weekly, dated to the nearest Sunday — not
+    /// user-editable to an arbitrary day.
+    private var loggingDate: Date { Formatters.nearestPastSunday() }
+    private var existingEntryThisWeek: BodyWeightEntry? {
+        weights.first { Calendar.current.isDate($0.date, inSameDayAs: loggingDate) }
+    }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    DatePicker("Date", selection: $newWeightDate, in: ...Date(), displayedComponents: .date)
+                    HStack {
+                        Text("Week of")
+                        Spacer()
+                        Text(Formatters.date.string(from: loggingDate)).foregroundStyle(.secondary)
+                    }
+                    if existingEntryThisWeek != nil {
+                        Text("Already logged this week — logging again updates it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     HStack {
                         TextField("Weight (lbs)", text: $newWeightText)
                             .keyboardType(.decimalPad)
@@ -87,10 +101,13 @@ struct BodyWeightView: View {
 
     private func logWeight() {
         guard let w = Double(newWeightText) else { return }
-        context.insert(BodyWeightEntry(date: newWeightDate, weight: w))
+        if let existing = existingEntryThisWeek {
+            existing.weight = w
+        } else {
+            context.insert(BodyWeightEntry(date: loggingDate, weight: w))
+        }
         try? context.save()
         newWeightText = ""
-        newWeightDate = Date()
         weightFieldFocused = false
     }
 }
