@@ -2,8 +2,8 @@
 //  WeightNotificationManager.swift
 //  TheJym
 //
-//  A local notification on Sundays — the only day weight is ever logged to
-//  (BodyWeightView/TodayView both snap to Formatters.nearestPastSunday) —
+//  A local notification on Mondays — the only day weight is ever logged to
+//  (BodyWeightView/TodayView both snap to Formatters.nearestPastMonday) —
 //  reminding you to log it. Rescheduled fresh every time the app's scene
 //  phase changes (TheJymApp.ContentView), same pattern as
 //  StreakNotificationManager, so it never fires once this week's entry
@@ -22,16 +22,16 @@ enum WeightNotificationManager {
     }
 
     /// Re-evaluates the reminder: cancels whatever's pending, then (if
-    /// enabled, today is Sunday, this week's entry doesn't exist yet, and
+    /// enabled, today is Monday, this week's entry doesn't exist yet, and
     /// reminderHour hasn't already passed) schedules a fresh one-shot for
-    /// later today. A no-op on any day that isn't Sunday.
+    /// later today. A no-op on any day that isn't Monday.
     static func refresh(enabled: Bool, alreadyLoggedThisWeek: Bool, reminderHour: Int, now: Date = .now) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [reminderIdentifier])
         guard enabled, !alreadyLoggedThisWeek else { return }
 
         let cal = Calendar.current
-        guard cal.component(.weekday, from: now) == 1 else { return }   // 1 = Sunday
+        guard cal.component(.weekday, from: now) == 2 else { return }   // 2 = Monday
 
         var comps = cal.dateComponents([.year, .month, .day], from: now)
         comps.hour = reminderHour

@@ -2,7 +2,7 @@
 //  BodyWeightView.swift
 //  TheJym
 //
-//  Log body weight — weekly, dated to the nearest Sunday, not any arbitrary
+//  Log body weight — weekly, dated to the nearest Monday, not any arbitrary
 //  day — see the trend as a chart, and browse/delete past entries.
 //
 
@@ -17,7 +17,7 @@ struct BodyWeightView: View {
     @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
 
     @State private var newWeightText = ""
-    @State private var selectedWeightDate = Formatters.nearestPastSunday()
+    @State private var selectedWeightDate = Formatters.nearestPastMonday()
     @FocusState private var weightFieldFocused: Bool
 
     private var existingEntryThisWeek: BodyWeightEntry? {
@@ -29,11 +29,11 @@ struct BodyWeightView: View {
             List {
                 Section {
                     // Weight is tracked weekly, not daily — whatever day is
-                    // tapped snaps to that week's Sunday, so only a Sunday
+                    // tapped snaps to that week's Monday, so only a Monday
                     // is ever actually selectable.
                     DatePicker("Week Starting", selection: Binding(
                         get: { selectedWeightDate },
-                        set: { selectedWeightDate = Formatters.nearestPastSunday(from: $0) }
+                        set: { selectedWeightDate = Formatters.nearestPastMonday(from: $0) }
                     ), in: ...Date(), displayedComponents: .date)
                     if existingEntryThisWeek != nil {
                         Text("Already logged this week — logging again updates it.")
@@ -108,7 +108,7 @@ struct BodyWeightView: View {
         }
         try? context.save()
         newWeightText = ""
-        selectedWeightDate = Formatters.nearestPastSunday()
+        selectedWeightDate = Formatters.nearestPastMonday()
         weightFieldFocused = false
     }
 }

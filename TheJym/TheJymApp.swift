@@ -147,16 +147,16 @@ struct ContentView: View {
     }
 
     /// "Already logged this week" mirrors BodyWeightView/TodayView's own
-    /// upsert check — an entry dated to this week's Sunday
-    /// (Formatters.nearestPastSunday) already exists.
+    /// upsert check — an entry dated to this week's Monday
+    /// (Formatters.nearestPastMonday) already exists.
     private func refreshWeightNotification() {
         guard let settings = settingsList.first, settings.weightRemindersEnabled else {
             WeightNotificationManager.cancel()
             return
         }
-        let sunday = Formatters.nearestPastSunday()
+        let monday = Formatters.nearestPastMonday()
         let bodyWeights = (try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? []
-        let alreadyLoggedThisWeek = bodyWeights.contains { Calendar.current.isDate($0.date, inSameDayAs: sunday) }
+        let alreadyLoggedThisWeek = bodyWeights.contains { Calendar.current.isDate($0.date, inSameDayAs: monday) }
         WeightNotificationManager.refresh(enabled: true, alreadyLoggedThisWeek: alreadyLoggedThisWeek,
                                           reminderHour: settings.weightReminderHour)
     }

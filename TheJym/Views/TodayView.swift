@@ -40,7 +40,7 @@ struct TodayView: View {
     @State private var editingQuickWorkout: PhaseDay?
 
     @State private var newWeightText = ""
-    @State private var selectedWeightDate = Formatters.nearestPastSunday()
+    @State private var selectedWeightDate = Formatters.nearestPastMonday()
     @FocusState private var weightFieldFocused: Bool
 
     private var existingWeightEntryThisWeek: BodyWeightEntry? {
@@ -113,11 +113,11 @@ struct TodayView: View {
     private var bodyWeightQuickAddSection: some View {
         Section("Body Weight") {
             // Weight is tracked weekly, not daily — whatever day is tapped
-            // snaps to that week's Sunday, so only a Sunday is ever
+            // snaps to that week's Monday, so only a Monday is ever
             // actually selectable.
             DatePicker("Week Starting", selection: Binding(
                 get: { selectedWeightDate },
-                set: { selectedWeightDate = Formatters.nearestPastSunday(from: $0) }
+                set: { selectedWeightDate = Formatters.nearestPastMonday(from: $0) }
             ), in: ...Date(), displayedComponents: .date)
             if existingWeightEntryThisWeek != nil {
                 Text("Already logged this week — logging again updates it.")
@@ -158,7 +158,7 @@ struct TodayView: View {
         }
         try? context.save()
         newWeightText = ""
-        selectedWeightDate = Formatters.nearestPastSunday()
+        selectedWeightDate = Formatters.nearestPastMonday()
         weightFieldFocused = false
     }
 
