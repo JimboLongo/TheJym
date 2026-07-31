@@ -200,7 +200,7 @@ struct WorkoutLogView: View {
                                                 exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
                                                 plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
                                                 pageHeight: geo.size.height, currentBodyweight: currentBodyweight,
-                                                currentPageID: $currentPageID)
+                                                currentPageID: $currentPageID, allDrafts: drafts)
                                     .id("ex-\(drafts[i].id)")
                             case .completedSummary:
                                 CompletedSummaryPageView(drafts: $drafts, allLogs: allExerciseLogs,
@@ -790,10 +790,15 @@ struct ExercisePageView: View {
     /// bodyweight exercise. The actual save resolves against the confirmed
     /// log date instead, which may differ from this approximation.
     let currentBodyweight: Double?
-    /// Redirected to the shared completed-exercises page when this one
-    /// collapses (manually or via the delayed auto-collapse), since its own
-    /// page disappears from the paging list at that point.
+    /// Redirected to the next still-open exercise (or the shared completed
+    /// page if none remain) when this one collapses — manually or via the
+    /// delayed auto-collapse — since its own page disappears from the
+    /// paging list at that point.
     @Binding var currentPageID: String?
+    /// A read-only snapshot of every exercise in this workout, in plan
+    /// order — used only to find the next still-open one to jump to right
+    /// after this one collapses (see nextOpenPageID()).
+    let allDrafts: [WorkoutLogView.ExerciseDraft]
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1522,13 +1527,30 @@ struct ExercisePageView: View {
     /// medium, and just beating the Previous Workout is the smallest.
     private func collapseAndCelebrate() {
         celebrationTier = bestBeatenTier()
+        let target = nextOpenPageID()
         draft.isExpanded = false
-        currentPageID = "summary"
+        currentPageID = target
         if celebrationTier != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
                 withAnimation { celebrationTier = nil }
             }
         }
+    }
+
+    /// The next still-open (not yet completed) exercise to jump to once
+    /// this one collapses — the next one after this in plan order, or
+    /// wrapping around to the first still-open one before it if this was
+    /// the last, or the shared completed page if nothing else is open.
+    private func nextOpenPageID() -> String {
+        guard let myIndex = allDrafts.firstIndex(where: { $0.id == draft.id }) else { return "summary" }
+        let openIndices = allDrafts.indices.filter { $0 != myIndex && allDrafts[$0].isExpanded }
+        if let next = openIndices.first(where: { $0 > myIndex }) {
+            return "ex-\(allDrafts[next].id)"
+        }
+        if let wrapped = openIndices.first {
+            return "ex-\(allDrafts[wrapped].id)"
+        }
+        return "summary"
     }
 
     /// The most prestigious comparison today's total actually beat, if any
