@@ -210,23 +210,50 @@ struct TodayView: View {
         }
     }
 
-    /// One checkmark/circle + short name per training-day slot in the cycle
-    /// currently in progress — replaces the raw "N sessions logged" count so
-    /// it's clear exactly which days are done vs. still open this cycle.
+    /// Display-only mirror of Phase.cycleWalk's slot-filling walk, applied
+    /// to Rest days instead of training days — Rest slots deliberately
+    /// don't participate in the real cycle-progression math (a Phase's
+    /// cycleWalk only ever tracks training days), so this is a separate,
+    /// purely presentational "which Rest days have I taken this go-around"
+    /// tally, walked independently and never touching the real model.
+    private func filledRestDayIDs(_ phase: Phase) -> Set<PersistentIdentifier> {
+        let restSlots = phase.orderedDays.filter(\.isRest)
+        guard !restSlots.isEmpty else { return [] }
+        let relevant = phase.sessions
+            .filter { $0.day != nil && $0.day!.isRest == true }
+            .sorted { $0.date < $1.date }
+        var filled: Set<PersistentIdentifier> = []
+        for session in relevant {
+            guard let dayID = session.day?.persistentModelID else { continue }
+            if filled.contains(dayID) { continue }
+            filled.insert(dayID)
+            if filled.count == restSlots.count {
+                filled = []
+            }
+        }
+        return filled
+    }
+
+    /// One checkmark/circle + short name per slot (training AND Rest) in
+    /// the cycle currently in progress, in template order — replaces the
+    /// raw "N sessions logged" count so it's clear exactly which days are
+    /// done vs. still open this cycle.
     private func cycleSlotChecklist(_ phase: Phase) -> some View {
-        HStack(spacing: 12) {
-            ForEach(phase.trainingDays, id: \.persistentModelID) { day in
-                let done = phase.isSlotFilled(for: day)
-                VStack(spacing: 2) {
-                    Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(done ? .green : .secondary)
-                    Text(day.name)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+        let filledRestIDs = filledRestDayIDs(phase)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(phase.orderedDays, id: \.persistentModelID) { day in
+                    let done = day.isRest ? filledRestIDs.contains(day.persistentModelID) : phase.isSlotFilled(for: day)
+                    VStack(spacing: 2) {
+                        Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(done ? .green : .secondary)
+                        Text(day.name)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             }
-            Spacer()
         }
     }
 
@@ -240,10 +267,6 @@ struct TodayView: View {
                     HStack {
                         Text("Phase \(phase.number)").font(.title2.bold())
                         Spacer()
-                        Text(phase.summary)
-                            .font(.system(.caption, design: .monospaced))
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(.thinMaterial, in: Capsule())
                     }
                     ProgressView(value: Double(phase.filledSlotCount),
                                  total: Double(phase.trainingDaysPerCycle * phase.totalCycles))
