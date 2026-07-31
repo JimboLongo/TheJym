@@ -240,18 +240,22 @@ struct TodayView: View {
     /// done vs. still open this cycle.
     private func cycleSlotChecklist(_ phase: Phase) -> some View {
         let filledRestIDs = filledRestDayIDs(phase)
-        return ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(phase.orderedDays, id: \.persistentModelID) { day in
-                    let done = day.isRest ? filledRestIDs.contains(day.persistentModelID) : phase.isSlotFilled(for: day)
-                    VStack(spacing: 2) {
-                        Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(done ? .green : .secondary)
-                        Text(day.name)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
+        let days = phase.orderedDays
+        // Always wraps to exactly 2 rows, however many days are in the
+        // template — e.g. a 6-day LURLUR pattern becomes LUR / LUR — so
+        // everything's visible at once instead of scrolling left/right.
+        let columnsPerRow = max(1, Int(ceil(Double(days.count) / 2.0)))
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnsPerRow)
+        return LazyVGrid(columns: columns, spacing: 8) {
+            ForEach(days, id: \.persistentModelID) { day in
+                let done = day.isRest ? filledRestIDs.contains(day.persistentModelID) : phase.isSlotFilled(for: day)
+                VStack(spacing: 2) {
+                    Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(done ? .green : .secondary)
+                    Text(day.name)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
