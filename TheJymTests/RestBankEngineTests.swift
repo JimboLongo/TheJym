@@ -202,4 +202,48 @@ final class RestBankEngineTests: XCTestCase {
         XCTAssertEqual(result.currentStreak, 1, "the new streak must start at 1, not inherit the old one")
         XCTAssertEqual(result.bankBalance, 1.0, accuracy: 1e-9, "bank must reset to 1.0, not carry forward debt")
     }
+
+    // MARK: - Max-streak date range
+
+    /// A closed (already-broken) max streak: just day 1, breaking by day 3.
+    /// Its range should report day1...day1, no preceding break (it's the
+    /// very first credited day in history), and day3 as what broke it.
+    func testMaxStreakRangeForAClosedStreak() {
+        let rate = StatsEngine.earnRate(restDays: 1, trainingDays: 3)
+        let credited = [day(1)]
+        let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
+        let result = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(5))
+
+        guard let range = result.maxStreakRange else { return XCTFail("Expected a maxStreakRange") }
+        XCTAssertEqual(cal.isDate(range.start, inSameDayAs: day(1)), true)
+        XCTAssertEqual(cal.isDate(range.end, inSameDayAs: day(1)), true)
+        XCTAssertNil(range.precedingBreakDate, "Nothing came before the very first credited day")
+        XCTAssertNotNil(range.followingBreakDate)
+        if let following = range.followingBreakDate {
+            XCTAssertEqual(cal.isDate(following, inSameDayAs: day(3)), true)
+        }
+    }
+
+    /// The earn-rate-change scenario has two streak instances: day1 alone
+    /// (breaks by day3), then day5/6/8 (still open, currently the record at
+    /// 3) — the range should point at the SECOND streak, with day3 as what
+    /// closed the first one and no following break (still ongoing).
+    func testMaxStreakRangeCarriesPrecedingBreakFromThePriorStreak() {
+        let boundary = day(5)
+        let periods = [
+            StatsEngine.RatePeriod(start: .distantPast, earnRate: 0.15),
+            StatsEngine.RatePeriod(start: boundary, earnRate: 1.0),
+        ]
+        let credited = [day(1), day(5), day(6), day(8)]
+        let result = StatsEngine.computeRestBank(trainingCreditedDates: credited, restCreditedDates: [], ratePeriods: periods, now: day(8))
+
+        guard let range = result.maxStreakRange else { return XCTFail("Expected a maxStreakRange") }
+        XCTAssertEqual(cal.isDate(range.start, inSameDayAs: day(5)), true)
+        XCTAssertEqual(cal.isDate(range.end, inSameDayAs: day(8)), true)
+        XCTAssertNotNil(range.precedingBreakDate)
+        if let preceding = range.precedingBreakDate {
+            XCTAssertEqual(cal.isDate(preceding, inSameDayAs: day(3)), true)
+        }
+        XCTAssertNil(range.followingBreakDate, "Still the ongoing streak — hasn't broken yet")
+    }
 }

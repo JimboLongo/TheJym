@@ -31,6 +31,8 @@ struct StatsView: View {
     /// own popover has no way to dismiss itself on selection.
     @State private var showTrainingStartDatePicker = false
     @State private var pendingTrainingStartDate = Date()
+    /// Drives navigation to StreakHistoryView when "Max streak" is tapped.
+    @State private var selectedStreakRange: MaxStreakDateRange?
 
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -77,7 +79,22 @@ struct StatsView: View {
                     statRow("Days since start", "\(stats.daysSinceStart)")
                     statRow("Days logged", "\(stats.daysLogged)")
                     statRow("Current streak", "\(stats.currentStreak) 🔥")
-                    statRow("Max streak", "\(stats.maxStreak)")
+                    if let range = stats.maxStreakRange {
+                        Button {
+                            selectedStreakRange = range
+                        } label: {
+                            HStack {
+                                Text("Max streak").foregroundStyle(.primary)
+                                Spacer()
+                                Text("\(stats.maxStreak)")
+                                    .font(.system(.body, design: .monospaced)).bold()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        statRow("Max streak", "\(stats.maxStreak)")
+                    }
                     statRow("Rest days banked", String(format: "%.1f", stats.bankBalance))
                     statRow("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100))
                     statRow("Days per week", String(format: "%.2f", stats.daysPerWeek))
@@ -149,6 +166,9 @@ struct StatsView: View {
                     try? context.save()
                     showTrainingStartDatePicker = false
                 }
+            }
+            .navigationDestination(item: $selectedStreakRange) { range in
+                StreakHistoryView(range: range)
             }
         }
     }

@@ -14,6 +14,10 @@ struct TrainingStats {
     var daysLogged: Int
     var currentStreak: Int      // credited days since the rest bank last broke
     var maxStreak: Int
+    /// The actual date range of whichever streak achieved maxStreak, plus
+    /// the days right before/after it that closed the previous streak and
+    /// broke this one — nil only when maxStreak is 0 (nothing logged yet).
+    var maxStreakRange: MaxStreakDateRange?
     var bankBalance: Double     // current rest-bank balance, 0...2
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
@@ -42,6 +46,23 @@ struct TrainingStats {
     var activePhaseCycleProgress: ActivePhaseCycleProgress?
     // Shown instead of the three fields above when there's no active phase.
     var perfectWeekFallback: PerfectWeekFallback?
+}
+
+/// The actual calendar range a streak covered, plus its boundary days —
+/// used to filter History to "this streak, and whatever broke it on
+/// either side" when the user taps a streak stat. Hashable so it can drive
+/// a `.navigationDestination(item:)`.
+struct MaxStreakDateRange: Hashable {
+    let start: Date
+    let end: Date
+    /// The day right before `start` that closed the PREVIOUS streak (the
+    /// first unlogged day whose deduction broke it) — nil if `start` is the
+    /// very first credited day in all of history, so there was no prior
+    /// streak to close.
+    let precedingBreakDate: Date?
+    /// The day that broke this streak — nil if this is still the ongoing,
+    /// currently-open streak (hasn't broken as of "today").
+    let followingBreakDate: Date?
 }
 
 /// "Phase N: X of Y perfect" — X of that phase's own completed cycles met
@@ -246,6 +267,7 @@ enum StatsEngine {
                              daysLogged: daysLogged,
                              currentStreak: bank.currentStreak,
                              maxStreak: bank.maxStreak,
+                             maxStreakRange: bank.maxStreakRange,
                              bankBalance: bank.bankBalance,
                              percentLogged: pct,
                              daysPerWeek: perWeek,
@@ -342,6 +364,7 @@ enum StatsEngine {
         var currentStreak: Int
         var maxStreak: Int
         var bankBalance: Double
+        var maxStreakRange: MaxStreakDateRange?
     }
 
     /// Builds the earn-rate timeline: an active Phase's split-derived rate
@@ -401,7 +424,7 @@ enum StatsEngine {
         let restCredited = Set(restCreditedDates.map { cal.startOfDay(for: $0) })
         let today = cal.startOfDay(for: now)
         guard let firstDay = (trainingCredited.union(restCredited)).min() else {
-            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0)
+            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0, maxStreakRange: nil)
         }
         let sortedPeriods = ratePeriods.sorted { $0.start < $1.start }
 
@@ -416,6 +439,18 @@ enum StatsEngine {
         var maxStreak = 0
         var day = firstDay
         var iterations = 0
+
+        // Tracks the actual date range of whichever streak instance holds
+        // the record, plus its boundary break days, so a stat like "Max
+        // Streak: 51" can be traced back to exactly which 51 days (and
+        // what broke it on either side) — see MaxStreakDateRange.
+        var currentStreakStart: Date?
+        var lastBreakDate: Date?
+        var maxStreakStartDate: Date?
+        var maxStreakEndDate: Date?
+        var maxStreakPrecedingBreakDate: Date?
+        var maxStreakFollowingBreakDate: Date?
+
         while day <= today, iterations < 20_000 {
             iterations += 1
             let isToday = day == today
@@ -425,25 +460,40 @@ enum StatsEngine {
 
             if isToday && !isCredited { break }   // pending — stop without processing today
 
-            if isTraining {
-                bank = streakOpen ? min(bankCap, bank + rate(on: day)) : 1.0
+            if isTraining || isRest {
+                if !streakOpen { currentStreakStart = day }
+                bank = streakOpen
+                    ? (isTraining ? min(bankCap, bank + rate(on: day)) : max(0, bank - 1.0))
+                    : 1.0
                 streakOpen = true
                 streak += 1
                 maxStreak = max(maxStreak, streak)
-            } else if isRest {
-                bank = streakOpen ? max(0, bank - 1.0) : 1.0
-                streakOpen = true
-                streak += 1
-                maxStreak = max(maxStreak, streak)
+                // Only true once streak has just tied/exceeded the record —
+                // a streak that's still smaller than the historical max
+                // leaves maxStreak (and this check) untouched.
+                if streak == maxStreak {
+                    if maxStreakStartDate != currentStreakStart {
+                        // A new streak instance just took over the record.
+                        maxStreakStartDate = currentStreakStart
+                        maxStreakPrecedingBreakDate = lastBreakDate
+                        maxStreakFollowingBreakDate = nil
+                    }
+                    maxStreakEndDate = day
+                }
             } else if streakOpen {
                 bank -= 1.0
                 // Epsilon guards against floating-point residue (e.g. a
                 // repeating-decimal earn rate landing at -1e-16 instead of
                 // exactly 0) spuriously tripping a break right at the edge.
                 if bank < -1e-9 {
+                    if currentStreakStart == maxStreakStartDate {
+                        maxStreakFollowingBreakDate = day
+                    }
                     streakOpen = false
                     streak = 0
                     bank = 0   // ledger closed — no meaningful balance until the next streak starts
+                    lastBreakDate = day
+                    currentStreakStart = nil
                 }
             }
             // else: ledger already closed, an unlogged day has no effect.
@@ -451,7 +501,14 @@ enum StatsEngine {
             guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
         }
-        return RestBankResult(currentStreak: streak, maxStreak: maxStreak, bankBalance: bank)
+
+        let maxStreakRange: MaxStreakDateRange? = maxStreakStartDate.map { start in
+            MaxStreakDateRange(start: start, end: maxStreakEndDate ?? start,
+                              precedingBreakDate: maxStreakPrecedingBreakDate,
+                              followingBreakDate: maxStreakFollowingBreakDate)
+        }
+        return RestBankResult(currentStreak: streak, maxStreak: maxStreak, bankBalance: bank,
+                              maxStreakRange: maxStreakRange)
     }
 
     /// Required pace (workouts per calendar day) implied by the phase's own
