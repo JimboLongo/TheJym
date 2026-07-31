@@ -59,8 +59,10 @@ final class PerfectCycleTests: XCTestCase {
     func testPerfectCycleWithinSpan() {
         let context = makeContext()
         let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        let rest = phase.orderedDays[2]
         log(dayA, on: d(0), phase: phase, context: context)
         log(dayB, on: d(1), phase: phase, context: context)
+        log(rest, on: d(2), phase: phase, context: context)
         log(dayC, on: d(3), phase: phase, context: context)   // span 0->3 = 4 days <= 5
         try? context.save()
 
@@ -71,8 +73,10 @@ final class PerfectCycleTests: XCTestCase {
     func testNotPerfectWhenSpanTooWide() {
         let context = makeContext()
         let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        let rest = phase.orderedDays[2]
         log(dayA, on: d(0), phase: phase, context: context)
         log(dayB, on: d(1), phase: phase, context: context)
+        log(rest, on: d(2), phase: phase, context: context)
         log(dayC, on: d(10), phase: phase, context: context)  // span 0->10 = 11 days > 5
         try? context.save()
 
@@ -83,30 +87,78 @@ final class PerfectCycleTests: XCTestCase {
     func testBonusSessionDoesNotDisqualify() {
         let context = makeContext()
         let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        let rest = phase.orderedDays[2]
         log(dayA, on: d(0), phase: phase, context: context)
         log(dayA, on: d(20), phase: phase, context: context)  // bonus — Day A slot already filled
         log(dayB, on: d(1), phase: phase, context: context)
+        log(rest, on: d(2), phase: phase, context: context)
         log(dayC, on: d(3), phase: phase, context: context)
         try? context.save()
 
         XCTAssertEqual(phase.perfectCycleFlags, [true], "A bonus session's date shouldn't widen the span")
     }
 
+    /// A cycle only completes once its Rest slot is explicitly logged too —
+    /// finishing every training day isn't enough on its own.
+    @MainActor
+    func testCycleDoesNotCompleteUntilRestSlotIsExplicitlyLogged() {
+        let context = makeContext()
+        let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        log(dayA, on: d(0), phase: phase, context: context)
+        log(dayB, on: d(1), phase: phase, context: context)
+        log(dayC, on: d(3), phase: phase, context: context)
+        try? context.save()
+
+        XCTAssertEqual(phase.currentCycle, 1, "All 3 training slots are filled, but Rest isn't — still cycle 1")
+        XCTAssertFalse(phase.isComplete)
+
+        let rest = phase.orderedDays[2]
+        log(rest, on: d(4), phase: phase, context: context)
+        try? context.save()
+
+        XCTAssertEqual(phase.currentCycle, 2, "Logging Rest is what actually completes the cycle")
+    }
+
+    /// The passive "nothing was logged" backfill credit (WorkoutSession with
+    /// no `day` set) must never fill a Rest slot on its own — only an
+    /// explicit Log Rest Day / rest-day activity, which sets `day`, can.
+    @MainActor
+    func testPassiveRestBackfillDoesNotFillTheRestSlot() {
+        let context = makeContext()
+        let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        log(dayA, on: d(0), phase: phase, context: context)
+        log(dayB, on: d(1), phase: phase, context: context)
+        log(dayC, on: d(3), phase: phase, context: context)
+        // Passive backfill credit for a day nothing was logged — day: nil.
+        let passive = WorkoutSession(date: d(4), dayLabel: "Rest Day", cycleNumber: 0)
+        passive.phase = phase
+        context.insert(passive)
+        try? context.save()
+
+        let rest = phase.orderedDays[2]
+        XCTAssertFalse(phase.isSlotFilled(for: rest), "A day-less placeholder shouldn't fill the Rest slot")
+        XCTAssertEqual(phase.currentCycle, 1)
+    }
+
     @MainActor
     func testLifetimeCountAndStreakBreakOnImperfectCycle() {
         let context = makeContext()
         let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        let rest = phase.orderedDays[2]
         // Cycle 1: perfect.
         log(dayA, on: d(-30), phase: phase, context: context)
         log(dayB, on: d(-29), phase: phase, context: context)
+        log(rest, on: d(-28), phase: phase, context: context)
         log(dayC, on: d(-27), phase: phase, context: context)
         // Cycle 2: not perfect — too spread out.
         log(dayA, on: d(-24), phase: phase, context: context)
         log(dayB, on: d(-20), phase: phase, context: context)
+        log(rest, on: d(-10), phase: phase, context: context)
         log(dayC, on: d(-5), phase: phase, context: context)
         // Cycle 3: perfect.
         log(dayA, on: d(-4), phase: phase, context: context)
         log(dayB, on: d(-3), phase: phase, context: context)
+        log(rest, on: d(-2), phase: phase, context: context)
         log(dayC, on: d(-1), phase: phase, context: context)
         try? context.save()
 

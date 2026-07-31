@@ -210,36 +210,14 @@ struct TodayView: View {
         }
     }
 
-    /// Display-only mirror of Phase.cycleWalk's slot-filling walk, applied
-    /// to Rest days instead of training days — Rest slots deliberately
-    /// don't participate in the real cycle-progression math (a Phase's
-    /// cycleWalk only ever tracks training days), so this is a separate,
-    /// purely presentational "which Rest days have I taken this go-around"
-    /// tally, walked independently and never touching the real model.
-    private func filledRestDayIDs(_ phase: Phase) -> Set<PersistentIdentifier> {
-        let restSlots = phase.orderedDays.filter(\.isRest)
-        guard !restSlots.isEmpty else { return [] }
-        let relevant = phase.sessions
-            .filter { $0.day != nil && $0.day!.isRest == true }
-            .sorted { $0.date < $1.date }
-        var filled: Set<PersistentIdentifier> = []
-        for session in relevant {
-            guard let dayID = session.day?.persistentModelID else { continue }
-            if filled.contains(dayID) { continue }
-            filled.insert(dayID)
-            if filled.count == restSlots.count {
-                filled = []
-            }
-        }
-        return filled
-    }
-
     /// One checkmark/circle + short name per slot (training AND Rest) in
     /// the cycle currently in progress, in template order — replaces the
     /// raw "N sessions logged" count so it's clear exactly which days are
-    /// done vs. still open this cycle.
+    /// done vs. still open this cycle. Rest slots come straight from
+    /// Phase.isSlotFilled now, same as training slots — a Rest day only
+    /// counts once explicitly logged (Log Rest Day / a rest-day activity),
+    /// never from the passive "nothing logged" backfill credit.
     private func cycleSlotChecklist(_ phase: Phase) -> some View {
-        let filledRestIDs = filledRestDayIDs(phase)
         let days = phase.orderedDays
         // Always wraps to exactly 2 rows, however many days are in the
         // template — e.g. a 6-day LURLUR pattern becomes LUR / LUR — so
@@ -248,7 +226,7 @@ struct TodayView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnsPerRow)
         return LazyVGrid(columns: columns, spacing: 8) {
             ForEach(days, id: \.persistentModelID) { day in
-                let done = day.isRest ? filledRestIDs.contains(day.persistentModelID) : phase.isSlotFilled(for: day)
+                let done = phase.isSlotFilled(for: day)
                 VStack(spacing: 2) {
                     Image(systemName: done ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(done ? .green : .secondary)
@@ -273,7 +251,7 @@ struct TodayView: View {
                         Spacer()
                     }
                     ProgressView(value: Double(phase.filledSlotCount),
-                                 total: Double(phase.trainingDaysPerCycle * phase.totalCycles))
+                                 total: Double(phase.orderedDays.count * phase.totalCycles))
                     HStack {
                         Text("Cycle \(phase.currentCycle) of \(phase.totalCycles)")
                         if settings?.deloadWeeksEnabled == true, phase.deloadCycle == phase.currentCycle {
@@ -816,7 +794,7 @@ struct PhaseStatsView: View {
     }
 
     private var completedCycles: Int {
-        phase.filledSlotCount / max(phase.trainingDaysPerCycle, 1)
+        phase.filledSlotCount / max(phase.orderedDays.count, 1)
     }
 
     /// Best rest-bank streak achieved during this phase's own timeframe,

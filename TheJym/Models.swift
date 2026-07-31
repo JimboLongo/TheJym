@@ -252,10 +252,15 @@ final class Phase {
 
     // MARK: - Slot-based cycle tracking
     //
-    // Each cycle has one "slot" per PhaseDay in trainingDays (in order).
-    // Logging a session for a training day fills its slot for whichever
-    // cycle is currently in progress; logging another session for a day
-    // whose slot this cycle is already filled doesn't fill anything or
+    // Each cycle has one "slot" per PhaseDay in orderedDays (in order) —
+    // Rest slots included, so a cycle only completes once every rest day in
+    // the template has been explicitly logged too (the plain "Log Rest Day"
+    // credit or a rest-day activity, both of which set WorkoutSession.day to
+    // that exact Rest PhaseDay), not just its training days. The passive
+    // gap-filling credit backfillRestDays/creditYesterdayAsRestIfNothingLogged
+    // insert for a day nothing was logged at all deliberately leaves `day`
+    // nil, so it never counts toward a rest slot here. Logging a session for
+    // a day whose slot this cycle is already filled doesn't fill anything or
     // advance the cycle — it's a "bonus" session (still real history, still
     // counted for pace comparisons and the rest-bank streak, just not for
     // cycle progression). Always recomputed fresh from `sessions` rather
@@ -270,13 +275,13 @@ final class Phase {
     }
 
     private var cycleWalk: CycleWalkResult {
-        let slots = trainingDays
+        let slots = orderedDays
         guard !slots.isEmpty else {
             return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [], perfectFlags: [])
         }
         let cal = Calendar.current
         let relevant = sessions
-            .filter { $0.day != nil && $0.day!.isRest == false }
+            .filter { $0.day != nil }
             .sorted { $0.date < $1.date }
 
         var filled: Set<PersistentIdentifier> = []
@@ -319,11 +324,11 @@ final class Phase {
         cycleWalk.filledSlotIDs.contains(day.persistentModelID)
     }
 
-    /// Total slots filled across all history (bonus sessions don't count) —
-    /// a monotonic progress counter, same role the old raw session count
-    /// played, just slot-aware now.
+    /// Total slots filled across all history (bonus sessions don't count),
+    /// training and Rest both — a monotonic progress counter, same role the
+    /// old raw session count played, just slot-aware now.
     var filledSlotCount: Int {
-        cycleWalk.completedCycles * trainingDaysPerCycle + cycleWalk.filledSlotIDs.count
+        cycleWalk.completedCycles * orderedDays.count + cycleWalk.filledSlotIDs.count
     }
 
     /// Current cycle number (1-based), based on how many full cycles' worth

@@ -517,16 +517,15 @@ enum StatsEngine {
                               currentStreakStartDate: streakOpen ? currentStreakStart : nil)
     }
 
-    /// Required pace (workouts per calendar day) implied by the phase's own
-    /// split — one day-template slot per calendar day, so totalCycles cancel
-    /// out: pace = trainingDaysPerCycle / (days in one pass of the template).
+    /// Required pace (slots per calendar day) implied by the phase's own
+    /// split — one day-template slot (training or Rest, both now tracked by
+    /// filledSlotCount) per calendar day, so expected slots by today is just
+    /// daysElapsed itself.
     static func cyclePaceDelta(for phase: Phase, now: Date = .now) -> Int {
         let cal = Calendar.current
         let daysElapsed = max(1, (cal.dateComponents([.day],
             from: cal.startOfDay(for: phase.startDate), to: cal.startOfDay(for: now)).day ?? 0) + 1)
-        let pace = Double(phase.trainingDaysPerCycle) / Double(max(phase.orderedDays.count, 1))
-        let expected = Int(floor(Double(daysElapsed) * pace))
-        return phase.filledSlotCount - expected
+        return phase.filledSlotCount - daysElapsed
     }
 
     /// Sessions logged ÷ sessions scheduled to date (same "scheduled to
@@ -535,9 +534,7 @@ enum StatsEngine {
         let cal = Calendar.current
         let daysElapsed = max(1, (cal.dateComponents([.day],
             from: cal.startOfDay(for: phase.startDate), to: cal.startOfDay(for: now)).day ?? 0) + 1)
-        let pace = Double(phase.trainingDaysPerCycle) / Double(max(phase.orderedDays.count, 1))
-        let expected = max(1, Int(floor(Double(daysElapsed) * pace)))
-        return Double(phase.filledSlotCount) / Double(expected) * 100
+        return Double(phase.filledSlotCount) / Double(daysElapsed) * 100
     }
 }
 
