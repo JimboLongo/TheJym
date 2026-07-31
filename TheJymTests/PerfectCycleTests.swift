@@ -119,6 +119,39 @@ final class PerfectCycleTests: XCTestCase {
         XCTAssertEqual(phase.currentCycle, 2, "Logging Rest is what actually completes the cycle")
     }
 
+    /// legacyCompletedCycles grandfathers a phase's pre-Rest-tracking
+    /// progress in as a frozen floor — but the cycle that was still in
+    /// progress at that moment (deliberately one short of the old-rule
+    /// count — see the stamping doc in TheJymApp) has to earn its
+    /// completion under the new Rest-aware rule like any other from then on.
+    @MainActor
+    func testLegacyBaselineIsHonoredButTheNextCycleStillNeedsRest() {
+        let context = makeContext()
+        let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        // Pass 1: old-style history — training only, Rest never logged for
+        // it, same as a phase that progressed under the pre-Rest-tracking rule.
+        log(dayA, on: d(-10), phase: phase, context: context)
+        log(dayB, on: d(-9), phase: phase, context: context)
+        log(dayC, on: d(-7), phase: phase, context: context)
+        phase.legacyCompletedCycles = 1   // simulates the migration freezing this baseline
+        try? context.save()
+
+        XCTAssertEqual(phase.currentCycle, 2, "Baseline of 1 means cycle 2 is already in progress")
+
+        log(dayA, on: d(0), phase: phase, context: context)
+        log(dayB, on: d(1), phase: phase, context: context)
+        log(dayC, on: d(3), phase: phase, context: context)
+        try? context.save()
+
+        XCTAssertEqual(phase.currentCycle, 2, "Training alone doesn't complete this cycle — Rest still required")
+
+        let rest = phase.orderedDays[2]
+        log(rest, on: d(4), phase: phase, context: context)
+        try? context.save()
+
+        XCTAssertEqual(phase.currentCycle, 3, "Now cycle 2 is genuinely complete, on top of the baseline of 1")
+    }
+
     /// The passive "nothing was logged" backfill credit (WorkoutSession with
     /// no `day` set) must never fill a Rest slot on its own — only an
     /// explicit Log Rest Day / rest-day activity, which sets `day`, can.

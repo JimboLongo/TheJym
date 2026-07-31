@@ -107,6 +107,7 @@ struct ContentView: View {
             ensureBandsBarExists()
             repairDanglingEquipmentReferences()
             fixPhaseStartDatesFromHistory()
+            stampLegacyCompletedCycles()
             refreshStreakNotification()
             refreshWeightNotification()
         }
@@ -175,6 +176,48 @@ struct ContentView: View {
         for phase in phases {
             guard let earliest = phase.sessions.map(\.date).min(), earliest < phase.startDate else { continue }
             phase.startDate = earliest
+            changed = true
+        }
+        if changed { try? context.save() }
+    }
+
+    /// Freezes Phase.legacyCompletedCycles once for any phase that doesn't
+    /// have it yet — replays the old training-only completion rule (Rest
+    /// slots not required) against history as it stands right now, then
+    /// banks one cycle short of that count as the permanent grandfather
+    /// floor. The "one short" is deliberate: it's what makes the cycle in
+    /// progress at the moment Rest-aware tracking shipped actually have to
+    /// earn its completion under the new rule (which is exactly the report
+    /// that motivated this — finishing the last training day of a cycle was
+    /// completing it and rolling to the next cycle before that cycle's own
+    /// Rest day was ever logged) instead of being grandfathered in too.
+    /// Never recomputed after that: doing so from then-current history
+    /// would keep re-including cycles the Rest-aware rule has since validly
+    /// completed on its own, silently regranting a floor that should stay
+    /// fixed.
+    private func stampLegacyCompletedCycles() {
+        var changed = false
+        for phase in phases where phase.legacyCompletedCycles == nil {
+            let trainingSlotIDs = Set(phase.trainingDays.map(\.persistentModelID))
+            guard !trainingSlotIDs.isEmpty else {
+                phase.legacyCompletedCycles = 0
+                changed = true
+                continue
+            }
+            let relevant = phase.sessions
+                .filter { $0.day != nil }
+                .sorted { $0.date < $1.date }
+            var filled: Set<PersistentIdentifier> = []
+            var completedCycles = 0
+            for session in relevant {
+                guard let dayID = session.day?.persistentModelID,
+                      trainingSlotIDs.contains(dayID), !filled.contains(dayID) else { continue }
+                filled.insert(dayID)
+                guard trainingSlotIDs.isSubset(of: filled) else { continue }
+                completedCycles += 1
+                filled = []
+            }
+            phase.legacyCompletedCycles = max(0, completedCycles - 1)
             changed = true
         }
         if changed { try? context.save() }

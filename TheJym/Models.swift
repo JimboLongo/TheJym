@@ -213,6 +213,19 @@ final class Phase {
     var isActive: Bool
     /// Cycle index (1-based) that is a deload cycle, or 0 for none.
     var deloadCycle: Int
+    /// Grandfather baseline for requiring Rest slots in cycle completion
+    /// (see cycleWalk) — the number of cycles this phase already had
+    /// training-complete (the old rule, Rest not required) as of the moment
+    /// Rest-aware tracking shipped, MINUS one, so the cycle in progress
+    /// right then still has to earn its completion under the new rule
+    /// rather than being grandfathered in too. nil means not yet stamped;
+    /// TheJymApp computes and freezes it once, on launch, for any phase
+    /// that doesn't have it yet — including a phase created after this
+    /// shipped, which simply freezes at 0 since it has no history to
+    /// protect. Frozen for good once set: recomputing it later from
+    /// then-current history would keep pulling in cycles the Rest-aware
+    /// rule has since correctly completed on its own.
+    var legacyCompletedCycles: Int?
 
     @Relationship(deleteRule: .cascade, inverse: \PhaseDay.phase)
     var days: [PhaseDay] = []
@@ -223,12 +236,14 @@ final class Phase {
     var sessions: [WorkoutSession] = []
 
     init(number: Int, totalCycles: Int,
-         startDate: Date = .now, isActive: Bool = true, deloadCycle: Int = 0) {
+         startDate: Date = .now, isActive: Bool = true, deloadCycle: Int = 0,
+         legacyCompletedCycles: Int? = 0) {
         self.number = number
         self.totalCycles = totalCycles
         self.startDate = startDate
         self.isActive = isActive
         self.deloadCycle = deloadCycle
+        self.legacyCompletedCycles = legacyCompletedCycles
     }
 
     /// The one-cycle day template, in order.
@@ -263,9 +278,12 @@ final class Phase {
     // a day whose slot this cycle is already filled doesn't fill anything or
     // advance the cycle — it's a "bonus" session (still real history, still
     // counted for pace comparisons and the rest-bank streak, just not for
-    // cycle progression). Always recomputed fresh from `sessions` rather
-    // than trusting any stored flag, so edits/backdating a session's date
-    // can't leave the cycle state stale.
+    // cycle progression). legacyCompletedCycles (see its own doc) is a
+    // frozen floor below which this walk never has to reprocess history, so
+    // a phase's pre-Rest-tracking progress can't regress. Everything from
+    // there forward is always recomputed fresh from `sessions` rather than
+    // trusting any stored flag, so edits/backdating a session's date can't
+    // leave that part of the cycle state stale.
 
     private struct CycleWalkResult {
         var currentCycle: Int
@@ -284,11 +302,35 @@ final class Phase {
             .filter { $0.day != nil }
             .sorted { $0.date < $1.date }
 
+        // Skip straight past whatever's already frozen into the legacy
+        // baseline — found by replaying the old training-only rule just far
+        // enough to locate where that many passes finished, then resuming
+        // the real (Rest-aware) walk right after.
+        var startIndex = 0
+        let legacyTarget = legacyCompletedCycles ?? 0
+        if legacyTarget > 0 {
+            let trainingSlotIDs = Set(trainingDays.map(\.persistentModelID))
+            var legacyFilled: Set<PersistentIdentifier> = []
+            var legacyPasses = 0
+            for (i, session) in relevant.enumerated() {
+                guard let dayID = session.day?.persistentModelID,
+                      trainingSlotIDs.contains(dayID), !legacyFilled.contains(dayID) else { continue }
+                legacyFilled.insert(dayID)
+                guard trainingSlotIDs.isSubset(of: legacyFilled) else { continue }
+                legacyPasses += 1
+                legacyFilled = []
+                if legacyPasses == legacyTarget {
+                    startIndex = i + 1
+                    break
+                }
+            }
+        }
+
         var filled: Set<PersistentIdentifier> = []
         var cycleDates: [Date] = []
-        var completedCycles = 0
+        var completedCycles = legacyTarget
         var perfectFlags: [Bool] = []
-        for session in relevant {
+        for session in relevant[startIndex...] {
             guard let dayID = session.day?.persistentModelID else { continue }
             if filled.contains(dayID) { continue }   // bonus — already filled this cycle
             filled.insert(dayID)
