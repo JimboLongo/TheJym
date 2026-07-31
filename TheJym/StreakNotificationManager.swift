@@ -46,8 +46,8 @@ enum StreakNotificationManager {
         guard let fireDate = cal.date(from: comps), fireDate > now else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "Don't be lazy"
-        content.body = "Your streak's about to die because you're too damn lazy to log something today. Get moving 🐖"
+        content.title = "Lazy fuck"
+        content.body = "Log something. Streak's dying. 🐖"
         content.sound = .default
 
         let triggerComps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)

@@ -39,8 +39,8 @@ enum WeightNotificationManager {
         guard let fireDate = cal.date(from: comps), fireDate > now else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "Get on the scale"
-        content.body = "Okay fat fuck, time to step on the scale 🐷"
+        content.title = "Fat fuck"
+        content.body = "Get on the scale. 🐷"
         content.sound = .default
 
         let triggerComps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
