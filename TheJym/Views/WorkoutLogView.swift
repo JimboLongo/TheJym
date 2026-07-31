@@ -842,11 +842,10 @@ struct ExercisePageView: View {
     /// what's actually been typed in for today, not history.
     private var warmupSets: [(weight: Double, reps: Int)] {
         guard let top = uniqueSetWeights.max(), top > 0 else { return [] }
-        let increment = exerciseDef?.equipment?.isDumbbell == true ? dumbbellIncrement : (plateSizes.min() ?? 2.5)
         let scheme: [(pct: Double, reps: Int)] = [(0.4, 8), (0.6, 5), (0.8, 3)]
         return scheme.map { pct, reps in
             let raw = top * pct
-            let rounded = increment > 0 ? (raw / increment).rounded() * increment : raw
+            let rounded = (raw / 5).rounded() * 5
             return (max(0, rounded), reps)
         }
     }

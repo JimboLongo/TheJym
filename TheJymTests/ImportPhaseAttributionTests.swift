@@ -79,4 +79,52 @@ final class ImportPhaseAttributionTests: XCTestCase {
         let sets = (try? context.fetch(FetchDescriptor<SetLog>())) ?? []
         XCTAssertEqual(sets.count, 3)
     }
+
+    /// A rest-activity row should only be retroactively attributed to the
+    /// forced Phase from whichever date this same import's own exercise
+    /// rows first got attributed onward — a "Rest" row that predates that
+    /// (even though its label matches the Phase's Rest day too) should
+    /// stay unattributed, same as if no Phase had ever matched it.
+    @MainActor
+    func testRestRowOnlyAttributedFromEarliestAttributedExerciseDateOnward() async {
+        let context = makeContext()
+
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainDay = PhaseDay(order: 0, name: "Upper A", isRest: false)
+        trainDay.phase = phase
+        context.insert(trainDay)
+        let restDay = PhaseDay(order: 1, name: "Rest", isRest: true)
+        restDay.phase = phase
+        context.insert(restDay)
+        try? context.save()
+
+        let cal = Calendar.current
+        let exerciseDate = cal.startOfDay(for: Date())
+        let earlyRestDate = cal.date(byAdding: .day, value: -5, to: exerciseDate)!
+        let lateRestDate = cal.date(byAdding: .day, value: 5, to: exerciseDate)!
+
+        let exerciseRow = ImportEngine.ImportedEntry(
+            date: exerciseDate, exerciseName: "Back Squat",
+            kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+            phaseNumber: nil, dayLabel: "Upper A", equipmentName: nil)
+        let earlyRestRow = ImportEngine.ImportedEntry(
+            date: earlyRestDate, exerciseName: "Walk",
+            kind: .restActivity(distance: nil, distanceUnit: "mi"),
+            phaseNumber: nil, dayLabel: "Rest", equipmentName: nil)
+        let lateRestRow = ImportEngine.ImportedEntry(
+            date: lateRestDate, exerciseName: "Yoga",
+            kind: .restActivity(distance: nil, distanceUnit: "mi"),
+            phaseNumber: nil, dayLabel: "Rest", equipmentName: nil)
+
+        _ = await ImportEngine.importIntoStore([exerciseRow, earlyRestRow, lateRestRow],
+                                               context: context, attributeTo: phase)
+
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        let earlySession = sessions.first { cal.isDate($0.date, inSameDayAs: earlyRestDate) }
+        let lateSession = sessions.first { cal.isDate($0.date, inSameDayAs: lateRestDate) }
+
+        XCTAssertNil(earlySession?.phase, "A rest row before the earliest attributed exercise date shouldn't be attributed")
+        XCTAssertEqual(lateSession?.phase?.number, 1, "A rest row on/after the earliest attributed exercise date should be attributed")
+    }
 }

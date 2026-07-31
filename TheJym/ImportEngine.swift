@@ -77,10 +77,15 @@
 //  completed cycle and drafts a whole Phase from it — HistoryView presents
 //  that draft (in the normal Phase Builder screen) for review/editing
 //  before anything is actually imported. Saving it retroactively attributes
-//  every row whose Day matches one of that Phase's days, not just the last
-//  cycle's — so a consistently-labeled import ends up as one continuous
-//  Phase covering its whole history, not just its tail end. A file with no
-//  Day column, or no repeated pattern, just imports the old way.
+//  every exercise row whose Day matches one of that Phase's days, not just
+//  the last cycle's — so a consistently-labeled import ends up as one
+//  continuous Phase covering its whole history, not just its tail end.
+//  Rest-day activity rows are attributed the same way, but only from
+//  whichever date is the earliest exercise row this import actually
+//  attributed to that Phase — a "Rest" row logged before the Phase's own
+//  history begins (per this import) isn't swept in just because its label
+//  happens to match too. A file with no Day column, or no repeated
+//  pattern, just imports the old way.
 //
 
 import Foundation
@@ -340,14 +345,21 @@ enum ImportEngine {
     /// the row's Weights/Reps pairs in order. A row's Phase/Day, if given and
     /// matched, links the session to that real Phase/PhaseDay; otherwise it
     /// falls back to an unattributed "Imported" entry.
-    /// `forcedPhase`, when given, overrides normal Phase-number matching —
-    /// every row is matched against `forcedPhase`'s own days by Day label
-    /// alone (case-insensitive), regardless of what's in the row's Phase
-    /// column, and attributed there whenever it matches. Used to retroactively
-    /// attribute imported historical days to a Phase auto-drafted from the
-    /// import itself, which obviously can't already appear in the file's
-    /// Phase column. Rows whose Day doesn't match any of forcedPhase's days
-    /// fall back to an unattributed "Imported" entry, same as always.
+    /// `forcedPhase`, when given, overrides normal Phase-number matching for
+    /// exercise rows — every exercise row is matched against `forcedPhase`'s
+    /// own days by Day label alone (case-insensitive), regardless of what's
+    /// in the row's Phase column, and attributed there whenever it matches.
+    /// Used to retroactively attribute imported historical days to a Phase
+    /// auto-drafted from the import itself, which obviously can't already
+    /// appear in the file's Phase column. Rest-day activity rows get the
+    /// same Day-label matching, but only from whichever date is the
+    /// earliest exercise row this same import actually attributed to
+    /// forcedPhase — a "Rest" row logged before that Phase's own history
+    /// begins (per this import) isn't swept in just because its label
+    /// happens to match too. Rows whose Day doesn't match any of
+    /// forcedPhase's days (or, for rest rows, that fall before that
+    /// earliest date) fall back to an unattributed "Imported" entry, same
+    /// as always.
     /// A big historical import (hundreds of sessions, thousands of sets) run
     /// as one giant unbroken block risked the main thread going unresponsive
     /// long enough for iOS to background the app mid-import — since nothing
@@ -525,17 +537,38 @@ enum ImportEngine {
             }
         }
 
+        // "The first date in the importer with a phase" — earliest date
+        // among this import's own exercise rows that actually match one of
+        // forcedPhase's days by label (the same matching an exercise row
+        // gets). Rest rows below are only retroactively attributed to
+        // forcedPhase from that point forward — a "Rest" row logged before
+        // this phase's own history actually begins (per this import)
+        // shouldn't get swept in just because its label happens to match
+        // the phase's Rest day too. Nil (so nothing qualifies) if no
+        // exercise row here ends up attributed to forcedPhase at all.
+        let earliestAttributedExerciseDate: Date? = forcedPhase.flatMap { phase in
+            exerciseRows
+                .filter { row in
+                    guard let label = row.dayLabel else { return false }
+                    return phase.orderedDays.contains { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
+                }
+                .map(\.date)
+                .min()
+        }
+
         // Rest-day activities: each row becomes both a standalone
         // RestDayActivity record and a matching WorkoutSession/ExerciseLog/
         // SetLog, so it shows up in History and counts toward the rest-bank
         // streak — mirrors live logging (RestDayLogView.logActivity()).
         // Phase is left nil (same as live logging, so it never shifts the
         // training cycle) UNLESS forcedPhase is retroactively attributing
-        // this whole import to a Phase — rest days don't participate in
+        // this whole import to a Phase AND this row's date is on/after
+        // earliestAttributedExerciseDate — rest days don't participate in
         // cycle-slot math either way, so attributing them there too is safe
-        // and keeps the Phase's own history complete. Deliberately does NOT
-        // touch the Exercises tab — a rest activity isn't an exercise in
-        // the import file, so it shouldn't show up as one there.
+        // once there's actual attributed history for them to belong
+        // alongside. Deliberately does NOT touch the Exercises tab — a rest
+        // activity isn't an exercise in the import file, so it shouldn't
+        // show up as one there.
         for (restIndex, entry) in restRows.enumerated() {
             if restIndex > 0, restIndex % checkpointInterval == 0 {
                 try? context.save()
@@ -552,7 +585,9 @@ enum ImportEngine {
             WorkoutSession.removeBackfilledRestPlaceholder(on: entry.date, context: context)
             let session = WorkoutSession(date: entry.date, day: matchedDay,
                                          dayLabel: entry.dayLabel ?? "Rest Day", cycleNumber: 0)
-            session.phase = forcedPhase != nil ? matchedRestPhase : nil
+            let restRowQualifiesForForcedPhase = forcedPhase != nil
+                && earliestAttributedExerciseDate.map { entry.date >= $0 } == true
+            session.phase = restRowQualifiesForForcedPhase ? matchedRestPhase : nil
             context.insert(session)
             sessionsCreated += 1
             let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
