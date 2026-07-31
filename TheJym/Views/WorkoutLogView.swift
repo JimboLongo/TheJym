@@ -54,6 +54,14 @@ struct WorkoutLogView: View {
     /// Last time the user touched anything in this workout — used to keep
     /// the screen from auto-locking for up to 3 minutes of idle time.
     @State private var lastInteraction = Date()
+    /// Snapshots of `drafts` from right before each change, oldest first —
+    /// lets the toolbar's Undo button step back one input at a time. Capped
+    /// so a very long workout doesn't grow this unbounded.
+    @State private var undoStack: [[ExerciseDraft]] = []
+    /// Set right before restoring a popped snapshot so the resulting
+    /// onChange doesn't push that restore back onto the stack as if it
+    /// were a new input.
+    @State private var isUndoing = false
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -367,6 +375,14 @@ struct WorkoutLogView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    undo()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward.circle")
+                }
+                .disabled(undoStack.isEmpty)
+            }
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 6) {
                     Text(phase.map { "\(day.name) · Cycle \($0.currentCycle)" } ?? day.name)
@@ -439,7 +455,13 @@ struct WorkoutLogView: View {
             // resting between sets); let it lock normally after that.
             UIApplication.shared.isIdleTimerDisabled = Date().timeIntervalSince(lastInteraction) < 180
         }
-        .onChange(of: drafts) { _, _ in
+        .onChange(of: drafts) { oldValue, _ in
+            if isUndoing {
+                isUndoing = false
+            } else {
+                undoStack.append(oldValue)
+                if undoStack.count > 20 { undoStack.removeFirst() }
+            }
             lastInteraction = Date()
             saveDraftToDisk()
         }
@@ -625,6 +647,15 @@ struct WorkoutLogView: View {
 
     private func clearSavedDraft() {
         UserDefaults.standard.removeObject(forKey: draftStorageKey)
+    }
+
+    /// Steps `drafts` back to the snapshot from right before the most
+    /// recent change — undoes the last input (a logged set, a collapse,
+    /// whatever changed last), one step at a time.
+    private func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        isUndoing = true
+        drafts = previous
     }
 
     // MARK: Saving + AI
