@@ -18,6 +18,8 @@ struct TrainingStats {
     /// the days right before/after it that closed the previous streak and
     /// broke this one — nil only when maxStreak is 0 (nothing logged yet).
     var maxStreakRange: MaxStreakDateRange?
+    /// When the currently-open streak began — nil once currentStreak is 0.
+    var currentStreakStartDate: Date?
     var bankBalance: Double     // current rest-bank balance, 0...2
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
@@ -268,6 +270,7 @@ enum StatsEngine {
                              currentStreak: bank.currentStreak,
                              maxStreak: bank.maxStreak,
                              maxStreakRange: bank.maxStreakRange,
+                             currentStreakStartDate: bank.currentStreakStartDate,
                              bankBalance: bank.bankBalance,
                              percentLogged: pct,
                              daysPerWeek: perWeek,
@@ -365,6 +368,8 @@ enum StatsEngine {
         var maxStreak: Int
         var bankBalance: Double
         var maxStreakRange: MaxStreakDateRange?
+        /// When the currently-open streak began — nil once currentStreak is 0.
+        var currentStreakStartDate: Date?
     }
 
     /// Builds the earn-rate timeline: an active Phase's split-derived rate
@@ -424,7 +429,7 @@ enum StatsEngine {
         let restCredited = Set(restCreditedDates.map { cal.startOfDay(for: $0) })
         let today = cal.startOfDay(for: now)
         guard let firstDay = (trainingCredited.union(restCredited)).min() else {
-            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0, maxStreakRange: nil)
+            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0, maxStreakRange: nil, currentStreakStartDate: nil)
         }
         let sortedPeriods = ratePeriods.sorted { $0.start < $1.start }
 
@@ -508,7 +513,8 @@ enum StatsEngine {
                               followingBreakDate: maxStreakFollowingBreakDate)
         }
         return RestBankResult(currentStreak: streak, maxStreak: maxStreak, bankBalance: bank,
-                              maxStreakRange: maxStreakRange)
+                              maxStreakRange: maxStreakRange,
+                              currentStreakStartDate: streakOpen ? currentStreakStart : nil)
     }
 
     /// Required pace (workouts per calendar day) implied by the phase's own

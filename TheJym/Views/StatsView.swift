@@ -31,8 +31,6 @@ struct StatsView: View {
     /// own popover has no way to dismiss itself on selection.
     @State private var showTrainingStartDatePicker = false
     @State private var pendingTrainingStartDate = Date()
-    /// Drives navigation to StreakHistoryView when "Max streak" is tapped.
-    @State private var selectedStreakRange: MaxStreakDateRange?
 
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -78,22 +76,19 @@ struct StatsView: View {
                     }
                     statRow("Days since start", "\(stats.daysSinceStart)")
                     statRow("Days logged", "\(stats.daysLogged)")
-                    statRow("Current streak", "\(stats.currentStreak) 🔥")
-                    if let range = stats.maxStreakRange {
-                        Button {
-                            selectedStreakRange = range
-                        } label: {
-                            HStack {
-                                Text("Max streak").foregroundStyle(.primary)
-                                Spacer()
-                                Text("\(stats.maxStreak)")
-                                    .font(.system(.body, design: .monospaced)).bold()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
+                    VStack(alignment: .leading, spacing: 2) {
+                        statRow("Current streak", "\(stats.currentStreak) 🔥")
+                        if let start = stats.currentStreakStartDate {
+                            Text("Since \(Formatters.date.string(from: start))")
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
-                    } else {
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
                         statRow("Max streak", "\(stats.maxStreak)")
+                        if let range = stats.maxStreakRange {
+                            Text("\(Formatters.date.string(from: range.start)) – \(Formatters.date.string(from: range.end))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
                     statRow("Rest days banked", String(format: "%.1f", stats.bankBalance))
                     statRow("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100))
@@ -166,9 +161,6 @@ struct StatsView: View {
                     try? context.save()
                     showTrainingStartDatePicker = false
                 }
-            }
-            .navigationDestination(item: $selectedStreakRange) { range in
-                StreakHistoryView(range: range)
             }
         }
     }
