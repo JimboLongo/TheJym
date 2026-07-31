@@ -105,6 +105,7 @@ struct ContentView: View {
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
             ensureBandsBarExists()
+            repairDanglingEquipmentReferences()
             fixPhaseStartDatesFromHistory()
             refreshStreakNotification()
             refreshWeightNotification()
@@ -188,6 +189,27 @@ struct ContentView: View {
         context.insert(Bar(name: "Bands", weight: 0, isDumbbell: true,
                            dumbbellWeights: [10, 20, 30, 40, 50]))
         try? context.save()
+    }
+
+    /// ExerciseDef.equipment shipped without a `@Relationship` delete rule,
+    /// so deleting a Bar left any ExerciseDef still pointing at it with a
+    /// dangling reference instead of nullifying it — touching that
+    /// ExerciseDef's equipment (e.g. opening a workout using it) then
+    /// crashed with "backing data could no longer be found". The model now
+    /// declares `.nullify` so this can't recur, but installs that already
+    /// have a stale reference from before that fix need it cleared once
+    /// here. Comparing only `persistentModelID` (identity metadata) rather
+    /// than any real property keeps this safe to run even on an already
+    /// dangling reference, which would crash if faulted for its attributes.
+    private func repairDanglingEquipmentReferences() {
+        let liveBarIDs = Set(bars.map(\.persistentModelID))
+        var changed = false
+        for def in exerciseDefs {
+            guard let equipmentID = def.equipment?.persistentModelID, !liveBarIDs.contains(equipmentID) else { continue }
+            def.equipment = nil
+            changed = true
+        }
+        if changed { try? context.save() }
     }
 
     /// Pre-isBodyweight installs have ExerciseDef rows for library

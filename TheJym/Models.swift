@@ -139,7 +139,7 @@ final class Bar {
 final class ExerciseDef {
     @Attribute(.unique) var name: String
     var notes: String = ""
-    var equipment: Bar?
+    @Relationship(deleteRule: .nullify) var equipment: Bar?
     var repSchemes: [[Int]] = []   // saved sets, e.g. [[5,5,5,3,3,3], [8,8,8]]
     /// Saved rep-total targets, e.g. [30, 40] — the repTotal-goal counterpart
     /// to repSchemes, for exercises like Pull-Up where a saved "set" is a
