@@ -527,14 +527,32 @@ enum ImportEngine {
                 requests.append(key)
             }
 
-            // Bounded to [earliest, latest] date actually attributed to
-            // each phase by this file's own rows — never invents history
-            // before or after what the import actually covers. "Already
-            // has something" also checks that phase's pre-existing
-            // sessions (any date already covered by real data, imported
-            // now or logged before), so re-importing more rows into an
-            // already-populated phase can't double up a day that already
-            // has real history.
+            // Bounded to [phase's earliest EXERCISE date, latest attributed
+            // date] — a Rest day/activity, gap-filled or real, is only ever
+            // eligible once a phase already has real training behind it,
+            // never before it: a Rest day should never be the first thing
+            // logged for a phase. The lower bound comes strictly from
+            // exerciseRows (mirrors earliestAttributedExerciseDate below,
+            // generalized to every phase this import touches, not just
+            // forcedPhase) — a Rest row's own date is never allowed to
+            // pull the range earlier, even if it's chronologically first
+            // among this phase's matched rows. The upper bound and
+            // "already has something" check DO consider every matched row
+            // (exercise or rest) plus that phase's pre-existing sessions,
+            // so re-importing more rows into an already-populated phase
+            // can't double up a day that already has real history, and a
+            // trailing Rest row can still legitimately extend the range.
+            var earliestExerciseDateByPhaseID: [PersistentIdentifier: Date] = [:]
+            for row in exerciseRows {
+                guard let label = row.dayLabel,
+                      let phase = forcedPhase ?? row.phaseNumber.flatMap({ num in existingPhases.first { $0.number == num } }),
+                      phase.orderedDays.contains(where: { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame })
+                else { continue }
+                let day = cal.startOfDay(for: row.date)
+                let id = phase.persistentModelID
+                if let existing = earliestExerciseDateByPhaseID[id], existing <= day { continue }
+                earliestExerciseDateByPhaseID[id] = day
+            }
             var fileDatesByPhaseID: [PersistentIdentifier: (phase: Phase, dates: Set<Date>)] = [:]
             for request in requests {
                 guard let label = request.dayLabel,
@@ -543,10 +561,11 @@ enum ImportEngine {
                 else { continue }
                 fileDatesByPhaseID[phase.persistentModelID, default: (phase, [])].dates.insert(request.day)
             }
-            for (_, entry) in fileDatesByPhaseID {
+            for (phaseID, entry) in fileDatesByPhaseID {
                 let phase = entry.phase
                 guard phase.orderedDays.contains(where: \.isRest),
-                      let minDate = entry.dates.min(), let maxDate = entry.dates.max()
+                      let minDate = earliestExerciseDateByPhaseID[phaseID],
+                      let maxDate = entry.dates.max(), minDate <= maxDate
                 else { continue }
                 let alreadyCovered = entry.dates.union(phase.sessions.map { cal.startOfDay(for: $0.date) })
                 var day = minDate

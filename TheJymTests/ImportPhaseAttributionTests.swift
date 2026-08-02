@@ -350,4 +350,62 @@ final class ImportPhaseAttributionTests: XCTestCase {
         XCTAssertTrue(recoveries.contains { cal.isDate($0.date, inSameDayAs: gapDay) },
             "The gap-fill should also credit the rest-bank streak, same as Log Rest Day live")
     }
+
+    /// A Rest day/activity should never be the first thing attributed to a
+    /// phase — gap-filling must never reach backward past a phase's
+    /// earliest real training day, even though a Rest Day activity row
+    /// dated before it is chronologically the earliest thing in the file.
+    @MainActor
+    func testGapFillNeverReachesBeforeThePhasesFirstRealTrainingDay() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainA = PhaseDay(order: 0, name: "Train A", isRest: false)
+        trainA.phase = phase
+        context.insert(trainA)
+        let restDay = PhaseDay(order: 1, name: "Rest", isRest: true)
+        restDay.phase = phase
+        context.insert(restDay)
+        try? context.save()
+
+        let cal = Calendar.current
+        let earlyRestActivity = ISO8601DateFormatter().date(from: "2025-12-20T00:00:00Z")!  // well before training starts
+        let firstTrainingDay = ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z")!
+        let secondTrainingDay = ISO8601DateFormatter().date(from: "2026-01-03T00:00:00Z")!  // day2 gap in between
+
+        let rows = [
+            ImportEngine.ImportedEntry(
+                date: earlyRestActivity, exerciseName: "Walk",
+                kind: .restActivity(distance: nil, distanceUnit: "mi"),
+                phaseNumber: 1, dayLabel: "Rest", equipmentName: nil),
+            ImportEngine.ImportedEntry(
+                date: firstTrainingDay, exerciseName: "Back Squat",
+                kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil),
+            ImportEngine.ImportedEntry(
+                date: secondTrainingDay, exerciseName: "Back Squat",
+                kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil),
+        ]
+
+        _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
+
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        let earliestAttributed = sessions.filter { $0.phase?.persistentModelID == phase.persistentModelID }
+            .map(\.date).min()
+        XCTAssertNotNil(earliestAttributed)
+        XCTAssertTrue(cal.isDate(earliestAttributed!, inSameDayAs: firstTrainingDay),
+            "The phase's earliest attributed session must be the real training day, never the earlier Rest activity or a gap-fill before it")
+
+        let earlyRestSession = sessions.first { cal.isDate($0.date, inSameDayAs: earlyRestActivity) }
+        XCTAssertNil(earlyRestSession?.phase, "The Rest activity before training started should stay unattributed to the phase")
+
+        // Only the genuine mid-history gap (2026-01-02) should be gap-filled
+        // — nothing between the early Rest activity and the first training day.
+        let betweenDates = stride(from: earlyRestActivity, to: firstTrainingDay, by: 86400)
+        for d in betweenDates {
+            XCTAssertFalse(sessions.contains { $0.phase?.persistentModelID == phase.persistentModelID && cal.isDate($0.date, inSameDayAs: d) },
+                "No gap-fill should exist before the phase's first real training day")
+        }
+    }
 }
