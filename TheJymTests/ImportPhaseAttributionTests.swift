@@ -218,4 +218,71 @@ final class ImportPhaseAttributionTests: XCTestCase {
         XCTAssertEqual(defs.first { $0.name == "Goblet Squat" }?.equipment?.name, "Dumbbells")
         XCTAssertEqual(defs.first { $0.name == "Band Pull-Apart" }?.equipment?.name, "Bands")
     }
+
+    /// A split with TWO Rest days a cycle (e.g. Lower1/Upper1/Rest/Lower2/
+    /// Upper2/Rest — a legitimate, PhaseBuilderView-supported template with
+    /// two separate PhaseDay objects both named "Rest") used to never
+    /// complete a single cycle via import: matchPhaseDay resolved "Rest" by
+    /// name with Swift's `first`, so every Rest row kept re-filling the
+    /// SAME PhaseDay — the second one could never be reached. Reproduces
+    /// the actual dates/pattern from a real user import (including a
+    /// genuine gap on 7/26, no session of any kind that day) to confirm the
+    /// fix correctly advances through multiple cycles instead of staying
+    /// stuck at cycle 1.
+    @MainActor
+    func testTwoIdenticallyNamedRestSlotsBothFillAcrossMultipleCycles() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let names = ["Lower Day 1", "Upper Day 1", "Rest", "Lower Day 2", "Upper Day 2", "Rest"]
+        for (i, name) in names.enumerated() {
+            let day = PhaseDay(order: i, name: name, isRest: name == "Rest")
+            day.phase = phase
+            context.insert(day)
+        }
+        try? context.save()
+        XCTAssertEqual(phase.orderedDays.filter { $0.name == "Rest" }.count, 2)
+
+        func exerciseRow(_ dateStr: String, _ label: String) -> ImportEngine.ImportedEntry {
+            ImportEngine.ImportedEntry(
+                date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
+                exerciseName: "Some Exercise",
+                kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [100], reps: [5]),
+                phaseNumber: 1, dayLabel: label, equipmentName: nil)
+        }
+        func restRow(_ dateStr: String) -> ImportEngine.ImportedEntry {
+            ImportEngine.ImportedEntry(
+                date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
+                exerciseName: "Walk", kind: .restActivity(distance: nil, distanceUnit: "mi"),
+                phaseNumber: 1, dayLabel: "Rest", equipmentName: nil)
+        }
+
+        // Matches WorkoutImport16.xlsx exactly: 3 clean passes, then a
+        // fourth that skips 7/26 entirely before resuming.
+        let rows = [
+            exerciseRow("2026-07-06", "Lower Day 1"), exerciseRow("2026-07-08", "Upper Day 1"),
+            restRow("2026-07-09"),
+            exerciseRow("2026-07-12", "Lower Day 2"), exerciseRow("2026-07-13", "Upper Day 2"),
+            restRow("2026-07-14"),
+            exerciseRow("2026-07-15", "Lower Day 1"), exerciseRow("2026-07-16", "Upper Day 1"),
+            restRow("2026-07-17"),
+            exerciseRow("2026-07-18", "Lower Day 2"), exerciseRow("2026-07-19", "Upper Day 2"),
+            restRow("2026-07-20"),
+            exerciseRow("2026-07-21", "Lower Day 1"), exerciseRow("2026-07-22", "Upper Day 1"),
+            restRow("2026-07-23"),
+            exerciseRow("2026-07-24", "Lower Day 2"), exerciseRow("2026-07-25", "Upper Day 2"),
+            // 7/26 skipped entirely
+            exerciseRow("2026-07-27", "Lower Day 1"), exerciseRow("2026-07-28", "Upper Day 1"),
+            restRow("2026-07-29"),
+            exerciseRow("2026-07-30", "Lower Day 2"), exerciseRow("2026-07-31", "Upper Day 2"),
+            restRow("2026-08-01"),
+        ]
+
+        _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
+
+        XCTAssertGreaterThan(phase.currentCycle, 1,
+            "Both Rest slots should be reachable, so at least one cycle should complete instead of staying stuck at 1")
+        XCTAssertEqual(phase.currentCycle, 4,
+            "3 clean passes complete outright; the skipped 7/26 delays the 3rd cycle's 2nd Rest slot until 7/29, absorbing 7/27-28 as bonus sessions and leaving cycle 4 with only Lower Day 2/Upper Day 2/Rest logged so far")
+    }
 }

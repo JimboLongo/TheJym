@@ -452,22 +452,6 @@ enum ImportEngine {
             bodyWeights.last { $0.date <= date }?.weight
         }
 
-        func matchPhaseDay(phaseNumber: Int?, dayLabel: String?) -> (Phase?, PhaseDay?) {
-            if let forcedPhase {
-                let day = dayLabel.flatMap { label in
-                    forcedPhase.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
-                }
-                return day != nil ? (forcedPhase, day) : (nil, nil)
-            }
-            let phase = phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
-            let day = phase.flatMap { p in
-                dayLabel.flatMap { label in
-                    p.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
-                }
-            }
-            return (phase, day)
-        }
-
         struct GroupKey: Hashable {
             let day: Date
             let phaseNumber: Int?
@@ -478,6 +462,89 @@ enum ImportEngine {
         let bodyWeightRows = rows.filter { if case .bodyWeight = $0.kind { return true }; return false }
         let grouped = Dictionary(grouping: exerciseRows) { row in
             GroupKey(day: cal.startOfDay(for: row.date), phaseNumber: row.phaseNumber, dayLabel: row.dayLabel)
+        }
+
+        // Precomputes which exact PhaseDay a same-named-ambiguous Day label
+        // resolves to, for every (date, phase, label) this import will ask
+        // matchPhaseDay about below — a plain by-name match always picks
+        // the same candidate (Swift's `first`) when a phase has more than
+        // one PhaseDay sharing a name, which is common: PhaseBuilderView
+        // lets you add as many "Rest" days as the split needs, and
+        // detectLastCyclePattern's own "Rest is exempt from the repeat
+        // check" (see its doc) deliberately keeps every distinct Rest
+        // occurrence as its own day when auto-drafting a Phase from a
+        // detected pattern — so a split with two rest days a cycle produces
+        // exactly two separate "Rest" PhaseDays. Without this, the SECOND
+        // same-named PhaseDay's slot could never be filled by import (every
+        // "Rest" row keeps re-resolving to the first one), so that slot —
+        // and the cycle it belongs to — could never complete.
+        //
+        // Walked once, chronologically, across exercise-date-groups AND
+        // rest rows combined (they're normally handled in two separate
+        // passes below, so relying on insertion order wouldn't reflect true
+        // date order) — same slot-filling algorithm as Phase.cycleWalk:
+        // whichever same-named candidate isn't yet filled in the cycle
+        // currently in progress, in template order, resetting once a full
+        // pass fills every slot.
+        //
+        // Seeded empty per phase, so it's exactly right for a brand-new
+        // phase getting its whole history attributed in one import (the
+        // "detect pattern -> build Phase -> attribute" flow this exists
+        // for). It doesn't account for a phase's own pre-existing session
+        // history when instead re-importing more rows into an
+        // already-in-progress existing phase by Phase number — a follow-up
+        // import like that could misresolve which same-named slot is next
+        // until enough new rows re-establish the real pattern.
+        var resolvedAmbiguousDay: [GroupKey: PhaseDay] = [:]
+        do {
+            var requests: [GroupKey] = []
+            var seenKeys = Set<GroupKey>()
+            for row in exerciseRows + restRows {
+                guard let label = row.dayLabel else { continue }
+                let key = GroupKey(day: cal.startOfDay(for: row.date), phaseNumber: row.phaseNumber, dayLabel: label)
+                guard !seenKeys.contains(key) else { continue }
+                seenKeys.insert(key)
+                requests.append(key)
+            }
+            requests.sort { $0.day < $1.day }
+
+            var fillState: [PersistentIdentifier: Set<PersistentIdentifier>] = [:]
+            for request in requests {
+                guard let label = request.dayLabel else { continue }
+                let phase = forcedPhase ?? request.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+                guard let phase else { continue }
+                let candidates = phase.orderedDays.filter { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
+                guard let firstCandidate = candidates.first else { continue }
+                let filled = fillState[phase.persistentModelID] ?? []
+                let chosen = candidates.count > 1
+                    ? (candidates.first { !filled.contains($0.persistentModelID) } ?? firstCandidate)
+                    : firstCandidate
+                resolvedAmbiguousDay[request] = chosen
+
+                var updatedFilled = filled
+                updatedFilled.insert(chosen.persistentModelID)
+                if updatedFilled.count >= phase.orderedDays.count { updatedFilled = [] }
+                fillState[phase.persistentModelID] = updatedFilled
+            }
+        }
+
+        /// Resolves a row's Phase/Day columns to a real (Phase, PhaseDay) —
+        /// the day itself always comes from resolvedAmbiguousDay above
+        /// (which already picked the right same-named candidate, if there
+        /// was more than one) rather than re-doing a plain by-name lookup
+        /// here.
+        func matchPhaseDay(date: Date, phaseNumber: Int?, dayLabel: String?) -> (Phase?, PhaseDay?) {
+            func lookupDay() -> PhaseDay? {
+                guard let dayLabel else { return nil }
+                let key = GroupKey(day: cal.startOfDay(for: date), phaseNumber: phaseNumber, dayLabel: dayLabel)
+                return resolvedAmbiguousDay[key]
+            }
+            if let forcedPhase {
+                let day = lookupDay()
+                return day != nil ? (forcedPhase, day) : (nil, nil)
+            }
+            let phase = phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+            return (phase, lookupDay())
         }
 
         var sessionsCreated = 0
@@ -509,7 +576,7 @@ enum ImportEngine {
                 try? context.save()
                 await Task.yield()
             }
-            let (matchedPhase, matchedDay) = matchPhaseDay(phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
+            let (matchedPhase, matchedDay) = matchPhaseDay(date: key.day, phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
             // An imported workout overrides a gap-filled "nothing happened"
             // Rest Day placeholder for this same date.
             WorkoutSession.removeBackfilledRestPlaceholder(on: key.day, context: context)
@@ -613,7 +680,7 @@ enum ImportEngine {
             context.insert(RestDayActivity(date: entry.date, name: entry.exerciseName,
                                            distance: distance, distanceUnit: unit))
 
-            let (matchedRestPhase, matchedDay) = matchPhaseDay(phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
+            let (matchedRestPhase, matchedDay) = matchPhaseDay(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
             let displayName = distance.map { "\(entry.exerciseName) (\(Formatters.trim($0)) \(unit))" } ?? entry.exerciseName
             // A logged rest-day activity overrides a gap-filled no-activity
             // Rest Day placeholder for this same date.
