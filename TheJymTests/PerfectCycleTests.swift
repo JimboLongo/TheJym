@@ -42,10 +42,18 @@ final class PerfectCycleTests: XCTestCase {
         return (phase, dayA, dayB, dayC)
     }
 
+    /// Assigns cycleNumber live via phase.currentCycle at insert time — same
+    /// as WorkoutLogView.finishWorkout()/RestDayLogView do for the real app
+    /// — so a test spanning multiple cycles gets correctly incrementing
+    /// numbers automatically instead of every session colliding into one
+    /// cycle. Relies on phase.sessions reflecting just-inserted-but-unsaved
+    /// sessions within the same context (established elsewhere, e.g.
+    /// ImportPhaseAttributionTests), so no context.save() is needed between
+    /// calls for this to stay accurate.
     @MainActor
     @discardableResult
     private func log(_ day: PhaseDay, on date: Date, phase: Phase, context: ModelContext) -> WorkoutSession {
-        let session = WorkoutSession(date: date, day: day, dayLabel: day.name, cycleNumber: 1)
+        let session = WorkoutSession(date: date, day: day, dayLabel: day.name, cycleNumber: phase.currentCycle)
         session.phase = phase
         context.insert(session)
         return session
@@ -191,6 +199,53 @@ final class PerfectCycleTests: XCTestCase {
         try? context.save()
 
         XCTAssertEqual(phase.currentCycle, 3, "Now cycle 2 is genuinely complete, on top of the baseline of 1")
+    }
+
+    /// Simulates the one-time repairMissingCycleNumbers migration
+    /// (TheJymApp): sessions from before cycleNumber became authoritative
+    /// sit at the `0` marker; Phase.legacyCycleNumbers() must assign every
+    /// one of them a sensible, monotonically increasing cycle number, and
+    /// once stamped, phase.currentCycle should show exactly what the OLD
+    /// chronological algorithm already had visible — nothing jumps for
+    /// existing history on upgrade.
+    @MainActor
+    func testLegacyCycleNumbersMigrationStampsSensibleValues() {
+        let context = makeContext()
+        let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        let rest = phase.orderedDays[2]
+
+        // Same shape any session created before this feature shipped would
+        // have — cycleNumber left at its old, meaningless default.
+        func logUntagged(_ day: PhaseDay, on date: Date) {
+            let session = WorkoutSession(date: date, day: day, dayLabel: day.name, cycleNumber: 0)
+            session.phase = phase
+            context.insert(session)
+        }
+        // Cycle 1: complete, Rest-aware.
+        logUntagged(dayA, on: d(0))
+        logUntagged(dayB, on: d(1))
+        logUntagged(rest, on: d(2))
+        logUntagged(dayC, on: d(3))
+        // Cycle 2: in progress — two training days done, no Rest yet.
+        logUntagged(dayA, on: d(4))
+        logUntagged(dayB, on: d(5))
+        try? context.save()
+
+        XCTAssertTrue(phase.sessions.allSatisfy { $0.cycleNumber == 0 },
+            "Nothing's been migrated yet — every session should still be at the 0 marker")
+
+        let assignments = phase.legacyCycleNumbers()
+        for session in phase.sessions where session.cycleNumber == 0 {
+            session.cycleNumber = assignments[session.persistentModelID] ?? 0
+        }
+        try? context.save()
+
+        XCTAssertTrue(phase.sessions.allSatisfy { $0.cycleNumber > 0 }, "Every day!=nil session should get a real cycle number")
+        XCTAssertEqual(phase.currentCycle, 2,
+            "Cycle 1 fully complete (including Rest), cycle 2 in progress — same as the old chronological walk would already show")
+        XCTAssertTrue(phase.isSlotFilled(for: dayA))
+        XCTAssertTrue(phase.isSlotFilled(for: dayB))
+        XCTAssertFalse(phase.isSlotFilled(for: rest))
     }
 
     /// The passive "nothing was logged" backfill credit (WorkoutSession with

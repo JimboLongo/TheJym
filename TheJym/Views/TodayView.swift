@@ -707,7 +707,7 @@ struct RestDayLogView: View {
     private func logPlainRestDay() {
         WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
         context.insert(ActiveRecovery(date: selectedDate, type: .rest))
-        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
+        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: phase.currentCycle)
         session.phase = phase
         context.insert(session)
         try? context.save()
@@ -739,7 +739,7 @@ struct RestDayLogView: View {
         // shouldn't shift where the training cycle thinks you are.
         let displayName = distance.map { "\(trimmed) (\(Formatters.trim($0)) \(distanceUnit))" } ?? trimmed
         WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
-        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
+        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: phase.currentCycle)
         session.phase = phase
         context.insert(session)
         let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
@@ -767,7 +767,7 @@ struct RestDayLogView: View {
         guard !entries.isEmpty else { return }
 
         WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
-        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
+        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: phase.currentCycle)
         session.phase = phase
         context.insert(session)
 

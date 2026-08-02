@@ -408,4 +408,76 @@ final class ImportPhaseAttributionTests: XCTestCase {
                 "No gap-fill should exist before the phase's first real training day")
         }
     }
+
+    /// Every real session created during import (not just gap-fills) gets
+    /// an auto-computed cycleNumber matching its actual pass through the
+    /// template — the source History's "Phase X, Cycle Y" header and
+    /// PhasesView's per-cycle exercise history read.
+    @MainActor
+    func testAutoAssignedCycleNumberMatchesChronologicalProgress() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainA = PhaseDay(order: 0, name: "Train A", isRest: false)
+        trainA.phase = phase
+        context.insert(trainA)
+        let restDay = PhaseDay(order: 1, name: "Rest", isRest: true)
+        restDay.phase = phase
+        context.insert(restDay)
+        try? context.save()
+
+        func exerciseRow(_ dateStr: String) -> ImportEngine.ImportedEntry {
+            ImportEngine.ImportedEntry(
+                date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
+                exerciseName: "Back Squat",
+                kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil)
+        }
+        func restRow(_ dateStr: String) -> ImportEngine.ImportedEntry {
+            ImportEngine.ImportedEntry(
+                date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
+                exerciseName: "Walk", kind: .restActivity(distance: nil, distanceUnit: "mi"),
+                phaseNumber: 1, dayLabel: "Rest", equipmentName: nil)
+        }
+        let rows = [
+            exerciseRow("2026-01-01"), restRow("2026-01-02"),
+            exerciseRow("2026-01-03"), restRow("2026-01-04"),
+        ]
+        _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
+
+        let cal = Calendar.current
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        func session(on dateStr: String) -> WorkoutSession? {
+            let d = ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!
+            return sessions.first { cal.isDate($0.date, inSameDayAs: d) }
+        }
+        XCTAssertEqual(session(on: "2026-01-01")?.cycleNumber, 1)
+        XCTAssertEqual(session(on: "2026-01-02")?.cycleNumber, 1)
+        XCTAssertEqual(session(on: "2026-01-03")?.cycleNumber, 2)
+        XCTAssertEqual(session(on: "2026-01-04")?.cycleNumber, 2)
+        XCTAssertEqual(phase.currentCycle, 3)
+    }
+
+    /// An explicit "Cycle" column value on a row parses correctly and
+    /// overrides the auto-computed cycle number for that row's session.
+    @MainActor
+    func testExplicitCycleColumnOverridesAutoComputedValue() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainA = PhaseDay(order: 0, name: "Train A", isRest: false)
+        trainA.phase = phase
+        context.insert(trainA)
+        try? context.save()
+
+        let csv = "Date,Phase,Day,Cycle,Exercise,Sets,Weights,Reps\n2026-01-01,1,Train A,7,Back Squat,5,135,5"
+        let (rows, skipped) = ImportEngine.parseRows(csv: csv)
+        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(rows.first?.cycleNumber, 7, "Cycle column should parse")
+
+        _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        XCTAssertEqual(sessions.first?.cycleNumber, 7,
+            "Explicit Cycle column should win over the auto-computed value (which would otherwise be 1)")
+    }
 }

@@ -109,6 +109,7 @@ struct ContentView: View {
             repairDanglingEquipmentReferences()
             fixPhaseStartDatesFromHistory()
             stampLegacyCompletedCycles()
+            repairMissingCycleNumbers()
             refreshStreakNotification()
             refreshWeightNotification()
         }
@@ -220,6 +221,35 @@ struct ContentView: View {
             }
             phase.legacyCompletedCycles = max(0, completedCycles - 1)
             changed = true
+        }
+        if changed { try? context.save() }
+    }
+
+    /// One-time repair: stamps a real `cycleNumber` onto any existing
+    /// session that still has `day != nil` but `cycleNumber == 0` — i.e.
+    /// predates `cycleNumber` becoming Phase.cycleWalk's source of truth
+    /// (see Phase.legacyCycleNumbers' doc). Uses that frozen replay of the
+    /// OLD chronological algorithm so nothing visibly shifts for anyone on
+    /// upgrade. Must run after repairRestDaySessionsMissingPhase() (needs
+    /// correct `.phase` first) and stampLegacyCompletedCycles() (the replay
+    /// reads legacyCompletedCycles) — and before anything reads
+    /// phase.currentCycle. Only ever touches sessions still at the `0`
+    /// marker, never a session with a real cycle number already (whether
+    /// from live logging before this shipped, or a manual edit in History
+    /// afterward) — safe to leave running on every launch, since
+    /// `cycleNumber == 0` with `day != nil` can no longer happen once every
+    /// session-creation path is fixed, making this a fast no-op from then on.
+    private func repairMissingCycleNumbers() {
+        var changed = false
+        for phase in phases {
+            let toFix = phase.sessions.filter { $0.day != nil && $0.cycleNumber == 0 }
+            guard !toFix.isEmpty else { continue }
+            let assignments = phase.legacyCycleNumbers()
+            for session in toFix {
+                guard let n = assignments[session.persistentModelID] else { continue }
+                session.cycleNumber = n
+                changed = true
+            }
         }
         if changed { try? context.save() }
     }

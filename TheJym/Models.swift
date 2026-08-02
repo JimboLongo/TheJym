@@ -267,23 +267,30 @@ final class Phase {
 
     // MARK: - Slot-based cycle tracking
     //
-    // Each cycle has one "slot" per PhaseDay in orderedDays (in order) —
-    // Rest slots included, so a cycle only completes once every rest day in
-    // the template has been explicitly logged too (the plain "Log Rest Day"
+    // Each cycle has one "slot" per PhaseDay in orderedDays — Rest slots
+    // included, so a cycle only completes once every rest day in the
+    // template has been explicitly logged too (the plain "Log Rest Day"
     // credit or a rest-day activity, both of which set WorkoutSession.day to
     // that exact Rest PhaseDay), not just its training days. The passive
     // gap-filling credit backfillRestDays/creditYesterdayAsRestIfNothingLogged
     // insert for a day nothing was logged at all deliberately leaves `day`
-    // nil, so it never counts toward a rest slot here. Logging a session for
-    // a day whose slot this cycle is already filled doesn't fill anything or
-    // advance the cycle — it's a "bonus" session (still real history, still
-    // counted for pace comparisons and the rest-bank streak, just not for
-    // cycle progression). legacyCompletedCycles (see its own doc) is a
-    // frozen floor below which this walk never has to reprocess history, so
-    // a phase's pre-Rest-tracking progress can't regress. Everything from
-    // there forward is always recomputed fresh from `sessions` rather than
-    // trusting any stored flag, so edits/backdating a session's date can't
-    // leave that part of the cycle state stale.
+    // nil, so it never counts toward a rest slot here.
+    //
+    // `cycleNumber` on each WorkoutSession (see its own doc) is the source
+    // of truth for which cycle a session belongs to — set automatically
+    // wherever a session is created (live logging, import, gap-fill), an
+    // explicit "Cycle" import column, or a manual edit in History — so this
+    // walk just GROUPS sessions by that stamped number rather than
+    // inferring cycle boundaries from date order. A session whose day's
+    // slot is already represented in its cycle's group is a "bonus" simply
+    // by virtue of the group being a Set (still real history, still counted
+    // for pace comparisons and the rest-bank streak, just not additional
+    // cycle progress). legacyCompletedCycles still plays its original role
+    // here too: a floor below which this walk never re-verifies a cycle
+    // number's completeness, trusting it done regardless of what's actually
+    // in that group — those old cycle numbers themselves come from
+    // legacyCycleNumbers(), a one-time migration of pre-existing history
+    // onto this scheme (see its own doc).
 
     private struct CycleWalkResult {
         var currentCycle: Int
@@ -292,27 +299,101 @@ final class Phase {
         var perfectFlags: [Bool]
     }
 
-    /// - Parameter freezeDate: if set, a session that would complete a cycle
-    ///   (the slot count hitting `slots.count`) doesn't apply that
-    ///   completion when its own date is on/after this instant — its slot
-    ///   still shows filled, but `completedCycles`/the running cycle number
-    ///   hold where they were and nothing dated after it is processed. Used
-    ///   by `displayCycleWalk` to freeze right at the start of today. nil
-    ///   (the real `cycleWalk` below) means never freeze — walk everything.
+    /// - Parameter freezeDate: if set, a cycle only counts as *complete* —
+    ///   for deciding whether to advance `currentCycle` past it — using
+    ///   sessions dated before this instant; a cycle that only becomes
+    ///   complete because of a session dated on/after it still shows that
+    ///   slot filled (today's own logging shows checked immediately), it
+    ///   just doesn't roll the display over to the next cycle yet. Used by
+    ///   `displayCycleWalk` to freeze right at the start of today. nil (the
+    ///   real `cycleWalk` below) means never freeze.
     private func cycleWalk(freezeDate: Date? = nil) -> CycleWalkResult {
         let slots = orderedDays
         guard !slots.isEmpty else {
             return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [], perfectFlags: [])
         }
         let cal = Calendar.current
+        let slotCount = slots.count
+        let relevant = sessions.filter { $0.day != nil && $0.cycleNumber > 0 }
+
+        var filledByCycle: [Int: Set<PersistentIdentifier>] = [:]
+        var filledByCycleBeforeFreeze: [Int: Set<PersistentIdentifier>] = [:]
+        // Earliest date each PhaseDay was hit within a given cycle — mirrors
+        // the old walk's "bonus session dates don't stretch the perfect-
+        // cycle span" rule by only ever looking at each slot's first fill.
+        var earliestDateByCycleDay: [Int: [PersistentIdentifier: Date]] = [:]
+        for session in relevant {
+            guard let dayID = session.day?.persistentModelID else { continue }
+            let n = session.cycleNumber
+            filledByCycle[n, default: []].insert(dayID)
+            if freezeDate == nil || session.date < freezeDate! {
+                filledByCycleBeforeFreeze[n, default: []].insert(dayID)
+            }
+            if let existing = earliestDateByCycleDay[n]?[dayID] {
+                if session.date < existing { earliestDateByCycleDay[n]![dayID] = session.date }
+            } else {
+                earliestDateByCycleDay[n, default: [:]][dayID] = session.date
+            }
+        }
+
+        // legacyCompletedCycles is a floor below which the walk never
+        // re-verifies completeness — those old cycle numbers (assigned by
+        // the one-time migration, approximately, from history that
+        // predates Rest-aware tracking) are permanently trusted as done
+        // regardless of what's actually in their group, same role it
+        // played skipping straight past that much history in the old
+        // chronological walk.
+        let floor = max(1, (legacyCompletedCycles ?? 0) + 1)
+        var n = floor
+        while n <= totalCycles, (filledByCycleBeforeFreeze[n]?.count ?? 0) >= slotCount { n += 1 }
+        let completedCycles = n - 1
+        let currentCycle = min(n, totalCycles)
+        let filledSlotIDs = filledByCycle[currentCycle] ?? []
+
+        var perfectFlags: [Bool] = []
+        for cycle in floor..<n {
+            // "Perfect" needs every slot filled (guaranteed here, since only
+            // complete cycles are considered) inside a calendar span no
+            // wider than the pattern's own length (rest days included) plus
+            // one day of slack.
+            guard let perDay = earliestDateByCycleDay[cycle],
+                  let first = perDay.values.min(), let last = perDay.values.max()
+            else { perfectFlags.append(false); continue }
+            let span = (cal.dateComponents([.day], from: cal.startOfDay(for: first),
+                                           to: cal.startOfDay(for: last)).day ?? 0) + 1
+            perfectFlags.append(span <= orderedDays.count + 1)
+        }
+
+        return CycleWalkResult(currentCycle: currentCycle, completedCycles: completedCycles,
+                               filledSlotIDs: filledSlotIDs, perfectFlags: perfectFlags)
+    }
+
+    /// FROZEN, migration-only: replays the OLD date-ordered, slot-filling
+    /// algorithm `cycleWalk` used before `WorkoutSession.cycleNumber` became
+    /// authoritative, to compute what cycle number each of this phase's
+    /// existing sessions would have gotten under that system — used exactly
+    /// once by TheJymApp's repairMissingCycleNumbers() migration, so
+    /// upgrading to the new grouped walk above doesn't visibly shift
+    /// anyone's already-displayed current cycle. Never call this for
+    /// anything else, and don't "fix" or modernize it — it exists purely to
+    /// reproduce a frozen moment in time.
+    func legacyCycleNumbers() -> [PersistentIdentifier: Int] {
+        let slots = orderedDays
+        guard !slots.isEmpty else { return [:] }
         let relevant = sessions
             .filter { $0.day != nil }
             .sorted { $0.date < $1.date }
 
-        // Skip straight past whatever's already frozen into the legacy
-        // baseline — found by replaying the old training-only rule just far
-        // enough to locate where that many passes finished, then resuming
-        // the real (Rest-aware) walk right after.
+        var assignments: [PersistentIdentifier: Int] = [:]
+
+        // Sessions covered by the legacyCompletedCycles floor itself never
+        // had precise per-cycle boundaries tracked (that floor is just a
+        // count) — approximate them by replaying the same training-days-
+        // only pass stampLegacyCompletedCycles() uses to COUNT that floor,
+        // assigning an incrementing cycle number as each pass of the
+        // training days completes. Matches the app's existing level of
+        // precision for that vintage of data (never more precise than "N
+        // old-rule passes happened").
         var startIndex = 0
         let legacyTarget = legacyCompletedCycles ?? 0
         if legacyTarget > 0 {
@@ -320,8 +401,9 @@ final class Phase {
             var legacyFilled: Set<PersistentIdentifier> = []
             var legacyPasses = 0
             for (i, session) in relevant.enumerated() {
-                guard let dayID = session.day?.persistentModelID,
-                      trainingSlotIDs.contains(dayID), !legacyFilled.contains(dayID) else { continue }
+                guard let dayID = session.day?.persistentModelID else { continue }
+                assignments[session.persistentModelID] = legacyPasses + 1
+                guard trainingSlotIDs.contains(dayID), !legacyFilled.contains(dayID) else { continue }
                 legacyFilled.insert(dayID)
                 guard trainingSlotIDs.isSubset(of: legacyFilled) else { continue }
                 legacyPasses += 1
@@ -334,42 +416,18 @@ final class Phase {
         }
 
         var filled: Set<PersistentIdentifier> = []
-        var cycleDates: [Date] = []
         var completedCycles = legacyTarget
-        var perfectFlags: [Bool] = []
         for session in relevant[startIndex...] {
             guard let dayID = session.day?.persistentModelID else { continue }
+            assignments[session.persistentModelID] = completedCycles + 1
             if filled.contains(dayID) { continue }   // bonus — already filled this cycle
             filled.insert(dayID)
-            cycleDates.append(session.date)
             if filled.count == slots.count {
-                if let freezeDate, session.date >= freezeDate {
-                    // Hold here: this slot (and every other slot in the
-                    // cycle) still shows filled, but the completion itself —
-                    // and anything logged after it — waits for a later walk.
-                    break
-                }
                 completedCycles += 1
-                // "Perfect" needs every slot filled (guaranteed here, since a
-                // cycle only completes once that happens) inside a calendar
-                // span no wider than the pattern's own length (rest days
-                // included) plus one day of slack. Bonus-session dates never
-                // entered `cycleDates` above, so an extra session outside the
-                // exact split can't stretch the span and spoil an otherwise
-                // on-time cycle.
-                if let first = cycleDates.min(), let last = cycleDates.max() {
-                    let span = (cal.dateComponents([.day], from: cal.startOfDay(for: first),
-                                                   to: cal.startOfDay(for: last)).day ?? 0) + 1
-                    perfectFlags.append(span <= orderedDays.count + 1)
-                }
                 filled = []
-                cycleDates = []
             }
         }
-        return CycleWalkResult(currentCycle: min(totalCycles, completedCycles + 1),
-                               completedCycles: completedCycles,
-                               filledSlotIDs: filled,
-                               perfectFlags: perfectFlags)
+        return assignments
     }
 
     private var cycleWalk: CycleWalkResult { cycleWalk(freezeDate: nil) }
@@ -576,6 +634,17 @@ final class WorkoutSession {
     var date: Date
     var day: PhaseDay?        // nil for manually back-filled/imported entries
     var dayLabel: String      // display name at log time — survives the day being renamed/deleted
+    /// Which pass of `phase`'s template this session belongs to — the
+    /// source of truth for Phase.cycleWalk (grouped by this, not inferred
+    /// from date order), History's "Phase X, Cycle Y" header, and
+    /// PhasesView's per-cycle exercise history. 0 means "never tagged" —
+    /// only legitimate for a session with `day == nil` (manually
+    /// back-filled/imported, or a passive gap-fill placeholder), which
+    /// never participates in cycle math anyway. Every path that sets `day`
+    /// to a real PhaseDay must set this to a real (>= 1) value: live
+    /// logging and RestDayLogView use `phase.currentCycle` at the moment of
+    /// creation, import auto-computes it (or takes an explicit "Cycle"
+    /// column), and it's user-editable afterward in History.
     var cycleNumber: Int
     var isDeload: Bool
     /// Set at creation time if this training day's slot for its cycle was

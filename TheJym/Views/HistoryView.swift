@@ -220,7 +220,7 @@ struct HistoryView: View {
                 }
                 Spacer()
                 if let n = session.phase?.number {
-                    Text("Phase \(n)").font(.caption2).foregroundStyle(.secondary)
+                    Text("Phase \(n), Cycle \(session.cycleNumber)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
 
@@ -524,7 +524,10 @@ struct CSVFormatHelpView: View {
 /// entire exercise with the trash button in its section header.
 struct SessionDetailView: View {
     @Environment(\.modelContext) private var context
-    let session: WorkoutSession
+    @Bindable var session: WorkoutSession
+    @Query(sort: \Phase.number) private var phases: [Phase]
+
+    @State private var dayReattachmentNote: String?
 
     private var sortedLogs: [ExerciseLog] {
         session.exerciseLogs.sorted { $0.order < $1.order }
@@ -532,6 +535,40 @@ struct SessionDetailView: View {
 
     var body: some View {
         List {
+            Section {
+                Picker("Phase", selection: Binding(
+                    get: { session.phase?.persistentModelID },
+                    set: { newID in
+                        let newPhase = newID.flatMap { id in phases.first { $0.persistentModelID == id } }
+                        changePhase(to: newPhase)
+                    })) {
+                    Text("None").tag(PersistentIdentifier?.none)
+                    ForEach(phases, id: \.persistentModelID) { p in
+                        Text("Phase \(p.number)").tag(Optional(p.persistentModelID))
+                    }
+                }
+                if session.phase != nil {
+                    HStack {
+                        Text("Cycle")
+                        Spacer()
+                        TextField("Cycle", value: Binding(
+                            get: { session.cycleNumber },
+                            set: { newValue in
+                                session.cycleNumber = max(0, newValue)
+                                try? context.save()
+                            }), format: .number)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                    }
+                }
+            } footer: {
+                if let dayReattachmentNote {
+                    Text(dayReattachmentNote).foregroundStyle(.orange)
+                } else {
+                    Text("Changing Phase moves this day's cycle progress — the day (e.g. \"Push A\") re-matches by name in the new Phase where possible.")
+                }
+            }
             ForEach(sortedLogs, id: \.persistentModelID) { log in
                 Section {
                     if !log.targetReps.isEmpty {
@@ -580,6 +617,30 @@ struct SessionDetailView: View {
         }
         s.exerciseLog = log
         context.insert(s)
+        try? context.save()
+    }
+
+    /// Reattributing a session to a different Phase leaves its old `day`
+    /// (a specific PhaseDay belonging to the OLD phase) meaningless — it's
+    /// re-resolved by name (e.g. "Push A") against the new Phase's own
+    /// days, same case-insensitive match ImportEngine.matchPhaseDay uses,
+    /// so cycle-slot tracking keeps working under the new Phase. If no day
+    /// of that name exists there, `day` is cleared rather than left
+    /// pointing at a day from a different Phase, and a note explains why.
+    /// Cycle # is left as-is either way — edit it separately if it also
+    /// needs correcting for the new Phase.
+    private func changePhase(to newPhase: Phase?) {
+        guard newPhase?.persistentModelID != session.phase?.persistentModelID else { return }
+        let oldDayName = session.day?.name
+        session.phase = newPhase
+        if let newPhase, let oldDayName {
+            session.day = newPhase.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(oldDayName) == .orderedSame }
+        } else {
+            session.day = nil
+        }
+        dayReattachmentNote = (oldDayName != nil && session.day == nil)
+            ? "No day named \"\(oldDayName!)\" in Phase \(newPhase?.number ?? 0) — day cleared."
+            : nil
         try? context.save()
     }
 }

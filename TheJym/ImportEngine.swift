@@ -74,6 +74,15 @@
 //  keeps whatever Day text was given as the label, if only the phase match
 //  failed).
 //
+//  An optional Cycle column says which pass of the phase's template this
+//  row belongs to (e.g. 3 for the third time through). Leave it blank to
+//  let the importer work it out on its own by walking the file in date
+//  order and counting completed passes — the normal case. Given
+//  explicitly, it wins outright for that row, which is the reliable way to
+//  correct a split with more than one same-named day a cycle (most often
+//  two separate Rest days), since the importer alone can't always tell
+//  which occurrence a given row belongs to just from its date.
+//
 //  If the file's Day column shows a repeating pattern (e.g. Push A / Pull A
 //  / Legs A / Rest, over and over), the importer detects the most recently
 //  completed cycle and drafts a whole Phase from it — HistoryView presents
@@ -111,19 +120,25 @@ enum ImportEngine {
         let phaseNumber: Int?      // optional "Phase" column
         let dayLabel: String?      // optional "Day" column, e.g. "Push A"
         let equipmentName: String? // optional "Equipment" column — "Bodyweight" or a Bar name
+        /// Optional "Cycle" column — which pass of the phase's template this
+        /// row belongs to. When given, overrides importIntoStore's own
+        /// auto-computed cycle number for this row's session; when nil, the
+        /// auto-computed value is used, same as before this column existed.
+        let cycleNumber: Int?
         /// Optional "Notes" column, imported as plain text onto the matching
         /// exercise's ExerciseDef.notes — there's no per-log notes field, so
         /// this only applies to real exercise rows, not rest/weight rows.
         let notes: String?
 
         init(date: Date, exerciseName: String, kind: ImportedRowKind, phaseNumber: Int?,
-             dayLabel: String?, equipmentName: String?, notes: String? = nil) {
+             dayLabel: String?, equipmentName: String?, cycleNumber: Int? = nil, notes: String? = nil) {
             self.date = date
             self.exerciseName = exerciseName
             self.kind = kind
             self.phaseNumber = phaseNumber
             self.dayLabel = dayLabel
             self.equipmentName = equipmentName
+            self.cycleNumber = cycleNumber
             self.notes = notes
         }
     }
@@ -267,6 +282,7 @@ enum ImportEngine {
         let phaseIdx = header.firstIndex(where: { $0.hasPrefix("phase") })
         let dayIdx = header.firstIndex(where: { $0.hasPrefix("day") })
         let equipmentIdx = header.firstIndex(where: { $0.hasPrefix("equipment") })
+        let cycleIdx = header.firstIndex(where: { $0.hasPrefix("cycle") })
         let notesIdx = header.firstIndex(where: { $0.hasPrefix("note") })
 
         var out: [ImportedEntry] = []
@@ -284,10 +300,12 @@ enum ImportEngine {
             let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let equipmentStr = equipmentIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
+            let cycleStr = cycleIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let notesStr = notesIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let phaseNumber = phaseStr.flatMap { Int($0) }
             let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
             let matchedEquipment = (equipmentStr?.isEmpty == false) ? equipmentStr : nil
+            let explicitCycleNumber = cycleStr.flatMap { Int($0) }
             let matchedNotes = (notesStr?.isEmpty == false) ? notesStr : nil
 
             // Exercise == "Weight" (case-insensitive) marks a body weight
@@ -324,7 +342,7 @@ enum ImportEngine {
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),
                                          phaseNumber: phaseNumber, dayLabel: "Rest",
-                                         equipmentName: nil))
+                                         equipmentName: nil, cycleNumber: explicitCycleNumber))
                 continue
             }
 
@@ -347,7 +365,7 @@ enum ImportEngine {
             out.append(ImportedEntry(date: date, exerciseName: name,
                                      kind: .exercise(goalType: goalType, targetReps: targetReps, weights: weights, reps: reps),
                                      phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
-                                     equipmentName: matchedEquipment, notes: matchedNotes))
+                                     equipmentName: matchedEquipment, cycleNumber: explicitCycleNumber, notes: matchedNotes))
         }
         return (out, skipped)
     }
@@ -498,6 +516,13 @@ enum ImportEngine {
         // "Rest" row keeps re-resolving to the first one), so that slot —
         // and the cycle it belongs to — could never complete.
         //
+        // The same walk also computes resolvedCycleNumber — which pass of
+        // the phase's template each request belongs to, auto-counted the
+        // same way WorkoutLogView tags a live session's cycleNumber
+        // (whatever cycle was in progress the moment it's processed) — used
+        // as the fallback wherever a row doesn't carry an explicit "Cycle"
+        // column value of its own.
+        //
         // Walked once, chronologically, across exercise-date-groups, rest
         // rows, and gap-fill requests all combined (they're normally
         // handled in separate passes below, so relying on insertion order
@@ -514,8 +539,10 @@ enum ImportEngine {
         // pre-existing session history when instead re-importing more rows
         // into an already-in-progress existing phase by Phase number — a
         // follow-up import like that could misresolve which same-named
-        // slot is next until enough new rows re-establish the real pattern.
+        // slot (or cycle number) is next until enough new rows re-establish
+        // the real pattern — an explicit Cycle column sidesteps that.
         var resolvedAmbiguousDay: [GroupKey: PhaseDay] = [:]
+        var resolvedCycleNumber: [GroupKey: Int] = [:]
         do {
             var requests: [GroupKey] = []
             var seenKeys = Set<GroupKey>()
@@ -582,6 +609,7 @@ enum ImportEngine {
             requests.sort { $0.day < $1.day }
 
             var fillState: [PersistentIdentifier: Set<PersistentIdentifier>] = [:]
+            var completedCyclesSoFar: [PersistentIdentifier: Int] = [:]
             for request in requests {
                 let phase = forcedPhase ?? request.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
                 guard let phase else { continue }
@@ -598,10 +626,14 @@ enum ImportEngine {
                     ? (candidates.first { !filled.contains($0.persistentModelID) } ?? firstCandidate)
                     : firstCandidate
                 resolvedAmbiguousDay[request] = chosen
+                resolvedCycleNumber[request] = (completedCyclesSoFar[phase.persistentModelID] ?? 0) + 1
 
                 var updatedFilled = filled
                 updatedFilled.insert(chosen.persistentModelID)
-                if updatedFilled.count >= phase.orderedDays.count { updatedFilled = [] }
+                if updatedFilled.count >= phase.orderedDays.count {
+                    updatedFilled = []
+                    completedCyclesSoFar[phase.persistentModelID] = (completedCyclesSoFar[phase.persistentModelID] ?? 0) + 1
+                }
                 fillState[phase.persistentModelID] = updatedFilled
             }
         }
@@ -623,6 +655,17 @@ enum ImportEngine {
             }
             let phase = phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
             return (phase, lookupDay())
+        }
+
+        /// Resolves the cycle number to stamp on a session for this row —
+        /// an explicit "Cycle" column value on the row wins outright;
+        /// otherwise falls back to whatever the chronological walk above
+        /// already worked out for this exact (date, phase, label) request.
+        func resolvedCycle(date: Date, phaseNumber: Int?, dayLabel: String?, explicit: Int?) -> Int {
+            if let explicit, explicit > 0 { return explicit }
+            guard let dayLabel else { return 0 }
+            let key = GroupKey(day: cal.startOfDay(for: date), phaseNumber: phaseNumber, dayLabel: dayLabel)
+            return resolvedCycleNumber[key] ?? 0
         }
 
         var sessionsCreated = 0
@@ -655,11 +698,13 @@ enum ImportEngine {
                 await Task.yield()
             }
             let (matchedPhase, matchedDay) = matchPhaseDay(date: key.day, phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
+            let cycle = resolvedCycle(date: key.day, phaseNumber: key.phaseNumber, dayLabel: key.dayLabel,
+                                      explicit: dayRows.first?.cycleNumber)
             // An imported workout overrides a gap-filled "nothing happened"
             // Rest Day placeholder for this same date.
             WorkoutSession.removeBackfilledRestPlaceholder(on: key.day, context: context)
             let session = WorkoutSession(date: key.day, day: matchedDay,
-                                         dayLabel: key.dayLabel ?? "Imported", cycleNumber: 0)
+                                         dayLabel: key.dayLabel ?? "Imported", cycleNumber: cycle)
             session.phase = matchedPhase
             context.insert(session)
             sessionsCreated += 1
@@ -740,15 +785,17 @@ enum ImportEngine {
         // RestDayActivity record and a matching WorkoutSession/ExerciseLog/
         // SetLog, so it shows up in History and counts toward the rest-bank
         // streak — mirrors live logging (RestDayLogView.logActivity()).
-        // Phase is left nil (same as live logging, so it never shifts the
-        // training cycle) UNLESS forcedPhase is retroactively attributing
+        // Phase is left nil UNLESS forcedPhase is retroactively attributing
         // this whole import to a Phase AND this row's date is on/after
-        // earliestAttributedExerciseDate — rest days don't participate in
-        // cycle-slot math either way, so attributing them there too is safe
-        // once there's actual attributed history for them to belong
-        // alongside. Deliberately does NOT touch the Exercises tab — a rest
-        // activity isn't an exercise in the import file, so it shouldn't
-        // show up as one there.
+        // earliestAttributedExerciseDate — a Rest row logged before the
+        // phase's own history begins (per this import) shouldn't be swept
+        // in just because its label happens to match too (see
+        // import_rest_day_phase_attribution: a Rest day/activity should
+        // never be the first thing attributed to a phase). Once it does
+        // qualify, it fills that cycle's Rest slot exactly like a training
+        // day fills its own (a8702ad). Deliberately does NOT touch the
+        // Exercises tab — a rest activity isn't an exercise in the import
+        // file, so it shouldn't show up as one there.
         for (restIndex, entry) in restRows.enumerated() {
             if restIndex > 0, restIndex % checkpointInterval == 0 {
                 try? context.save()
@@ -759,12 +806,14 @@ enum ImportEngine {
                                            distance: distance, distanceUnit: unit))
 
             let (matchedRestPhase, matchedDay) = matchPhaseDay(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
+            let cycle = resolvedCycle(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel,
+                                      explicit: entry.cycleNumber)
             let displayName = distance.map { "\(entry.exerciseName) (\(Formatters.trim($0)) \(unit))" } ?? entry.exerciseName
             // A logged rest-day activity overrides a gap-filled no-activity
             // Rest Day placeholder for this same date.
             WorkoutSession.removeBackfilledRestPlaceholder(on: entry.date, context: context)
             let session = WorkoutSession(date: entry.date, day: matchedDay,
-                                         dayLabel: entry.dayLabel ?? "Rest Day", cycleNumber: 0)
+                                         dayLabel: entry.dayLabel ?? "Rest Day", cycleNumber: cycle)
             let restRowQualifiesForForcedPhase = forcedPhase != nil
                 && earliestAttributedExerciseDate.map { entry.date >= $0 } == true
             session.phase = restRowQualifiesForForcedPhase ? matchedRestPhase : nil
@@ -793,9 +842,10 @@ enum ImportEngine {
             }
             guard let matchedDay = resolvedAmbiguousDay[gapRequest] else { continue }
             let phase = forcedPhase ?? gapRequest.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+            let cycle = resolvedCycleNumber[gapRequest] ?? 0
             WorkoutSession.removeBackfilledRestPlaceholder(on: gapRequest.day, context: context)
             context.insert(ActiveRecovery(date: gapRequest.day, type: .rest))
-            let session = WorkoutSession(date: gapRequest.day, day: matchedDay, dayLabel: matchedDay.name, cycleNumber: 0)
+            let session = WorkoutSession(date: gapRequest.day, day: matchedDay, dayLabel: matchedDay.name, cycleNumber: cycle)
             session.phase = phase
             context.insert(session)
             sessionsCreated += 1
