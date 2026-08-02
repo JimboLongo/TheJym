@@ -119,6 +119,47 @@ final class PerfectCycleTests: XCTestCase {
         XCTAssertEqual(phase.currentCycle, 2, "Logging Rest is what actually completes the cycle")
     }
 
+    /// The Train tab's display-frozen cycle number (Phase.displayCurrentCycle)
+    /// shouldn't advance until the real midnight rollover, even though the
+    /// authoritative currentCycle already reflects it the instant the last
+    /// slot is logged — mirrors TodayView.templateNextDay's same-day
+    /// carve-out for the featured row underneath it.
+    @MainActor
+    func testDisplayCycleDoesNotAdvanceUntilMidnight() {
+        let context = makeContext()
+        let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        let rest = phase.orderedDays[2]
+        log(dayA, on: d(0), phase: phase, context: context)
+        log(dayB, on: d(0), phase: phase, context: context)
+        log(rest, on: d(0), phase: phase, context: context)
+        log(dayC, on: d(0), phase: phase, context: context)
+        try? context.save()
+
+        XCTAssertEqual(phase.currentCycle, 2, "Data-wise the cycle completed the instant the last slot was logged")
+        XCTAssertEqual(phase.displayCurrentCycle, 1, "But the Train tab shouldn't show that until midnight")
+        XCTAssertFalse(phase.isSlotFilled(for: dayA), "Data-wise a fresh (already-rotated) cycle 2 is in progress, nothing filled yet")
+        XCTAssertTrue(phase.isSlotFilledForDisplay(dayA), "But the display checklist should still show the just-finished cycle 1, fully checked")
+    }
+
+    /// Same carve-out applies to finishing a phase's very last cycle — the
+    /// Train tab shouldn't swap to the "Phase Complete" screen mid-day
+    /// either, even though Phase.isComplete already flips immediately.
+    @MainActor
+    func testDisplayIsCompleteWaitsForMidnightOnAPhasesFinalCycle() {
+        let context = makeContext()
+        let (phase, dayA, dayB, dayC) = makeFourDayPhase(context: context)
+        phase.totalCycles = 1
+        let rest = phase.orderedDays[2]
+        log(dayA, on: d(0), phase: phase, context: context)
+        log(dayB, on: d(0), phase: phase, context: context)
+        log(rest, on: d(0), phase: phase, context: context)
+        log(dayC, on: d(0), phase: phase, context: context)
+        try? context.save()
+
+        XCTAssertTrue(phase.isComplete)
+        XCTAssertFalse(phase.displayIsComplete, "Train tab shouldn't flip to the Phase Complete screen mid-day")
+    }
+
     /// legacyCompletedCycles grandfathers a phase's pre-Rest-tracking
     /// progress in as a frozen floor — but the cycle that was still in
     /// progress at that moment (deliberately one short of the old-rule

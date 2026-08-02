@@ -54,7 +54,7 @@ struct TodayView: View {
         NavigationStack {
             List {
                 if let phase = activePhase {
-                    if phase.isComplete {
+                    if phase.displayIsComplete {
                         phaseCompleteSection(phase)
                     } else {
                         activePhaseSections(phase)
@@ -226,7 +226,7 @@ struct TodayView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnsPerRow)
         return LazyVGrid(columns: columns, spacing: 8) {
             ForEach(days, id: \.persistentModelID) { day in
-                let done = phase.isSlotFilled(for: day)
+                let done = phase.isSlotFilledForDisplay(day)
                 VStack(spacing: 2) {
                     Image(systemName: done ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(done ? .green : .secondary)
@@ -250,11 +250,11 @@ struct TodayView: View {
                         Text("Phase \(phase.number)").font(.title2.bold())
                         Spacer()
                     }
-                    ProgressView(value: Double(phase.filledSlotCount),
+                    ProgressView(value: Double(phase.displayFilledSlotCount),
                                  total: Double(phase.orderedDays.count * phase.totalCycles))
                     HStack {
-                        Text("Cycle \(phase.currentCycle) of \(phase.totalCycles)")
-                        if settings?.deloadWeeksEnabled == true, phase.deloadCycle == phase.currentCycle {
+                        Text("Cycle \(phase.displayCurrentCycle) of \(phase.totalCycles)")
+                        if settings?.deloadWeeksEnabled == true, phase.deloadCycle == phase.displayCurrentCycle {
                             Label("Deload", systemImage: "arrow.down.heart")
                                 .foregroundStyle(.orange)
                         }

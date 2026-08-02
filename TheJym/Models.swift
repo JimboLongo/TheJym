@@ -292,7 +292,14 @@ final class Phase {
         var perfectFlags: [Bool]
     }
 
-    private var cycleWalk: CycleWalkResult {
+    /// - Parameter freezeDate: if set, a session that would complete a cycle
+    ///   (the slot count hitting `slots.count`) doesn't apply that
+    ///   completion when its own date is on/after this instant — its slot
+    ///   still shows filled, but `completedCycles`/the running cycle number
+    ///   hold where they were and nothing dated after it is processed. Used
+    ///   by `displayCycleWalk` to freeze right at the start of today. nil
+    ///   (the real `cycleWalk` below) means never freeze — walk everything.
+    private func cycleWalk(freezeDate: Date? = nil) -> CycleWalkResult {
         let slots = orderedDays
         guard !slots.isEmpty else {
             return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [], perfectFlags: [])
@@ -336,6 +343,12 @@ final class Phase {
             filled.insert(dayID)
             cycleDates.append(session.date)
             if filled.count == slots.count {
+                if let freezeDate, session.date >= freezeDate {
+                    // Hold here: this slot (and every other slot in the
+                    // cycle) still shows filled, but the completion itself —
+                    // and anything logged after it — waits for a later walk.
+                    break
+                }
                 completedCycles += 1
                 // "Perfect" needs every slot filled (guaranteed here, since a
                 // cycle only completes once that happens) inside a calendar
@@ -359,11 +372,34 @@ final class Phase {
                                perfectFlags: perfectFlags)
     }
 
+    private var cycleWalk: CycleWalkResult { cycleWalk(freezeDate: nil) }
+
+    /// Same walk as `cycleWalk`, but a cycle-completion dated today doesn't
+    /// apply yet — its slots still show filled, just without advancing the
+    /// cycle number or (on a phase's last cycle) flipping to complete.
+    /// Powers TodayView's Phase summary (cycle number, progress bar, slot
+    /// checklist, complete-phase swap) so none of it visibly jumps mid-day
+    /// the instant the cycle's last slot is filled; it mirrors
+    /// TodayView.templateNextDay's same-day carve-out for the featured row
+    /// underneath. Everything else — cycleNumber tagging and deload
+    /// determination when actually logging a workout, progression math,
+    /// pace/stats — keeps using the immediate `cycleWalk` above, since that
+    /// data should be correct right away even though the Train tab's
+    /// display waits for real midnight.
+    private var displayCycleWalk: CycleWalkResult {
+        cycleWalk(freezeDate: Calendar.current.startOfDay(for: Date()))
+    }
+
     /// True if `day`'s slot for the cycle currently in progress is already
     /// filled — logging another session for it right now would be a bonus
     /// session rather than filling a slot.
     func isSlotFilled(for day: PhaseDay) -> Bool {
         cycleWalk.filledSlotIDs.contains(day.persistentModelID)
+    }
+
+    /// Display-frozen counterpart to `isSlotFilled` — see `displayCycleWalk`.
+    func isSlotFilledForDisplay(_ day: PhaseDay) -> Bool {
+        displayCycleWalk.filledSlotIDs.contains(day.persistentModelID)
     }
 
     /// Total slots filled across all history (bonus sessions don't count),
@@ -373,9 +409,17 @@ final class Phase {
         cycleWalk.completedCycles * orderedDays.count + cycleWalk.filledSlotIDs.count
     }
 
+    /// Display-frozen counterpart to `filledSlotCount` — see `displayCycleWalk`.
+    var displayFilledSlotCount: Int {
+        displayCycleWalk.completedCycles * orderedDays.count + displayCycleWalk.filledSlotIDs.count
+    }
+
     /// Current cycle number (1-based), based on how many full cycles' worth
     /// of slots have been filled.
     var currentCycle: Int { cycleWalk.currentCycle }
+
+    /// Display-frozen counterpart to `currentCycle` — see `displayCycleWalk`.
+    var displayCurrentCycle: Int { displayCycleWalk.currentCycle }
 
     /// The first not-yet-filled training day slot in the cycle currently in
     /// progress, in pattern order — the day you're "supposed" to do next.
@@ -386,6 +430,14 @@ final class Phase {
 
     var isComplete: Bool {
         cycleWalk.completedCycles >= totalCycles
+    }
+
+    /// Display-frozen counterpart to `isComplete` — see `displayCycleWalk`.
+    /// Without this, finishing a phase's very last slot would flip the Train
+    /// tab straight to the "Phase Complete" screen mid-day, the same jump
+    /// this whole display-frozen family exists to avoid.
+    var displayIsComplete: Bool {
+        displayCycleWalk.completedCycles >= totalCycles
     }
 
     /// Whether each completed cycle so far met the "perfect cycle" bar —
