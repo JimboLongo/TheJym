@@ -88,15 +88,17 @@
 //  completed cycle and drafts a whole Phase from it — HistoryView presents
 //  that draft (in the normal Phase Builder screen) for review/editing
 //  before anything is actually imported. Saving it retroactively attributes
-//  every exercise row whose Day matches one of that Phase's days, not just
-//  the last cycle's — so a consistently-labeled import ends up as one
-//  continuous Phase covering its whole history, not just its tail end.
-//  Rest-day activity rows are attributed the same way, but only from
-//  whichever date is the earliest exercise row this import actually
-//  attributed to that Phase — a "Rest" row logged before the Phase's own
-//  history begins (per this import) isn't swept in just because its label
-//  happens to match too. A file with no Day column, or no repeated
-//  pattern, just imports the old way.
+//  every row whose OWN Phase column names that Phase's actual number (e.g.
+//  a first-ever Phase, auto-numbered 1, only picks up rows that already say
+//  "1"), matched to that Phase's days by Day label — a file with no Phase
+//  column, or numbers that don't happen to match the number the new Phase
+//  gets assigned, still drafts the Phase template fine, it just won't have
+//  any history attributed to it. Rest-day activity rows are attributed the
+//  same way, but only from whichever date is the earliest exercise row this
+//  import actually attributed to that Phase — a "Rest" row logged before
+//  the Phase's own history begins (per this import) isn't swept in just
+//  because its own Phase number matches too. A file with no Day column, or
+//  no repeated pattern, just imports the old way.
 //
 
 import Foundation
@@ -375,21 +377,23 @@ enum ImportEngine {
     /// the row's Weights/Reps pairs in order. A row's Phase/Day, if given and
     /// matched, links the session to that real Phase/PhaseDay; otherwise it
     /// falls back to an unattributed "Imported" entry.
-    /// `forcedPhase`, when given, overrides normal Phase-number matching for
-    /// exercise rows — every exercise row is matched against `forcedPhase`'s
-    /// own days by Day label alone (case-insensitive), regardless of what's
-    /// in the row's Phase column, and attributed there whenever it matches.
-    /// Used to retroactively attribute imported historical days to a Phase
-    /// auto-drafted from the import itself, which obviously can't already
-    /// appear in the file's Phase column. Rest-day activity rows get the
-    /// same Day-label matching, but only from whichever date is the
-    /// earliest exercise row this same import actually attributed to
+    /// `forcedPhase`, when given, is the only phase a row can attribute to
+    /// — but same as any other phase (see resolvePhase), only a row whose
+    /// own Phase column explicitly names its number actually does, then
+    /// matched against its days by Day label (case-insensitive). Used to
+    /// retroactively attribute imported historical days to a Phase
+    /// auto-drafted from the import itself, once the file's own Phase
+    /// numbers happen to line up with whatever number that Phase is
+    /// actually assigned (e.g. a first-ever Phase, auto-numbered 1, only
+    /// picks up rows that say "1") — a file with no Phase column, or
+    /// numbers that don't line up, attributes nothing to it. Rest-day
+    /// activity rows get the same matching, but only from whichever date is
+    /// the earliest exercise row this same import actually attributed to
     /// forcedPhase — a "Rest" row logged before that Phase's own history
-    /// begins (per this import) isn't swept in just because its label
-    /// happens to match too. Rows whose Day doesn't match any of
-    /// forcedPhase's days (or, for rest rows, that fall before that
-    /// earliest date) fall back to an unattributed "Imported" entry, same
-    /// as always.
+    /// begins (per this import) isn't swept in just because its own Phase
+    /// number matches too. A row whose Phase doesn't resolve, or whose Day
+    /// doesn't match any of that phase's days, falls back to an
+    /// unattributed "Imported" entry, same as always.
     /// A big historical import (hundreds of sessions, thousands of sets) run
     /// as one giant unbroken block risked the main thread going unresponsive
     /// long enough for iOS to background the app mid-import — since nothing
@@ -411,6 +415,24 @@ enum ImportEngine {
         let existingPhases = (try? context.fetch(FetchDescriptor<Phase>())) ?? []
         var bodyWeights = ((try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? [])
             .sorted { $0.date < $1.date }
+
+        /// A row only ever attributes to a phase it explicitly names — its
+        /// own Phase column has to say so, every time, even when this whole
+        /// import is being retroactively attributed to a `forcedPhase`
+        /// freshly built from the file's own detected pattern: that only
+        /// sweeps in a row whose Phase column names `forcedPhase`'s actual
+        /// number (e.g. a first-ever Phase, auto-numbered 1, only picks up
+        /// rows that say "1"). A file with no Phase column, or numbers that
+        /// don't line up, attributes nothing — same as any other
+        /// unattributed row, just never guessed at from a Day-label match
+        /// alone.
+        func resolvePhase(phaseNumber: Int?) -> Phase? {
+            guard let phaseNumber else { return nil }
+            if let forcedPhase {
+                return phaseNumber == forcedPhase.number ? forcedPhase : nil
+            }
+            return existingPhases.first { $0.number == phaseNumber }
+        }
 
         /// "Bodyweight" flags the exercise bodyweight; "Dumbbell"/"Dumbbells"
         /// ("Dumbell"/"Dumbells" too — common misspelling) or "Band"/"Bands"
@@ -572,7 +594,7 @@ enum ImportEngine {
             var earliestExerciseDateByPhaseID: [PersistentIdentifier: Date] = [:]
             for row in exerciseRows {
                 guard let label = row.dayLabel,
-                      let phase = forcedPhase ?? row.phaseNumber.flatMap({ num in existingPhases.first { $0.number == num } }),
+                      let phase = resolvePhase(phaseNumber: row.phaseNumber),
                       phase.orderedDays.contains(where: { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame })
                 else { continue }
                 let day = cal.startOfDay(for: row.date)
@@ -583,7 +605,7 @@ enum ImportEngine {
             var fileDatesByPhaseID: [PersistentIdentifier: (phase: Phase, dates: Set<Date>)] = [:]
             for request in requests {
                 guard let label = request.dayLabel,
-                      let phase = forcedPhase ?? request.phaseNumber.flatMap({ num in existingPhases.first { $0.number == num } }),
+                      let phase = resolvePhase(phaseNumber: request.phaseNumber),
                       phase.orderedDays.contains(where: { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame })
                 else { continue }
                 fileDatesByPhaseID[phase.persistentModelID, default: (phase, [])].dates.insert(request.day)
@@ -611,8 +633,7 @@ enum ImportEngine {
             var fillState: [PersistentIdentifier: Set<PersistentIdentifier>] = [:]
             var completedCyclesSoFar: [PersistentIdentifier: Int] = [:]
             for request in requests {
-                let phase = forcedPhase ?? request.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
-                guard let phase else { continue }
+                guard let phase = resolvePhase(phaseNumber: request.phaseNumber) else { continue }
                 let candidates: [PhaseDay]
                 if request.isGapFill {
                     candidates = phase.orderedDays.filter(\.isRest)
@@ -642,18 +663,16 @@ enum ImportEngine {
         /// the day itself always comes from resolvedAmbiguousDay above
         /// (which already picked the right same-named candidate, if there
         /// was more than one) rather than re-doing a plain by-name lookup
-        /// here.
+        /// here. The phase itself only ever resolves via resolvePhase — a
+        /// row attributes to a phase (forcedPhase or otherwise) only when
+        /// its own Phase column explicitly names it.
         func matchPhaseDay(date: Date, phaseNumber: Int?, dayLabel: String?) -> (Phase?, PhaseDay?) {
             func lookupDay() -> PhaseDay? {
                 guard let dayLabel else { return nil }
                 let key = GroupKey(day: cal.startOfDay(for: date), phaseNumber: phaseNumber, dayLabel: dayLabel)
                 return resolvedAmbiguousDay[key]
             }
-            if let forcedPhase {
-                let day = lookupDay()
-                return day != nil ? (forcedPhase, day) : (nil, nil)
-            }
-            let phase = phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+            guard let phase = resolvePhase(phaseNumber: phaseNumber) else { return (nil, nil) }
             return (phase, lookupDay())
         }
 
@@ -763,9 +782,9 @@ enum ImportEngine {
         }
 
         // "The first date in the importer with a phase" — earliest date
-        // among this import's own exercise rows that actually match one of
-        // forcedPhase's days by label (the same matching an exercise row
-        // gets). Rest rows below are only retroactively attributed to
+        // among this import's own exercise rows that actually attribute to
+        // forcedPhase (same resolvePhase + Day-label matching an exercise
+        // row gets). Rest rows below are only retroactively attributed to
         // forcedPhase from that point forward — a "Rest" row logged before
         // this phase's own history actually begins (per this import)
         // shouldn't get swept in just because its label happens to match
@@ -774,7 +793,8 @@ enum ImportEngine {
         let earliestAttributedExerciseDate: Date? = forcedPhase.flatMap { phase in
             exerciseRows
                 .filter { row in
-                    guard let label = row.dayLabel else { return false }
+                    guard let label = row.dayLabel, resolvePhase(phaseNumber: row.phaseNumber)?.persistentModelID == phase.persistentModelID
+                    else { return false }
                     return phase.orderedDays.contains { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
                 }
                 .map(\.date)
@@ -841,7 +861,7 @@ enum ImportEngine {
                 await Task.yield()
             }
             guard let matchedDay = resolvedAmbiguousDay[gapRequest] else { continue }
-            let phase = forcedPhase ?? gapRequest.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+            let phase = resolvePhase(phaseNumber: gapRequest.phaseNumber)
             let cycle = resolvedCycleNumber[gapRequest] ?? 0
             WorkoutSession.removeBackfilledRestPlaceholder(on: gapRequest.day, context: context)
             context.insert(ActiveRecovery(date: gapRequest.day, type: .rest))

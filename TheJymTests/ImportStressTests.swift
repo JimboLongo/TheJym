@@ -59,7 +59,7 @@ final class ImportStressTests: XCTestCase {
                         date: date, exerciseName: e,
                         kind: .exercise(goalType: .fixedSets, targetReps: [5, 5, 5],
                                        weights: [135, 135, 135], reps: [5, 5, 5]),
-                        phaseNumber: nil, dayLabel: label, equipmentName: "Barbell"))
+                        phaseNumber: 1, dayLabel: label, equipmentName: "Barbell"))
                 }
             }
             cycleDay += 1

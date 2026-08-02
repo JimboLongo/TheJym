@@ -52,12 +52,13 @@ final class ImportPhaseAttributionTests: XCTestCase {
 
         XCTAssertEqual(phase.orderedDays.count, 2, "Phase should see its just-inserted days without a fresh fetch")
 
-        // A row whose Day label matches "Upper A" case-insensitively.
+        // A row explicitly tagged Phase 1, whose Day label matches "Upper A"
+        // case-insensitively.
         let row = ImportEngine.ImportedEntry(
             date: Date(),
             exerciseName: "Back Squat",
             kind: .exercise(goalType: .fixedSets, targetReps: [5, 5, 5], weights: [135, 135, 135], reps: [5, 5, 5]),
-            phaseNumber: nil,
+            phaseNumber: 1,
             dayLabel: "Upper A",
             equipmentName: nil
         )
@@ -107,15 +108,15 @@ final class ImportPhaseAttributionTests: XCTestCase {
         let exerciseRow = ImportEngine.ImportedEntry(
             date: exerciseDate, exerciseName: "Back Squat",
             kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
-            phaseNumber: nil, dayLabel: "Upper A", equipmentName: nil)
+            phaseNumber: 1, dayLabel: "Upper A", equipmentName: nil)
         let earlyRestRow = ImportEngine.ImportedEntry(
             date: earlyRestDate, exerciseName: "Walk",
             kind: .restActivity(distance: nil, distanceUnit: "mi"),
-            phaseNumber: nil, dayLabel: "Rest", equipmentName: nil)
+            phaseNumber: 1, dayLabel: "Rest", equipmentName: nil)
         let lateRestRow = ImportEngine.ImportedEntry(
             date: lateRestDate, exerciseName: "Yoga",
             kind: .restActivity(distance: nil, distanceUnit: "mi"),
-            phaseNumber: nil, dayLabel: "Rest", equipmentName: nil)
+            phaseNumber: 1, dayLabel: "Rest", equipmentName: nil)
 
         _ = await ImportEngine.importIntoStore([exerciseRow, earlyRestRow, lateRestRow],
                                                context: context, attributeTo: phase)
@@ -126,6 +127,38 @@ final class ImportPhaseAttributionTests: XCTestCase {
 
         XCTAssertNil(earlySession?.phase, "A rest row before the earliest attributed exercise date shouldn't be attributed")
         XCTAssertEqual(lateSession?.phase?.number, 1, "A rest row on/after the earliest attributed exercise date should be attributed")
+    }
+
+    /// A row only ever attributes to a phase it explicitly names — even
+    /// under forcedPhase (the "detect pattern -> build a new Phase ->
+    /// attribute your whole history" flow), a row whose Day label matches
+    /// one of that Phase's days but whose own Phase column is blank (or
+    /// names a different number) must NOT be swept in just from the label
+    /// match alone.
+    @MainActor
+    func testRowWithoutExplicitPhaseNumberIsNeverAttributedEvenUnderForcedPhase() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainDay = PhaseDay(order: 0, name: "Upper A", isRest: false)
+        trainDay.phase = phase
+        context.insert(trainDay)
+        try? context.save()
+
+        let noPhaseRow = ImportEngine.ImportedEntry(
+            date: Date(), exerciseName: "Back Squat",
+            kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+            phaseNumber: nil, dayLabel: "Upper A", equipmentName: nil)
+        let wrongPhaseRow = ImportEngine.ImportedEntry(
+            date: Date(), exerciseName: "Back Squat",
+            kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+            phaseNumber: 2, dayLabel: "Upper A", equipmentName: nil)
+
+        _ = await ImportEngine.importIntoStore([noPhaseRow, wrongPhaseRow], context: context, attributeTo: phase)
+
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        XCTAssertTrue(sessions.allSatisfy { $0.phase == nil }, "Neither row explicitly named Phase 1, so neither should attribute to it despite matching by Day label")
+        XCTAssertTrue(sessions.allSatisfy { $0.day == nil }, "An unattributed row shouldn't resolve a specific PhaseDay either")
     }
 
     /// The app's own backfilled rest sessions are labeled "Rest Day"
@@ -163,13 +196,13 @@ final class ImportPhaseAttributionTests: XCTestCase {
         try? context.save()
 
         let csv = """
-        Date,Day,Exercise,Sets,Weights,Reps
-        2026-01-01,Upper A,Back Squat,5,135,5
-        2026-01-02,Rest Day,Walk,,,3.1mi
-        2026-01-03,Upper A,Back Squat,5,135,5
-        2026-01-04,Rest Day,Walk,,,3.1mi
-        2026-01-05,Upper A,Back Squat,5,135,5
-        2026-01-06,Rest Day,Walk,,,3.1mi
+        Date,Phase,Day,Exercise,Sets,Weights,Reps
+        2026-01-01,1,Upper A,Back Squat,5,135,5
+        2026-01-02,1,Rest Day,Walk,,,3.1mi
+        2026-01-03,1,Upper A,Back Squat,5,135,5
+        2026-01-04,1,Rest Day,Walk,,,3.1mi
+        2026-01-05,1,Upper A,Back Squat,5,135,5
+        2026-01-06,1,Rest Day,Walk,,,3.1mi
         """
         let (rows, skipped) = ImportEngine.parseRows(csv: csv)
         XCTAssertEqual(skipped, 0)
