@@ -28,6 +28,7 @@ struct HistoryView: View {
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
     @Query(sort: \BodyWeightEntry.date) private var bodyWeights: [BodyWeightEntry]
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
+    @Query(sort: \Phase.number) private var phases: [Phase]
 
     @State private var showingAddPast = false
     @State private var showingImporter = false
@@ -349,6 +350,24 @@ struct HistoryView: View {
                 importResultMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Sets, Weights, and Reps columns — see the Import Format Guide for the exact layout."
                 return
             }
+
+            // If the file's own rows already explicitly name a Phase that
+            // exists, import straight into it — the file already told us
+            // exactly where this belongs, so there's nothing to detect or
+            // build. Checked before pattern-detection below: a file with a
+            // detectable Day pattern AND an explicit, already-existing
+            // Phase number should attribute back into that real Phase, not
+            // spin up a redundant new one that the file's own Phase column
+            // wouldn't even match (ImportEngine only ever attributes a row
+            // to the Phase its own Phase column names).
+            let statedPhaseNumbers = Set(rows.compactMap(\.phaseNumber))
+            if let existingPhase = phases.first(where: { statedPhaseNumbers.contains($0.number) }) {
+                pendingImportRows = rows
+                pendingImportSkipped = skipped
+                finishImportIntoPhase(existingPhase)
+                return
+            }
+
             // If the file's Day column reveals a repeating training pattern,
             // draft a Phase from the most recently completed cycle and let
             // the user review/edit it before anything actually gets

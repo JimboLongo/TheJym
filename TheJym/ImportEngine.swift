@@ -306,10 +306,10 @@ enum ImportEngine {
             let equipmentStr = equipmentIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let cycleStr = cycleIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let notesStr = notesIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
-            let phaseNumber = phaseStr.flatMap { Int($0) }
+            let phaseNumber = phaseStr.flatMap { parseFlexibleInt($0) }
             let matchedDayLabel = (dayStr?.isEmpty == false) ? dayStr : nil
             let matchedEquipment = (equipmentStr?.isEmpty == false) ? equipmentStr : nil
-            let explicitCycleNumber = cycleStr.flatMap { Int($0) }
+            let explicitCycleNumber = cycleStr.flatMap { parseFlexibleInt($0) }
             let matchedNotes = (notesStr?.isEmpty == false) ? notesStr : nil
 
             // Exercise == "Weight" (case-insensitive) marks a body weight
@@ -955,17 +955,22 @@ enum ImportEngine {
         // UTC-midnight Date falls in the LOCAL calendar on the day before,
         // shifting every serial-dated row back a day — re-anchor to the
         // same Y/M/D as a local-midnight Date so it survives that grouping.
-        if let serial = serialInt(from: s), let utcDate = excelSerialDate(serial) {
+        if let serial = parseFlexibleInt(s), let utcDate = excelSerialDate(serial) {
             let comps = utcCalendar.dateComponents([.year, .month, .day], from: utcDate)
             return Calendar.current.date(from: comps)
         }
         return nil
     }
 
-    /// Parses a spreadsheet numeric cell value as a whole-number serial,
-    /// accepting both a bare integer ("45700") and the float form some
-    /// exporters use ("45700.0").
-    private static func serialInt(from s: String) -> Int? {
+    /// Parses a spreadsheet numeric cell's raw value as a whole number,
+    /// accepting both a bare integer ("1") and the float form Excel's own
+    /// XML actually stores an integer-valued numeric cell as ("1.0") — an
+    /// .xlsx Phase/Cycle/date-serial column typed as a number, not text,
+    /// round-trips through here as "N.0" even though nothing about the
+    /// original value was ever fractional; `Int("1.0")` alone returns nil
+    /// and would silently drop it. Used for date serials (see
+    /// excelSerialDate below) and for the Phase/Cycle columns.
+    private static func parseFlexibleInt(_ s: String) -> Int? {
         if let i = Int(s) { return i }
         if let d = Double(s) { return Int(d.rounded()) }
         return nil

@@ -176,6 +176,24 @@ final class ImportPhaseAttributionTests: XCTestCase {
         XCTAssertEqual(rows.first?.dayLabel, "Rest", "\"Rest Day\" in the Day column should normalize to \"Rest\"")
     }
 
+    /// Excel's own XML round-trips an integer-valued NUMERIC cell (as
+    /// opposed to a text-typed one) as "N.0", not the bare "N" a person
+    /// typed — confirmed against a real exported .xlsx's raw sheet XML
+    /// (<c r="B1008" s="10"><v>1.0</v></c> for a Phase column read as
+    /// plain numbers). `Int("1.0")` alone returns nil, so Phase/Cycle
+    /// silently failed to parse for any file where those columns happened
+    /// to be numeric-typed rather than text-typed — every row fell back to
+    /// unattributed even though the file's own Phase/Cycle values were
+    /// exactly right.
+    @MainActor
+    func testPhaseAndCycleColumnsParseTheDotZeroFormExcelStoresIntegersAs() {
+        let csv = "Date,Phase,Cycle,Day,Exercise,Sets,Weights,Reps\n2026-01-01,1.0,3.0,Train A,Back Squat,5,135,5"
+        let (rows, skipped) = ImportEngine.parseRows(csv: csv)
+        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(rows.first?.phaseNumber, 1)
+        XCTAssertEqual(rows.first?.cycleNumber, 3)
+    }
+
     /// End-to-end reproduction of the actual bug: a file that spells every
     /// rest day "Rest Day" (as backfillRestDays and RestDayLogView both do)
     /// used to leave every one of those sessions unmatched to the Phase's
