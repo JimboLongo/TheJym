@@ -253,14 +253,29 @@ struct SettingsView: View {
     }
 
     /// Wipes every user-generated data type — history (sessions cascade to
-    /// their logs/sets), the exercise library, equipment, Phases (cascade to
-    /// their days/planned exercises), body weight, and rest-day activity —
+    /// their logs/sets), Phases (cascade to their days/planned exercises),
+    /// the exercise library, equipment, body weight, and rest-day activity —
     /// but leaves AppSettings (this screen's own toggles/preferences) alone.
+    ///
+    /// Deletes in stages with a save after each, rather than one massive
+    /// delete-everything-then-save-once transaction — this app's history
+    /// can span thousands of sessions/logs/sets plus Phases, PhaseDays, and
+    /// ExerciseDefs all cross-referencing each other (nullify + cascade
+    /// rules on both sides), and asking SwiftData to resolve that entire
+    /// relationship graph in one save is exactly the kind of bulk operation
+    /// that's crashed it before (see ImportEngine.checkpointInterval for
+    /// the same defensive pattern on the import side). Sessions go first —
+    /// by the time Phases are deleted, no session still references a
+    /// PhaseDay/Phase for SwiftData to have to nullify mid-cascade.
     private func deleteAllData() {
         for session in sessions { context.delete(session) }
-        for def in exerciseDefs { context.delete(def) }
-        for bar in bars { context.delete(bar) }
+        try? context.save()
         for phase in phases { context.delete(phase) }
+        try? context.save()
+        for def in exerciseDefs { context.delete(def) }
+        try? context.save()
+        for bar in bars { context.delete(bar) }
+        try? context.save()
         for entry in bodyWeights { context.delete(entry) }
         for activity in restActivities { context.delete(activity) }
         for recovery in activeRecoveries { context.delete(recovery) }
