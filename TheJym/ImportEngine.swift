@@ -75,13 +75,15 @@
 //  failed).
 //
 //  An optional Cycle column says which pass of the phase's template this
-//  row belongs to (e.g. 3 for the third time through). Leave it blank to
-//  let the importer work it out on its own by walking the file in date
-//  order and counting completed passes — the normal case. Given
-//  explicitly, it wins outright for that row, which is the reliable way to
-//  correct a split with more than one same-named day a cycle (most often
-//  two separate Rest days), since the importer alone can't always tell
-//  which occurrence a given row belongs to just from its date.
+//  row belongs to (e.g. 3 for the third time through) — nothing about it is
+//  ever auto-detected or counted by walking the file's pattern. Leave it
+//  blank and the row still attributes to its Phase/Day (as long as that
+//  Day name isn't ambiguous — see below), but its cycle number stays
+//  untagged (0, invisible to cycle tracking) until corrected, e.g. by
+//  editing Cycle # for that day in History. Stating it explicitly is the
+//  only way to fill a slot on a split with more than one same-named day a
+//  cycle (most often two separate Rest days), since there's no other way to
+//  tell which occurrence a given row belongs to.
 //
 //  If the file's Day column shows a repeating pattern (e.g. Push A / Pull A
 //  / Legs A / Rest, over and over), the importer detects the most recently
@@ -524,49 +526,33 @@ enum ImportEngine {
         var gapFillRequests: [GroupKey] = []
 
         // Precomputes which exact PhaseDay each request (real or gap-fill)
-        // above resolves to, for every (date, phase, label) this import
-        // will ask matchPhaseDay about below — a plain by-name match always
-        // picks the same candidate (Swift's `first`) when a phase has more
-        // than one PhaseDay sharing a name, which is common: PhaseBuilderView
-        // lets you add as many "Rest" days as the split needs, and
-        // detectLastCyclePattern's own "Rest is exempt from the repeat
-        // check" (see its doc) deliberately keeps every distinct Rest
-        // occurrence as its own day when auto-drafting a Phase from a
-        // detected pattern — so a split with two rest days a cycle produces
-        // exactly two separate "Rest" PhaseDays. Without this, the SECOND
-        // same-named PhaseDay's slot could never be filled by import (every
-        // "Rest" row keeps re-resolving to the first one), so that slot —
-        // and the cycle it belongs to — could never complete.
+        // resolves to, and its cycle number, for every (date, phase, label)
+        // this import will ask about below. Neither is ever guessed: a real
+        // row's cycle number is whatever its own explicit "Cycle" column
+        // says — nothing is auto-detected/counted from walking the split's
+        // pattern — and a row with no Cycle column stays untagged
+        // (cycleNumber 0, invisible to Phase.cycleWalk, same as any other
+        // unattributed data). A gap-fill (a calendar day with no row of its
+        // own) can't state a cycle either way, so it inherits whichever
+        // cycle number was most recently explicitly stated for that phase,
+        // carried forward chronologically — "the day is missing, so tag it
+        // Rest for the most recent cycle."
         //
-        // The same walk also computes resolvedCycleNumber — which pass of
-        // the phase's template each request belongs to, auto-counted the
-        // same way WorkoutLogView tags a live session's cycleNumber
-        // (whatever cycle was in progress the moment it's processed) — used
-        // as the fallback wherever a row doesn't carry an explicit "Cycle"
-        // column value of its own.
-        //
-        // Walked once, chronologically, across exercise-date-groups, rest
-        // rows, and gap-fill requests all combined (they're normally
-        // handled in separate passes below, so relying on insertion order
-        // wouldn't reflect true date order) — same slot-filling algorithm
-        // as Phase.cycleWalk: whichever same-named (or, for a gap-fill,
-        // whichever Rest) candidate isn't yet filled in the cycle currently
-        // in progress, in template order, resetting once a full pass fills
-        // every slot.
-        //
-        // fillState is seeded empty per phase, so it's exactly right for a
-        // brand-new phase getting its whole history attributed in one
-        // import (the "detect pattern -> build Phase -> attribute" flow
-        // this exists for). It doesn't account for a phase's own
-        // pre-existing session history when instead re-importing more rows
-        // into an already-in-progress existing phase by Phase number — a
-        // follow-up import like that could misresolve which same-named
-        // slot (or cycle number) is next until enough new rows re-establish
-        // the real pattern — an explicit Cycle column sidesteps that.
+        // Day resolution still needs *some* disambiguation when a phase has
+        // more than one PhaseDay sharing a name (common: PhaseBuilderView
+        // lets you add as many "Rest" days as the split needs) — a plain
+        // by-name match always picks the same candidate (Swift's `first`),
+        // so the SECOND same-named PhaseDay's slot could never be reached.
+        // Resolved per (phase, cycle number) only — whichever same-named
+        // candidate isn't yet used within that exact cycle — never by
+        // walking the whole file's pattern; with no cycle number to key by
+        // (no explicit Cycle, or a gap-fill inheriting none), or only one
+        // candidate to begin with, it's just `first`.
         var resolvedAmbiguousDay: [GroupKey: PhaseDay] = [:]
         var resolvedCycleNumber: [GroupKey: Int] = [:]
         do {
             var requests: [GroupKey] = []
+            var explicitCycleByRequest: [GroupKey: Int] = [:]
             var seenKeys = Set<GroupKey>()
             for row in exerciseRows + restRows {
                 guard let label = row.dayLabel else { continue }
@@ -574,6 +560,7 @@ enum ImportEngine {
                 guard !seenKeys.contains(key) else { continue }
                 seenKeys.insert(key)
                 requests.append(key)
+                if let cycle = row.cycleNumber, cycle > 0 { explicitCycleByRequest[key] = cycle }
             }
 
             // Bounded to [phase's earliest EXERCISE date, latest attributed
@@ -630,8 +617,13 @@ enum ImportEngine {
             requests.append(contentsOf: gapFillRequests)
             requests.sort { $0.day < $1.day }
 
-            var fillState: [PersistentIdentifier: Set<PersistentIdentifier>] = [:]
-            var completedCyclesSoFar: [PersistentIdentifier: Int] = [:]
+            // Which same-named PhaseDay a cycle has already used, and the
+            // most recent explicit cycle number seen — both per phase, both
+            // updated only by a cycle number that's actually known (never
+            // 0), so an untagged row/gap-fill can still inherit whatever
+            // was most recently stated without itself resetting that state.
+            var usedByCycle: [PersistentIdentifier: [Int: Set<PersistentIdentifier>]] = [:]
+            var lastKnownCycle: [PersistentIdentifier: Int] = [:]
             for request in requests {
                 guard let phase = resolvePhase(phaseNumber: request.phaseNumber) else { continue }
                 let candidates: [PhaseDay]
@@ -642,20 +634,24 @@ enum ImportEngine {
                     candidates = phase.orderedDays.filter { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
                 }
                 guard let firstCandidate = candidates.first else { continue }
-                let filled = fillState[phase.persistentModelID] ?? []
-                let chosen = candidates.count > 1
-                    ? (candidates.first { !filled.contains($0.persistentModelID) } ?? firstCandidate)
-                    : firstCandidate
-                resolvedAmbiguousDay[request] = chosen
-                resolvedCycleNumber[request] = (completedCyclesSoFar[phase.persistentModelID] ?? 0) + 1
 
-                var updatedFilled = filled
-                updatedFilled.insert(chosen.persistentModelID)
-                if updatedFilled.count >= phase.orderedDays.count {
-                    updatedFilled = []
-                    completedCyclesSoFar[phase.persistentModelID] = (completedCyclesSoFar[phase.persistentModelID] ?? 0) + 1
+                let cycle = request.isGapFill
+                    ? (lastKnownCycle[phase.persistentModelID] ?? 0)
+                    : (explicitCycleByRequest[request] ?? 0)
+                resolvedCycleNumber[request] = cycle
+                if cycle > 0 { lastKnownCycle[phase.persistentModelID] = cycle }
+
+                let chosen: PhaseDay
+                if candidates.count > 1, cycle > 0 {
+                    let used = usedByCycle[phase.persistentModelID]?[cycle] ?? []
+                    chosen = candidates.first { !used.contains($0.persistentModelID) } ?? firstCandidate
+                } else {
+                    chosen = firstCandidate
                 }
-                fillState[phase.persistentModelID] = updatedFilled
+                resolvedAmbiguousDay[request] = chosen
+                if cycle > 0 {
+                    usedByCycle[phase.persistentModelID, default: [:]][cycle, default: []].insert(chosen.persistentModelID)
+                }
             }
         }
 
@@ -676,12 +672,11 @@ enum ImportEngine {
             return (phase, lookupDay())
         }
 
-        /// Resolves the cycle number to stamp on a session for this row —
-        /// an explicit "Cycle" column value on the row wins outright;
-        /// otherwise falls back to whatever the chronological walk above
-        /// already worked out for this exact (date, phase, label) request.
-        func resolvedCycle(date: Date, phaseNumber: Int?, dayLabel: String?, explicit: Int?) -> Int {
-            if let explicit, explicit > 0 { return explicit }
+        /// The cycle number to stamp on a session for this row — whatever
+        /// the precompute above already resolved for this exact (date,
+        /// phase, label) request: the row's own explicit "Cycle" column
+        /// value, or 0 if it never had one (never guessed at).
+        func resolvedCycle(date: Date, phaseNumber: Int?, dayLabel: String?) -> Int {
             guard let dayLabel else { return 0 }
             let key = GroupKey(day: cal.startOfDay(for: date), phaseNumber: phaseNumber, dayLabel: dayLabel)
             return resolvedCycleNumber[key] ?? 0
@@ -717,8 +712,7 @@ enum ImportEngine {
                 await Task.yield()
             }
             let (matchedPhase, matchedDay) = matchPhaseDay(date: key.day, phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
-            let cycle = resolvedCycle(date: key.day, phaseNumber: key.phaseNumber, dayLabel: key.dayLabel,
-                                      explicit: dayRows.first?.cycleNumber)
+            let cycle = resolvedCycle(date: key.day, phaseNumber: key.phaseNumber, dayLabel: key.dayLabel)
             // An imported workout overrides a gap-filled "nothing happened"
             // Rest Day placeholder for this same date.
             WorkoutSession.removeBackfilledRestPlaceholder(on: key.day, context: context)
@@ -826,8 +820,7 @@ enum ImportEngine {
                                            distance: distance, distanceUnit: unit))
 
             let (matchedRestPhase, matchedDay) = matchPhaseDay(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
-            let cycle = resolvedCycle(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel,
-                                      explicit: entry.cycleNumber)
+            let cycle = resolvedCycle(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
             let displayName = distance.map { "\(entry.exerciseName) (\(Formatters.trim($0)) \(unit))" } ?? entry.exerciseName
             // A logged rest-day activity overrides a gap-filled no-activity
             // Rest Day placeholder for this same date.

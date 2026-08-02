@@ -196,20 +196,20 @@ final class ImportPhaseAttributionTests: XCTestCase {
         try? context.save()
 
         let csv = """
-        Date,Phase,Day,Exercise,Sets,Weights,Reps
-        2026-01-01,1,Upper A,Back Squat,5,135,5
-        2026-01-02,1,Rest Day,Walk,,,3.1mi
-        2026-01-03,1,Upper A,Back Squat,5,135,5
-        2026-01-04,1,Rest Day,Walk,,,3.1mi
-        2026-01-05,1,Upper A,Back Squat,5,135,5
-        2026-01-06,1,Rest Day,Walk,,,3.1mi
+        Date,Phase,Cycle,Day,Exercise,Sets,Weights,Reps
+        2026-01-01,1,1,Upper A,Back Squat,5,135,5
+        2026-01-02,1,1,Rest Day,Walk,,,3.1mi
+        2026-01-03,1,2,Upper A,Back Squat,5,135,5
+        2026-01-04,1,2,Rest Day,Walk,,,3.1mi
+        2026-01-05,1,3,Upper A,Back Squat,5,135,5
+        2026-01-06,1,3,Rest Day,Walk,,,3.1mi
         """
         let (rows, skipped) = ImportEngine.parseRows(csv: csv)
         XCTAssertEqual(skipped, 0)
 
         _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
 
-        XCTAssertEqual(phase.currentCycle, 4, "Three complete Upper A/Rest passes should leave cycle 4 in progress")
+        XCTAssertEqual(phase.currentCycle, 4, "Three complete, explicitly-numbered Upper A/Rest passes should leave cycle 4 in progress")
     }
 
     /// A row tagged with any Dumbbell/Band spelling shouldn't create a
@@ -260,9 +260,11 @@ final class ImportPhaseAttributionTests: XCTestCase {
     /// SAME PhaseDay — the second one could never be reached. Reproduces
     /// the actual dates/pattern from a real user import (including several
     /// days with no session of any kind — this split doesn't train or log
-    /// Rest literally every calendar day) to confirm same-named-slot
-    /// disambiguation plus gap-filling together correctly reconstruct 4
-    /// clean completed cycles, landing on cycle 5.
+    /// Rest literally every calendar day), each real row explicitly
+    /// numbered with its own cycle (nothing auto-detected), to confirm
+    /// same-named-slot disambiguation — scoped per explicit cycle number —
+    /// plus gap-filling (inheriting the most recently stated cycle) together
+    /// correctly reconstruct 4 clean completed cycles, landing on cycle 5.
     @MainActor
     func testTwoIdenticallyNamedRestSlotsBothFillAcrossMultipleCycles() async {
         let context = makeContext()
@@ -277,39 +279,41 @@ final class ImportPhaseAttributionTests: XCTestCase {
         try? context.save()
         XCTAssertEqual(phase.orderedDays.filter { $0.name == "Rest" }.count, 2)
 
-        func exerciseRow(_ dateStr: String, _ label: String) -> ImportEngine.ImportedEntry {
+        func exerciseRow(_ dateStr: String, _ label: String, cycle: Int) -> ImportEngine.ImportedEntry {
             ImportEngine.ImportedEntry(
                 date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
                 exerciseName: "Some Exercise",
                 kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [100], reps: [5]),
-                phaseNumber: 1, dayLabel: label, equipmentName: nil)
+                phaseNumber: 1, dayLabel: label, equipmentName: nil, cycleNumber: cycle)
         }
-        func restRow(_ dateStr: String) -> ImportEngine.ImportedEntry {
+        func restRow(_ dateStr: String, cycle: Int) -> ImportEngine.ImportedEntry {
             ImportEngine.ImportedEntry(
                 date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
                 exerciseName: "Walk", kind: .restActivity(distance: nil, distanceUnit: "mi"),
-                phaseNumber: 1, dayLabel: "Rest", equipmentName: nil)
+                phaseNumber: 1, dayLabel: "Rest", equipmentName: nil, cycleNumber: cycle)
         }
 
         // Matches WorkoutImport16.xlsx exactly: 3 clean passes, then a
-        // fourth that skips 7/26 entirely before resuming.
+        // fourth that skips 7/26 entirely before resuming — each pass
+        // explicitly numbered 1-4.
         let rows = [
-            exerciseRow("2026-07-06", "Lower Day 1"), exerciseRow("2026-07-08", "Upper Day 1"),
-            restRow("2026-07-09"),
-            exerciseRow("2026-07-12", "Lower Day 2"), exerciseRow("2026-07-13", "Upper Day 2"),
-            restRow("2026-07-14"),
-            exerciseRow("2026-07-15", "Lower Day 1"), exerciseRow("2026-07-16", "Upper Day 1"),
-            restRow("2026-07-17"),
-            exerciseRow("2026-07-18", "Lower Day 2"), exerciseRow("2026-07-19", "Upper Day 2"),
-            restRow("2026-07-20"),
-            exerciseRow("2026-07-21", "Lower Day 1"), exerciseRow("2026-07-22", "Upper Day 1"),
-            restRow("2026-07-23"),
-            exerciseRow("2026-07-24", "Lower Day 2"), exerciseRow("2026-07-25", "Upper Day 2"),
-            // 7/26 skipped entirely
-            exerciseRow("2026-07-27", "Lower Day 1"), exerciseRow("2026-07-28", "Upper Day 1"),
-            restRow("2026-07-29"),
-            exerciseRow("2026-07-30", "Lower Day 2"), exerciseRow("2026-07-31", "Upper Day 2"),
-            restRow("2026-08-01"),
+            exerciseRow("2026-07-06", "Lower Day 1", cycle: 1), exerciseRow("2026-07-08", "Upper Day 1", cycle: 1),
+            restRow("2026-07-09", cycle: 1),
+            exerciseRow("2026-07-12", "Lower Day 2", cycle: 1), exerciseRow("2026-07-13", "Upper Day 2", cycle: 1),
+            restRow("2026-07-14", cycle: 1),
+            exerciseRow("2026-07-15", "Lower Day 1", cycle: 2), exerciseRow("2026-07-16", "Upper Day 1", cycle: 2),
+            restRow("2026-07-17", cycle: 2),
+            exerciseRow("2026-07-18", "Lower Day 2", cycle: 2), exerciseRow("2026-07-19", "Upper Day 2", cycle: 2),
+            restRow("2026-07-20", cycle: 2),
+            exerciseRow("2026-07-21", "Lower Day 1", cycle: 3), exerciseRow("2026-07-22", "Upper Day 1", cycle: 3),
+            restRow("2026-07-23", cycle: 3),
+            exerciseRow("2026-07-24", "Lower Day 2", cycle: 3), exerciseRow("2026-07-25", "Upper Day 2", cycle: 3),
+            // 7/26 skipped entirely — should inherit cycle 3, the most
+            // recently stated one, filling cycle 3's second Rest slot.
+            exerciseRow("2026-07-27", "Lower Day 1", cycle: 4), exerciseRow("2026-07-28", "Upper Day 1", cycle: 4),
+            restRow("2026-07-29", cycle: 4),
+            exerciseRow("2026-07-30", "Lower Day 2", cycle: 4), exerciseRow("2026-07-31", "Upper Day 2", cycle: 4),
+            restRow("2026-08-01", cycle: 4),
         ]
 
         let cal = Calendar.current
@@ -320,7 +324,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
         XCTAssertGreaterThan(phase.currentCycle, 1,
             "Both Rest slots should be reachable, so at least one cycle should complete instead of staying stuck at 1")
         XCTAssertEqual(phase.currentCycle, 5,
-            "Gap-filling the days with no data of their own (7/7, 7/10, 7/11, 7/26 — this split doesn't log every calendar day) as Rest, on top of both Rest slots now being reachable, reconstructs 4 clean completed cycles")
+            "4 explicitly-numbered, fully covered cycles (7/26's gap-fill inherits cycle 3, filling its second Rest slot) should leave cycle 5 next")
 
         let allSessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
         XCTAssertGreaterThan(allSessions.count, sessionsBefore + rows.count,
@@ -330,6 +334,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
         XCTAssertNotNil(gapSession, "The skipped 7/26 should have gotten a gap-filled Rest session")
         XCTAssertEqual(gapSession?.day?.name, "Rest")
         XCTAssertEqual(gapSession?.phase?.number, 1)
+        XCTAssertEqual(gapSession?.cycleNumber, 3, "A gap-fill inherits the most recently stated cycle, not a computed one")
         XCTAssertTrue(gapSession?.exerciseLogs.isEmpty ?? false, "A gap-fill is a plain Rest day, same as Log Rest Day — no activity attached")
     }
 
@@ -352,22 +357,23 @@ final class ImportPhaseAttributionTests: XCTestCase {
 
         let day1 = ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z")!
         let day3 = ISO8601DateFormatter().date(from: "2026-01-03T00:00:00Z")!
-        // day2 (2026-01-02) is a genuine gap — nothing logged at all.
+        // day2 (2026-01-02) is a genuine gap — nothing logged at all. day1
+        // explicitly states cycle 1, day3 explicitly starts cycle 2.
         let rows = [
             ImportEngine.ImportedEntry(
                 date: day1, exerciseName: "Back Squat",
                 kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
-                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil),
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil, cycleNumber: 1),
             ImportEngine.ImportedEntry(
                 date: day3, exerciseName: "Back Squat",
                 kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
-                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil),
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil, cycleNumber: 2),
         ]
 
         _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
 
-        // day1 fills Train A, the day2 gap fills Rest -> cycle 1 completes;
-        // day3's Train A starts cycle 2 fresh.
+        // day1 fills Train A for cycle 1, the day2 gap inherits cycle 1 and
+        // fills Rest -> cycle 1 completes; day3 explicitly starts cycle 2.
         XCTAssertEqual(phase.currentCycle, 2)
         XCTAssertTrue(phase.isSlotFilled(for: trainA), "Cycle 2's Train A slot should be filled by the 2026-01-03 row")
         XCTAssertFalse(phase.isSlotFilled(for: restDay), "Cycle 2's Rest slot shouldn't be filled yet")
@@ -378,6 +384,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
         let gapSession = sessions.first { cal.isDate($0.date, inSameDayAs: gapDay) }
         XCTAssertNotNil(gapSession)
         XCTAssertEqual(gapSession?.day?.persistentModelID, restDay.persistentModelID)
+        XCTAssertEqual(gapSession?.cycleNumber, 1, "The gap should inherit the most recently stated cycle (1), not a computed one")
 
         let recoveries = (try? context.fetch(FetchDescriptor<ActiveRecovery>())) ?? []
         XCTAssertTrue(recoveries.contains { cal.isDate($0.date, inSameDayAs: gapDay) },
@@ -442,12 +449,15 @@ final class ImportPhaseAttributionTests: XCTestCase {
         }
     }
 
-    /// Every real session created during import (not just gap-fills) gets
-    /// an auto-computed cycleNumber matching its actual pass through the
-    /// template — the source History's "Phase X, Cycle Y" header and
-    /// PhasesView's per-cycle exercise history read.
+    /// Nothing about a row's cycle number is auto-detected/counted by
+    /// walking the split's pattern — it's whatever the row's own explicit
+    /// "Cycle" column says, full stop. A gap-filled day (no row of its own)
+    /// can't state one, so it inherits whichever cycle number was most
+    /// recently explicitly stated for that phase, carried forward
+    /// chronologically ("if a day is missing, tag it Rest for the most
+    /// recent cycle").
     @MainActor
-    func testAutoAssignedCycleNumberMatchesChronologicalProgress() async {
+    func testCycleNumberComesOnlyFromExplicitColumnAndGapFillInheritsTheMostRecentOne() async {
         let context = makeContext()
         let phase = Phase(number: 1, totalCycles: 8)
         context.insert(phase)
@@ -459,22 +469,18 @@ final class ImportPhaseAttributionTests: XCTestCase {
         context.insert(restDay)
         try? context.save()
 
-        func exerciseRow(_ dateStr: String) -> ImportEngine.ImportedEntry {
+        func exerciseRow(_ dateStr: String, cycle: Int) -> ImportEngine.ImportedEntry {
             ImportEngine.ImportedEntry(
                 date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
                 exerciseName: "Back Squat",
                 kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
-                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil)
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil, cycleNumber: cycle)
         }
-        func restRow(_ dateStr: String) -> ImportEngine.ImportedEntry {
-            ImportEngine.ImportedEntry(
-                date: ISO8601DateFormatter().date(from: "\(dateStr)T00:00:00Z")!,
-                exerciseName: "Walk", kind: .restActivity(distance: nil, distanceUnit: "mi"),
-                phaseNumber: 1, dayLabel: "Rest", equipmentName: nil)
-        }
+        // 2026-01-02 is a genuine gap between two explicitly cycle-1 rows —
+        // should inherit cycle 1. 2026-01-03 explicitly starts cycle 2.
         let rows = [
-            exerciseRow("2026-01-01"), restRow("2026-01-02"),
-            exerciseRow("2026-01-03"), restRow("2026-01-04"),
+            exerciseRow("2026-01-01", cycle: 1),
+            exerciseRow("2026-01-03", cycle: 2),
         ]
         _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
 
@@ -485,16 +491,48 @@ final class ImportPhaseAttributionTests: XCTestCase {
             return sessions.first { cal.isDate($0.date, inSameDayAs: d) }
         }
         XCTAssertEqual(session(on: "2026-01-01")?.cycleNumber, 1)
-        XCTAssertEqual(session(on: "2026-01-02")?.cycleNumber, 1)
+        XCTAssertEqual(session(on: "2026-01-02")?.cycleNumber, 1, "The gap should inherit the most recently stated cycle (1), never computed")
+        XCTAssertEqual(session(on: "2026-01-02")?.day?.persistentModelID, restDay.persistentModelID)
         XCTAssertEqual(session(on: "2026-01-03")?.cycleNumber, 2)
-        XCTAssertEqual(session(on: "2026-01-04")?.cycleNumber, 2)
-        XCTAssertEqual(phase.currentCycle, 3)
+        XCTAssertEqual(phase.currentCycle, 2, "Cycle 1 complete (Train A + gap-filled Rest), cycle 2 explicitly in progress")
     }
 
-    /// An explicit "Cycle" column value on a row parses correctly and
-    /// overrides the auto-computed cycle number for that row's session.
+    /// A row with an explicit Phase/Day match but NO explicit Cycle column
+    /// still attributes to the phase and day (unambiguous — only one
+    /// "Train A" candidate), but its cycleNumber stays 0 — never guessed —
+    /// so it stays invisible to Phase.cycleWalk until corrected (e.g. via
+    /// History's Cycle # edit).
     @MainActor
-    func testExplicitCycleColumnOverridesAutoComputedValue() async {
+    func testRowWithPhaseAndDayButNoCycleStaysUntagged() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainA = PhaseDay(order: 0, name: "Train A", isRest: false)
+        trainA.phase = phase
+        context.insert(trainA)
+        try? context.save()
+
+        let row = ImportEngine.ImportedEntry(
+            date: Date(), exerciseName: "Back Squat",
+            kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+            phaseNumber: 1, dayLabel: "Train A", equipmentName: nil)
+
+        _ = await ImportEngine.importIntoStore([row], context: context, attributeTo: phase)
+
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        XCTAssertEqual(sessions.first?.phase?.number, 1)
+        XCTAssertEqual(sessions.first?.day?.persistentModelID, trainA.persistentModelID)
+        XCTAssertEqual(sessions.first?.cycleNumber, 0, "No Cycle column, so nothing is guessed at")
+        XCTAssertEqual(phase.currentCycle, 1, "cycleNumber 0 is invisible to cycleWalk, so nothing progresses")
+    }
+
+    /// An explicit "Cycle" column value on a row parses correctly and is
+    /// what gets stamped on that row's session — there's no auto-computed
+    /// fallback to override anymore (see
+    /// testRowWithPhaseAndDayButNoCycleStaysUntagged): without this column,
+    /// the session would stay at cycleNumber 0.
+    @MainActor
+    func testExplicitCycleColumnIsStampedOnTheSession() async {
         let context = makeContext()
         let phase = Phase(number: 1, totalCycles: 8)
         context.insert(phase)
@@ -510,7 +548,6 @@ final class ImportPhaseAttributionTests: XCTestCase {
 
         _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
         let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
-        XCTAssertEqual(sessions.first?.cycleNumber, 7,
-            "Explicit Cycle column should win over the auto-computed value (which would otherwise be 1)")
+        XCTAssertEqual(sessions.first?.cycleNumber, 7, "The explicit Cycle column value should be stamped on the session")
     }
 }

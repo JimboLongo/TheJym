@@ -220,7 +220,11 @@ struct HistoryView: View {
                 }
                 Spacer()
                 if let n = session.phase?.number {
-                    Text("Phase \(n), Cycle \(session.cycleNumber)").font(.caption2).foregroundStyle(.secondary)
+                    // cycleNumber 0 means an import row never stated a
+                    // Cycle column for this day — nothing to show until
+                    // it's corrected (e.g. via the Cycle # field below).
+                    Text(session.cycleNumber > 0 ? "Phase \(n), Cycle \(session.cycleNumber)" : "Phase \(n)")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             }
 
