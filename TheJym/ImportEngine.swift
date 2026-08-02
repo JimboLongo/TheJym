@@ -34,11 +34,13 @@
 //
 //  An optional Equipment column tags the exercise: write "Bodyweight" to
 //  flag it bodyweight (same effect as the Exercises-tab toggle — this is
-//  what makes Weights mean added weight per above), or any other name to tag
-//  it with that equipment, e.g. "Trap Bar" or "Cable Machine". A name that
-//  doesn't already exist in the Equipment tab still imports fine — it
-//  creates a new placeholder there (weight TBD, 2-sided) instead of being
-//  dropped, so just fill in its real weight afterward.
+//  what makes Weights mean added weight per above); "Dumbbell"/"Dumbbells"
+//  or "Band"/"Bands" route to the Equipment tab's own Dumbbell/Bands weight
+//  tables instead of creating a bar; or any other name to tag it with that
+//  equipment, e.g. "Trap Bar" or "Cable Machine". A name that doesn't
+//  already exist in the Equipment tab still imports fine — it creates a new
+//  placeholder there (weight TBD, 2-sided) instead of being dropped, so just
+//  fill in its real weight afterward.
 //
 //  An optional Notes column is imported as plain text onto that exercise's
 //  own Notes field (Exercises tab) — only applies to real exercise rows,
@@ -309,9 +311,19 @@ enum ImportEngine {
             // "3.1mi"), Sets/Weights are unused. Requires a Day column.
             if let dayStr, isRestLabel(dayStr) {
                 let (distance, unit) = parseDistance(repsStr)
+                // Normalized to the canonical "Rest" regardless of which
+                // isRestLabel spelling the file used — a built/matched
+                // Phase's Rest day is always named exactly "Rest"
+                // (PhaseBuilderView, HistoryView.dayDrafts), so matchPhaseDay's
+                // exact-name comparison needs this row's label to match that,
+                // not whatever variant ("Rest Day", etc.) the file wrote.
+                // Otherwise the row still imports and still shows as a rest
+                // activity, but never fills the Phase's Rest slot — silently
+                // stalling its cycle count at "Cycle 1" no matter how much
+                // history comes in.
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),
-                                         phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
+                                         phaseNumber: phaseNumber, dayLabel: "Rest",
                                          equipmentName: nil))
                 continue
             }
@@ -382,11 +394,18 @@ enum ImportEngine {
         var bodyWeights = ((try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? [])
             .sorted { $0.date < $1.date }
 
-        /// "Bodyweight" flags the exercise bodyweight; any other non-blank
-        /// value names equipment to tag it with — an unrecognized name
-        /// creates a new placeholder Bar (weight 0/"TBD", 2-sided) rather
-        /// than being dropped, so the row still imports and the equipment
-        /// just needs its real weight filled in later.
+        /// "Bodyweight" flags the exercise bodyweight; "Dumbbell"/"Dumbbells"
+        /// ("Dumbell"/"Dumbells" too — common misspelling) or "Band"/"Bands"
+        /// route to the Equipment tab's special Dumbbell/Bands weight tables
+        /// (isDumbbell Bar rows named exactly "Dumbbells"/"Bands", the same
+        /// ones EquipmentView.ensureDumbbellBar/ensureBandsBar create) rather
+        /// than a plain weight+sides Bar — those two tables are keyed by
+        /// name, not a physical bar, so a generic Bar entry there would be
+        /// meaningless and would clutter the Bars section. Any other
+        /// non-blank value names equipment to tag it with — an unrecognized
+        /// name creates a new placeholder Bar (weight 0/"TBD", 2-sided)
+        /// rather than being dropped, so the row still imports and the
+        /// equipment just needs its real weight filled in later.
         func applyEquipment(_ equipmentName: String?, to exerciseName: String) {
             guard let equipmentName, !equipmentName.isEmpty else { return }
             let def = knownDefs[exerciseName] ?? {
@@ -395,11 +414,27 @@ enum ImportEngine {
                 knownDefs[exerciseName] = newDef
                 return newDef
             }()
-            if equipmentName.lowercased() == "bodyweight" {
+            let key = equipmentName.lowercased()
+            if key == "bodyweight" {
                 def.isBodyweight = true
                 return
             }
-            let key = equipmentName.lowercased()
+            func specialWeightTable(named canonicalName: String) -> Bar {
+                let tableKey = canonicalName.lowercased()
+                if let bar = knownBars[tableKey] { return bar }
+                let bar = Bar(name: canonicalName, weight: 0, isDumbbell: true)
+                context.insert(bar)
+                knownBars[tableKey] = bar
+                return bar
+            }
+            if ["dumbbell", "dumbbells", "dumbell", "dumbells"].contains(key) {
+                def.equipment = specialWeightTable(named: "Dumbbells")
+                return
+            }
+            if ["band", "bands"].contains(key) {
+                def.equipment = specialWeightTable(named: "Bands")
+                return
+            }
             if let bar = knownBars[key] {
                 def.equipment = bar
             } else {

@@ -127,4 +127,95 @@ final class ImportPhaseAttributionTests: XCTestCase {
         XCTAssertNil(earlySession?.phase, "A rest row before the earliest attributed exercise date shouldn't be attributed")
         XCTAssertEqual(lateSession?.phase?.number, 1, "A rest row on/after the earliest attributed exercise date should be attributed")
     }
+
+    /// The app's own backfilled rest sessions are labeled "Rest Day"
+    /// (WorkoutSession.backfillRestDays), so a user hand-filling history
+    /// naturally types that instead of the bare "Rest" a built Phase's Rest
+    /// PhaseDay is always actually named. parseRows must normalize either
+    /// spelling to the canonical "Rest" so matchPhaseDay's exact-name
+    /// comparison still finds it.
+    @MainActor
+    func testParseRowsNormalizesRestDayLabelToCanonicalRest() {
+        let csv = "Date,Day,Exercise,Sets,Weights,Reps\n2026-01-02,Rest Day,Walk,,,3.1mi"
+        let (rows, skipped) = ImportEngine.parseRows(csv: csv)
+        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.dayLabel, "Rest", "\"Rest Day\" in the Day column should normalize to \"Rest\"")
+    }
+
+    /// End-to-end reproduction of the actual bug: a file that spells every
+    /// rest day "Rest Day" (as backfillRestDays and RestDayLogView both do)
+    /// used to leave every one of those sessions unmatched to the Phase's
+    /// "Rest" PhaseDay — so no cycle could ever complete, and currentCycle
+    /// stayed stuck at 1 no matter how many cycles' worth of history came
+    /// in. Three full Upper A / Rest passes should land on cycle 4.
+    @MainActor
+    func testCurrentCycleAdvancesAfterImportingMultipleCyclesWithRestDaySpelling() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainDay = PhaseDay(order: 0, name: "Upper A", isRest: false)
+        trainDay.phase = phase
+        context.insert(trainDay)
+        let restDay = PhaseDay(order: 1, name: "Rest", isRest: true)
+        restDay.phase = phase
+        context.insert(restDay)
+        try? context.save()
+
+        let csv = """
+        Date,Day,Exercise,Sets,Weights,Reps
+        2026-01-01,Upper A,Back Squat,5,135,5
+        2026-01-02,Rest Day,Walk,,,3.1mi
+        2026-01-03,Upper A,Back Squat,5,135,5
+        2026-01-04,Rest Day,Walk,,,3.1mi
+        2026-01-05,Upper A,Back Squat,5,135,5
+        2026-01-06,Rest Day,Walk,,,3.1mi
+        """
+        let (rows, skipped) = ImportEngine.parseRows(csv: csv)
+        XCTAssertEqual(skipped, 0)
+
+        _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
+
+        XCTAssertEqual(phase.currentCycle, 4, "Three complete Upper A/Rest passes should leave cycle 4 in progress")
+    }
+
+    /// A row tagged with any Dumbbell/Band spelling shouldn't create a
+    /// plain weight+sides Bar in the Equipment tab's "Bars" section — it
+    /// should route to the same special isDumbbell "Dumbbells"/"Bands"
+    /// table EquipmentView's own "Add" buttons write to.
+    @MainActor
+    func testDumbbellAndBandEquipmentRouteToTheirSpecialTablesNotAPlainBar() async {
+        let context = makeContext()
+        let rows = [
+            ImportEngine.ImportedEntry(
+                date: Date(), exerciseName: "Dumbbell Curl",
+                kind: .exercise(goalType: .fixedSets, targetReps: [10], weights: [25], reps: [10]),
+                phaseNumber: nil, dayLabel: nil, equipmentName: "Dumbbell"),
+            ImportEngine.ImportedEntry(
+                date: Date(), exerciseName: "Goblet Squat",
+                kind: .exercise(goalType: .fixedSets, targetReps: [10], weights: [30], reps: [10]),
+                phaseNumber: nil, dayLabel: nil, equipmentName: "Dumbell"),   // common misspelling
+            ImportEngine.ImportedEntry(
+                date: Date(), exerciseName: "Band Pull-Apart",
+                kind: .exercise(goalType: .fixedSets, targetReps: [20], weights: [10], reps: [20]),
+                phaseNumber: nil, dayLabel: nil, equipmentName: "Bands"),
+        ]
+        _ = await ImportEngine.importIntoStore(rows, context: context)
+
+        let bars = (try? context.fetch(FetchDescriptor<Bar>())) ?? []
+        XCTAssertEqual(bars.count, 2, "Both Dumbbell spellings should share one \"Dumbbells\" table, plus one \"Bands\" table — never a plain Bar")
+
+        let dumbbellsBar = bars.first { $0.name == "Dumbbells" }
+        XCTAssertNotNil(dumbbellsBar)
+        XCTAssertEqual(dumbbellsBar?.isDumbbell, true)
+
+        let bandsBar = bars.first { $0.name == "Bands" }
+        XCTAssertNotNil(bandsBar)
+        XCTAssertEqual(bandsBar?.isDumbbell, true)
+
+        let defs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
+        XCTAssertEqual(defs.first { $0.name == "Dumbbell Curl" }?.equipment?.name, "Dumbbells")
+        XCTAssertEqual(defs.first { $0.name == "Goblet Squat" }?.equipment?.name, "Dumbbells")
+        XCTAssertEqual(defs.first { $0.name == "Band Pull-Apart" }?.equipment?.name, "Bands")
+    }
 }
