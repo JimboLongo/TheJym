@@ -31,7 +31,7 @@ struct BodyWeightView: View {
                     // Weight is tracked weekly, not daily — whatever day is
                     // tapped snaps to that week's Monday, so only a Monday
                     // is ever actually selectable.
-                    DatePicker("Week Starting", selection: Binding(
+                    DatePicker("Week Starting Monday", selection: Binding(
                         get: { selectedWeightDate },
                         set: { selectedWeightDate = Formatters.nearestPastMonday(from: $0) }
                     ), in: ...Date(), displayedComponents: .date)
