@@ -104,7 +104,7 @@ struct ExercisesView: View {
                         }
                     }
                 }
-                ToolbarItemGroup(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     if isEditing {
                         Button("Delete (\(selectedIDs.count))", role: .destructive) {
                             showingBulkDeleteConfirm = true
@@ -117,8 +117,10 @@ struct ExercisesView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
+                    // Declared last within this same .topBarTrailing group so
+                    // it's guaranteed rightmost — mixing .primaryAction and
+                    // .topBarTrailing for two different trailing items doesn't
+                    // reliably order them relative to each other.
                     OverflowMenuButton(overflowTab: $overflowTab)
                 }
             }

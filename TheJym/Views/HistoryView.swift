@@ -138,7 +138,7 @@ struct HistoryView: View {
             .navigationTitle("History")
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Filter by exercise")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
                         Button("Add Past Workout", systemImage: "square.and.pencil") { showingAddPast = true }
                         Button("Import from CSV or Excel…", systemImage: "square.and.arrow.down") { showingImporter = true }
@@ -146,8 +146,10 @@ struct HistoryView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
+                    // Declared last within this same .topBarTrailing group so
+                    // it's guaranteed rightmost — mixing .primaryAction and
+                    // .topBarTrailing for two different trailing items doesn't
+                    // reliably order them relative to each other.
                     OverflowMenuButton(overflowTab: $overflowTab)
                 }
             }
