@@ -505,10 +505,13 @@ struct TodayView: View {
 }
 
 /// Log a specific scheduled Rest day: an ad hoc exercise (any name/sets, not
-/// tied to a plan), and/or a cardio activity with an optional distance.
-/// Exercises are tied to this PhaseDay for reference, but never to
-/// Phase.sessions — a Rest day logging something shouldn't shift where the
-/// cycle thinks you are.
+/// tied to a plan), and/or a cardio activity with an optional distance. Each
+/// session is tied to both this PhaseDay and `phase` — the same day/phase
+/// pairing a real training session gets — so it fills this cycle's Rest
+/// slot (Phase.isSlotFilled/cycleWalk) exactly like Log Rest Day or a
+/// rest-day activity are supposed to. It still can't shift which TRAINING
+/// day is next (Phase.nextDay only ever looks at trainingDays), so logging
+/// here is safe to do out of order without disturbing that.
 struct RestDayLogView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
@@ -705,6 +708,7 @@ struct RestDayLogView: View {
         WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
         context.insert(ActiveRecovery(date: selectedDate, type: .rest))
         let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
+        session.phase = phase
         context.insert(session)
         try? context.save()
     }
@@ -736,6 +740,7 @@ struct RestDayLogView: View {
         let displayName = distance.map { "\(trimmed) (\(Formatters.trim($0)) \(distanceUnit))" } ?? trimmed
         WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
         let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
+        session.phase = phase
         context.insert(session)
         let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
         log.session = session
@@ -763,6 +768,7 @@ struct RestDayLogView: View {
 
         WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
         let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
+        session.phase = phase
         context.insert(session)
 
         var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })

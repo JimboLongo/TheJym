@@ -456,6 +456,10 @@ enum ImportEngine {
             let day: Date
             let phaseNumber: Int?
             let dayLabel: String?
+            /// True for a synthetic gap-fill request (see gapFillRequests
+            /// below) — keeps it from colliding in the lookup with a real
+            /// row that happens to carry a nil/blank Day label.
+            var isGapFill: Bool = false
         }
         let exerciseRows = rows.filter { if case .exercise = $0.kind { return true }; return false }
         let restRows = rows.filter { if case .restActivity = $0.kind { return true }; return false }
@@ -464,11 +468,26 @@ enum ImportEngine {
             GroupKey(day: cal.startOfDay(for: row.date), phaseNumber: row.phaseNumber, dayLabel: row.dayLabel)
         }
 
-        // Precomputes which exact PhaseDay a same-named-ambiguous Day label
-        // resolves to, for every (date, phase, label) this import will ask
-        // matchPhaseDay about below — a plain by-name match always picks
-        // the same candidate (Swift's `first`) when a phase has more than
-        // one PhaseDay sharing a name, which is common: PhaseBuilderView
+        // Any calendar day within a phase's own attributed date range (this
+        // import's earliest to latest date actually matched to it, plus
+        // whatever it already had logged before this import) that ends up
+        // with no request of its own — no exercise, no rest activity — gets
+        // filled in as a plain Rest day, same shape logPlainRestDay() uses
+        // live (an ActiveRecovery credit + a no-activity WorkoutSession).
+        // It counts toward that cycle's Rest slot exactly like an explicit
+        // Rest Day log or a Rest Day activity do — a gap in an imported
+        // history is you actively telling the app nothing else happened
+        // that day, not a passive "the app wasn't opened" guess the way
+        // WorkoutSession.backfillRestDays/creditYesterdayAsRestIfNothingLogged
+        // are (those stay excluded from slot-filling on purpose — see
+        // a8702ad's doc on Phase.cycleWalk).
+        var gapFillRequests: [GroupKey] = []
+
+        // Precomputes which exact PhaseDay each request (real or gap-fill)
+        // above resolves to, for every (date, phase, label) this import
+        // will ask matchPhaseDay about below — a plain by-name match always
+        // picks the same candidate (Swift's `first`) when a phase has more
+        // than one PhaseDay sharing a name, which is common: PhaseBuilderView
         // lets you add as many "Rest" days as the split needs, and
         // detectLastCyclePattern's own "Rest is exempt from the repeat
         // check" (see its doc) deliberately keeps every distinct Rest
@@ -479,22 +498,23 @@ enum ImportEngine {
         // "Rest" row keeps re-resolving to the first one), so that slot —
         // and the cycle it belongs to — could never complete.
         //
-        // Walked once, chronologically, across exercise-date-groups AND
-        // rest rows combined (they're normally handled in two separate
-        // passes below, so relying on insertion order wouldn't reflect true
-        // date order) — same slot-filling algorithm as Phase.cycleWalk:
-        // whichever same-named candidate isn't yet filled in the cycle
-        // currently in progress, in template order, resetting once a full
-        // pass fills every slot.
+        // Walked once, chronologically, across exercise-date-groups, rest
+        // rows, and gap-fill requests all combined (they're normally
+        // handled in separate passes below, so relying on insertion order
+        // wouldn't reflect true date order) — same slot-filling algorithm
+        // as Phase.cycleWalk: whichever same-named (or, for a gap-fill,
+        // whichever Rest) candidate isn't yet filled in the cycle currently
+        // in progress, in template order, resetting once a full pass fills
+        // every slot.
         //
-        // Seeded empty per phase, so it's exactly right for a brand-new
-        // phase getting its whole history attributed in one import (the
-        // "detect pattern -> build Phase -> attribute" flow this exists
-        // for). It doesn't account for a phase's own pre-existing session
-        // history when instead re-importing more rows into an
-        // already-in-progress existing phase by Phase number — a follow-up
-        // import like that could misresolve which same-named slot is next
-        // until enough new rows re-establish the real pattern.
+        // fillState is seeded empty per phase, so it's exactly right for a
+        // brand-new phase getting its whole history attributed in one
+        // import (the "detect pattern -> build Phase -> attribute" flow
+        // this exists for). It doesn't account for a phase's own
+        // pre-existing session history when instead re-importing more rows
+        // into an already-in-progress existing phase by Phase number — a
+        // follow-up import like that could misresolve which same-named
+        // slot is next until enough new rows re-establish the real pattern.
         var resolvedAmbiguousDay: [GroupKey: PhaseDay] = [:]
         do {
             var requests: [GroupKey] = []
@@ -506,14 +526,53 @@ enum ImportEngine {
                 seenKeys.insert(key)
                 requests.append(key)
             }
+
+            // Bounded to [earliest, latest] date actually attributed to
+            // each phase by this file's own rows — never invents history
+            // before or after what the import actually covers. "Already
+            // has something" also checks that phase's pre-existing
+            // sessions (any date already covered by real data, imported
+            // now or logged before), so re-importing more rows into an
+            // already-populated phase can't double up a day that already
+            // has real history.
+            var fileDatesByPhaseID: [PersistentIdentifier: (phase: Phase, dates: Set<Date>)] = [:]
+            for request in requests {
+                guard let label = request.dayLabel,
+                      let phase = forcedPhase ?? request.phaseNumber.flatMap({ num in existingPhases.first { $0.number == num } }),
+                      phase.orderedDays.contains(where: { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame })
+                else { continue }
+                fileDatesByPhaseID[phase.persistentModelID, default: (phase, [])].dates.insert(request.day)
+            }
+            for (_, entry) in fileDatesByPhaseID {
+                let phase = entry.phase
+                guard phase.orderedDays.contains(where: \.isRest),
+                      let minDate = entry.dates.min(), let maxDate = entry.dates.max()
+                else { continue }
+                let alreadyCovered = entry.dates.union(phase.sessions.map { cal.startOfDay(for: $0.date) })
+                var day = minDate
+                while day <= maxDate {
+                    if !alreadyCovered.contains(day) {
+                        gapFillRequests.append(GroupKey(day: day, phaseNumber: phase.number, dayLabel: nil, isGapFill: true))
+                    }
+                    guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
+                    day = next
+                }
+            }
+
+            requests.append(contentsOf: gapFillRequests)
             requests.sort { $0.day < $1.day }
 
             var fillState: [PersistentIdentifier: Set<PersistentIdentifier>] = [:]
             for request in requests {
-                guard let label = request.dayLabel else { continue }
                 let phase = forcedPhase ?? request.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
                 guard let phase else { continue }
-                let candidates = phase.orderedDays.filter { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
+                let candidates: [PhaseDay]
+                if request.isGapFill {
+                    candidates = phase.orderedDays.filter(\.isRest)
+                } else {
+                    guard let label = request.dayLabel else { continue }
+                    candidates = phase.orderedDays.filter { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
+                }
                 guard let firstCandidate = candidates.first else { continue }
                 let filled = fillState[phase.persistentModelID] ?? []
                 let chosen = candidates.count > 1
@@ -699,6 +758,28 @@ enum ImportEngine {
             set.exerciseLog = log
             context.insert(set)
             setsImported += 1
+        }
+
+        // Actually create the gap-fill Rest sessions computed above — one
+        // per calendar day within a phase's attributed range that had no
+        // data of its own, same shape logPlainRestDay() uses live (an
+        // ActiveRecovery credit + a no-activity WorkoutSession, tied to
+        // both the resolved Rest PhaseDay and the phase itself), so History
+        // and the rest-bank streak read it exactly as if "Log Rest Day" had
+        // been tapped that day.
+        for (gapIndex, gapRequest) in gapFillRequests.enumerated() {
+            if gapIndex > 0, gapIndex % checkpointInterval == 0 {
+                try? context.save()
+                await Task.yield()
+            }
+            guard let matchedDay = resolvedAmbiguousDay[gapRequest] else { continue }
+            let phase = forcedPhase ?? gapRequest.phaseNumber.flatMap { num in existingPhases.first { $0.number == num } }
+            WorkoutSession.removeBackfilledRestPlaceholder(on: gapRequest.day, context: context)
+            context.insert(ActiveRecovery(date: gapRequest.day, type: .rest))
+            let session = WorkoutSession(date: gapRequest.day, day: matchedDay, dayLabel: matchedDay.name, cycleNumber: 0)
+            session.phase = phase
+            context.insert(session)
+            sessionsCreated += 1
         }
 
         try? context.save()

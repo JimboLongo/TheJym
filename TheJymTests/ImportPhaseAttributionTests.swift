@@ -225,10 +225,11 @@ final class ImportPhaseAttributionTests: XCTestCase {
     /// complete a single cycle via import: matchPhaseDay resolved "Rest" by
     /// name with Swift's `first`, so every Rest row kept re-filling the
     /// SAME PhaseDay — the second one could never be reached. Reproduces
-    /// the actual dates/pattern from a real user import (including a
-    /// genuine gap on 7/26, no session of any kind that day) to confirm the
-    /// fix correctly advances through multiple cycles instead of staying
-    /// stuck at cycle 1.
+    /// the actual dates/pattern from a real user import (including several
+    /// days with no session of any kind — this split doesn't train or log
+    /// Rest literally every calendar day) to confirm same-named-slot
+    /// disambiguation plus gap-filling together correctly reconstruct 4
+    /// clean completed cycles, landing on cycle 5.
     @MainActor
     func testTwoIdenticallyNamedRestSlotsBothFillAcrossMultipleCycles() async {
         let context = makeContext()
@@ -278,11 +279,75 @@ final class ImportPhaseAttributionTests: XCTestCase {
             restRow("2026-08-01"),
         ]
 
+        let cal = Calendar.current
+        let sessionsBefore = (try? context.fetch(FetchDescriptor<WorkoutSession>()))?.count ?? 0
+
         _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
 
         XCTAssertGreaterThan(phase.currentCycle, 1,
             "Both Rest slots should be reachable, so at least one cycle should complete instead of staying stuck at 1")
-        XCTAssertEqual(phase.currentCycle, 4,
-            "3 clean passes complete outright; the skipped 7/26 delays the 3rd cycle's 2nd Rest slot until 7/29, absorbing 7/27-28 as bonus sessions and leaving cycle 4 with only Lower Day 2/Upper Day 2/Rest logged so far")
+        XCTAssertEqual(phase.currentCycle, 5,
+            "Gap-filling the days with no data of their own (7/7, 7/10, 7/11, 7/26 — this split doesn't log every calendar day) as Rest, on top of both Rest slots now being reachable, reconstructs 4 clean completed cycles")
+
+        let allSessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        XCTAssertGreaterThan(allSessions.count, sessionsBefore + rows.count,
+            "Gap days should have produced real extra sessions beyond just the file's own rows")
+        let gapDay = cal.startOfDay(for: ISO8601DateFormatter().date(from: "2026-07-26T00:00:00Z")!)
+        let gapSession = allSessions.first { cal.isDate($0.date, inSameDayAs: gapDay) }
+        XCTAssertNotNil(gapSession, "The skipped 7/26 should have gotten a gap-filled Rest session")
+        XCTAssertEqual(gapSession?.day?.name, "Rest")
+        XCTAssertEqual(gapSession?.phase?.number, 1)
+        XCTAssertTrue(gapSession?.exerciseLogs.isEmpty ?? false, "A gap-fill is a plain Rest day, same as Log Rest Day — no activity attached")
+    }
+
+    /// Minimal, isolated case for gap-filling: a single calendar day with no
+    /// row at all, in the middle of an otherwise 1-Rest-slot cycle, should
+    /// be filled in as Rest and count toward completing that cycle — same
+    /// as if "Log Rest Day" had been tapped that day live.
+    @MainActor
+    func testSingleGapDayFillsTheRestSlotAndCompletesTheCycle() async {
+        let context = makeContext()
+        let phase = Phase(number: 1, totalCycles: 8)
+        context.insert(phase)
+        let trainA = PhaseDay(order: 0, name: "Train A", isRest: false)
+        trainA.phase = phase
+        context.insert(trainA)
+        let restDay = PhaseDay(order: 1, name: "Rest", isRest: true)
+        restDay.phase = phase
+        context.insert(restDay)
+        try? context.save()
+
+        let day1 = ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z")!
+        let day3 = ISO8601DateFormatter().date(from: "2026-01-03T00:00:00Z")!
+        // day2 (2026-01-02) is a genuine gap — nothing logged at all.
+        let rows = [
+            ImportEngine.ImportedEntry(
+                date: day1, exerciseName: "Back Squat",
+                kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil),
+            ImportEngine.ImportedEntry(
+                date: day3, exerciseName: "Back Squat",
+                kind: .exercise(goalType: .fixedSets, targetReps: [5], weights: [135], reps: [5]),
+                phaseNumber: 1, dayLabel: "Train A", equipmentName: nil),
+        ]
+
+        _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
+
+        // day1 fills Train A, the day2 gap fills Rest -> cycle 1 completes;
+        // day3's Train A starts cycle 2 fresh.
+        XCTAssertEqual(phase.currentCycle, 2)
+        XCTAssertTrue(phase.isSlotFilled(for: trainA), "Cycle 2's Train A slot should be filled by the 2026-01-03 row")
+        XCTAssertFalse(phase.isSlotFilled(for: restDay), "Cycle 2's Rest slot shouldn't be filled yet")
+
+        let cal = Calendar.current
+        let gapDay = cal.startOfDay(for: ISO8601DateFormatter().date(from: "2026-01-02T00:00:00Z")!)
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        let gapSession = sessions.first { cal.isDate($0.date, inSameDayAs: gapDay) }
+        XCTAssertNotNil(gapSession)
+        XCTAssertEqual(gapSession?.day?.persistentModelID, restDay.persistentModelID)
+
+        let recoveries = (try? context.fetch(FetchDescriptor<ActiveRecovery>())) ?? []
+        XCTAssertTrue(recoveries.contains { cal.isDate($0.date, inSameDayAs: gapDay) },
+            "The gap-fill should also credit the rest-bank streak, same as Log Rest Day live")
     }
 }

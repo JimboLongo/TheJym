@@ -100,6 +100,7 @@ struct ContentView: View {
         .scrollDismissesKeyboard(.interactively)
         .onAppear {
             bootstrap()
+            repairRestDaySessionsMissingPhase()
             WorkoutSession.backfillRestDays(context: context)
             WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
             backfillBodyweightFlags()
@@ -232,6 +233,29 @@ struct ContentView: View {
         context.insert(Bar(name: "Bands", weight: 0, isDumbbell: true,
                            dumbbellWeights: [10, 20, 30, 40, 50]))
         try? context.save()
+    }
+
+    /// One-time repair for a RestDayLogView bug (fixed alongside this):
+    /// logging a Rest day live — the one-tap "Log Rest Day" button, a Rest
+    /// Day activity, or an ad hoc exercise on a Rest day — set the new
+    /// session's `day` but never its `phase`. Phase.cycleWalk only ever
+    /// walks `phase.sessions` (the inverse of that same `phase` field), so
+    /// those Rest sessions were invisible to it — the Rest slot a8702ad
+    /// requires could never actually fill from live logging, only from
+    /// import (which always set `phase` correctly). A session's `day`
+    /// unambiguously names its owning Phase (PhaseDay.phase), so this is a
+    /// safe, lossless repair: any session tied to a real PhaseDay but
+    /// missing its Phase gets it filled back in. Run early, before the
+    /// other phase-cycle repairs below, so they see the corrected history.
+    private func repairRestDaySessionsMissingPhase() {
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        var changed = false
+        for session in sessions {
+            guard session.phase == nil, let owningPhase = session.day?.phase else { continue }
+            session.phase = owningPhase
+            changed = true
+        }
+        if changed { try? context.save() }
     }
 
     /// ExerciseDef.equipment shipped without a `@Relationship` delete rule,
