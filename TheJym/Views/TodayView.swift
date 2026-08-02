@@ -522,6 +522,9 @@ struct RestDayLogView: View {
     struct SetDraft: Identifiable { let id = UUID(); var weightText = ""; var repsText = "" }
     struct ExDraft: Identifiable { let id = UUID(); var name = ""; var sets: [SetDraft] = [SetDraft()] }
 
+    /// Defaults to today; the DatePicker lets you back-date a missed Rest
+    /// day, same as AddHistoricalWorkoutView does for a missed workout.
+    @State private var selectedDate = Date()
     @State private var exercises: [ExDraft] = [ExDraft()]
     @State private var activityName = ""
     @State private var distanceText = ""
@@ -530,31 +533,31 @@ struct RestDayLogView: View {
     @FocusState private var focusedField: Field?
 
     private var todaysActivities: [RestDayActivity] {
-        allActivities.filter { Calendar.current.isDateInToday($0.date) }
+        allActivities.filter { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }
     }
 
-    /// Today's plain "I rested today" credit, if logged via the one-tap
-    /// button below — nil once it's been superseded by an activity, or if
-    /// nothing's been logged yet.
+    /// The selected date's plain "I rested today" credit, if logged via the
+    /// one-tap button below — nil once it's been superseded by an activity,
+    /// or if nothing's been logged yet.
     private var todaysActiveRecovery: ActiveRecovery? {
-        allActiveRecoveries.first { Calendar.current.isDateInToday($0.date) }
+        allActiveRecoveries.first { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }
     }
 
     /// The no-activity History entry the plain button creates alongside the
-    /// ActiveRecovery credit — identified by today + this exact PhaseDay +
-    /// no exercise logs (an activity/exercise session always has at least
-    /// one), so it's found and removed as a pair.
+    /// ActiveRecovery credit — identified by the selected date + this exact
+    /// PhaseDay + no exercise logs (an activity/exercise session always has
+    /// at least one), so it's found and removed as a pair.
     private var todaysPlainRestSession: WorkoutSession? {
         allSessions.first {
-            Calendar.current.isDateInToday($0.date)
+            Calendar.current.isDate($0.date, inSameDayAs: selectedDate)
                 && $0.day?.persistentModelID == day.persistentModelID
                 && $0.exerciseLogs.isEmpty
         }
     }
 
-    /// True once today's already been credited as a plain rest day (either
-    /// via the one-tap button below, or an activity/exercise logged here —
-    /// no need to double-credit the streak for the same day).
+    /// True once the selected date's already been credited as a plain rest
+    /// day (either via the one-tap button below, or an activity/exercise
+    /// logged here — no need to double-credit the streak for the same day).
     private var restDayAlreadyCredited: Bool {
         todaysActiveRecovery != nil || !todaysActivities.isEmpty
     }
@@ -585,6 +588,10 @@ struct RestDayLogView: View {
     var body: some View {
         Form {
             Section {
+                DatePicker("Date", selection: $selectedDate, in: ...Date(), displayedComponents: .date)
+            }
+
+            Section {
                 Button {
                     if todaysActiveRecovery != nil {
                         unlogPlainRestDay()
@@ -598,7 +605,7 @@ struct RestDayLogView: View {
                 }
                 .disabled(restDayAlreadyCredited && todaysActiveRecovery == nil)
             } footer: {
-                Text("One tap to credit today toward your rest-bank streak and log it in History — no need to log a specific activity. Still today? Tap again to undo, or log an activity below, which automatically replaces this credit.")
+                Text("One tap to credit the date above toward your rest-bank streak and log it in History — no need to log a specific activity. Tap again to undo, or log an activity below, which automatically replaces this credit.")
             }
 
             Section("Cardio / Activity") {
@@ -689,20 +696,21 @@ struct RestDayLogView: View {
         .navigationTitle(day.name)
     }
 
-    /// One-tap "I rested today" credit — an ActiveRecovery entry (same
-    /// mechanism the rest-bank engine already reads, StatsEngine.compute's
-    /// activeRecoveryDates) plus a no-activity WorkoutSession so it shows up
-    /// in History and Stats immediately, same as any other logged day.
+    /// One-tap "I rested [on the selected date]" credit — an ActiveRecovery
+    /// entry (same mechanism the rest-bank engine already reads,
+    /// StatsEngine.compute's activeRecoveryDates) plus a no-activity
+    /// WorkoutSession so it shows up in History and Stats immediately, same
+    /// as any other logged day.
     private func logPlainRestDay() {
-        context.insert(ActiveRecovery(type: .rest))
-        let session = WorkoutSession(day: day, dayLabel: day.name, cycleNumber: 0)
+        WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
+        context.insert(ActiveRecovery(date: selectedDate, type: .rest))
+        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
         context.insert(session)
         try? context.save()
     }
 
-    /// Undoes logPlainRestDay() — only meaningful while it's still today
-    /// (both lookups are scoped to today, so this is a no-op once the day's
-    /// passed). Called either directly (tapping the button again) or
+    /// Undoes logPlainRestDay() for the selected date — a no-op if nothing's
+    /// credited there. Called either directly (tapping the button again) or
     /// automatically when a real activity supersedes the plain credit.
     private func unlogPlainRestDay() {
         if let recovery = todaysActiveRecovery { context.delete(recovery) }
@@ -719,14 +727,15 @@ struct RestDayLogView: View {
         // end up double-counted.
         unlogPlainRestDay()
         let distance = Double(distanceText)
-        context.insert(RestDayActivity(name: trimmed, distance: distance, distanceUnit: distanceUnit))
+        context.insert(RestDayActivity(date: selectedDate, name: trimmed, distance: distance, distanceUnit: distanceUnit))
 
         // Also show up in History — folds the distance into the exercise
         // name since ExerciseLog/SetLog don't have a distance field of
         // their own. Same "no Phase" pattern as ad hoc exercises: this
         // shouldn't shift where the training cycle thinks you are.
         let displayName = distance.map { "\(trimmed) (\(Formatters.trim($0)) \(distanceUnit))" } ?? trimmed
-        let session = WorkoutSession(day: day, dayLabel: day.name, cycleNumber: 0)
+        WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
+        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
         context.insert(session)
         let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
         log.session = session
@@ -752,7 +761,8 @@ struct RestDayLogView: View {
         }
         guard !entries.isEmpty else { return }
 
-        let session = WorkoutSession(day: day, dayLabel: day.name, cycleNumber: 0)
+        WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
+        let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: 0)
         context.insert(session)
 
         var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
