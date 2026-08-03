@@ -116,14 +116,14 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(cell, 5, accuracy: 1e-9)
     }
 
-    /// isFinalSet only needs to override the clamp when the final set's own
-    /// weight differs from the set before it -- reuses the exact numbers
-    /// from testRatchetedPaceCellClampsUpAfterFallingShort (set 1 needed 3,
-    /// got 1, fell short) but treats set 2 as the target's own last set.
-    /// Unclamped, set 2 at 100 lbs only needs 2 reps to cross the win
-    /// threshold (201); without isFinalSet the same-weight-unaware clamp
-    /// would force it up to 3, overstating what's actually needed to win.
-    func testFinalSetIgnoresTheClampAcrossAWeightChange() {
+    /// The clamp applies whether or not the weight changed -- reuses the
+    /// exact numbers from testRatchetedPaceCellClampsUpAfterFallingShort
+    /// (set 1 needed 3, got 1, fell short) but treats set 2 as the
+    /// target's own last set. Unclamped, set 2 at 100 lbs only needs 2
+    /// reps to cross the win threshold (201); without isFinalSet the
+    /// ordinary "fell short, can't ask for less" clamp would force it up
+    /// to 3, overstating what's actually needed to win.
+    func testFinalSetIgnoresTheClamp() {
         let logged = [PaceEngine.LoggedSetEntry(rawWeight: 50, effectiveWeightMoved: 50, reps: 1)]
         guard let cell = PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: logged,
                                                            upcomingSetIndex: 2, upcomingRawWeight: 100,
@@ -134,17 +134,18 @@ final class PaceEngineTests: XCTestCase {
     }
 
     /// Reproduces a real reported bug: Safety Squats, target 145/145/145/
-    /// 155/155/155 lbs x 6/7/7/5/5/5 (total 5225). Logging 5/8/9 in sets
-    /// 1-3 (all ahead or only barely behind) correctly showed "need 4" for
-    /// set 4 at 155 lbs; hitting exactly 4 there should NOT silently pin
-    /// set 5 -- same 155 lb weight, nothing changed -- back down to 4 too.
-    /// The true raw requirement at that point is 5 (rounding away a
-    /// fraction of a rep in set 4 quietly carries a small deficit forward),
-    /// and since the weight didn't change there's no risk of the clamp's
-    /// usual "jumped because the weight changed" confusion -- the increase
-    /// is real and must show. Set 6 (155 lbs again, still no weight
-    /// change, and also the actual final set) should then read 6.
-    func testRatchetShowsAGenuineIncreaseBetweenSetsAtTheSameWeight() {
+    /// 155/155/155 lbs x 6/7/7/5/5/5 (total 5225). Logging 5/8/9/4 in sets
+    /// 1-4 correctly showed "need 4" for set 4 at 155 lbs and it was hit
+    /// exactly. Set 5 is also 155 lbs -- same weight, and the set before it
+    /// was just met -- so per the "just hit it, can't demand more" rule it
+    /// must not ask for more than 4 either, even though the raw pro-rata
+    /// math (which doesn't know about the ratchet) would want 5. Set 6 is
+    /// 155 lbs too and is ALSO the true final set: this is the one place
+    /// the same "just hit it" rule has to be overridden by isFinalSet,
+    /// since only the literal win-threshold math (6) is actually correct
+    /// there -- clamping it down to 4 like set 5 would tell the lifter 4
+    /// reps are enough to win when they're 155 lbs short of the total.
+    func testRatchetNeverIncreasesAfterAHitAtTheSameWeightExceptOnTheFinalSet() {
         let target = ComparisonTarget(
             kind: .lastLogged, date: .now, totalWeightMoved: 5225,
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
@@ -160,7 +161,7 @@ final class PaceEngineTests: XCTestCase {
                                                                    upcomingSetIndex: 5, upcomingRawWeight: 155) else {
             return XCTFail("Expected a cell value")
         }
-        XCTAssertEqual(needForSet5, 5, accuracy: 1e-9)
+        XCTAssertEqual(needForSet5, 4, accuracy: 1e-9)
 
         let throughSet5 = throughSet4 + [
             PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 620, reps: 4),

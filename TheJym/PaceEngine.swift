@@ -238,20 +238,12 @@ enum PaceEngine {
     /// set's own requirement and whether it was met: hitting (or beating)
     /// what a set asked for can never make the next set demand *more*, and
     /// falling short of a set can never make the next set demand *less* —
-    /// without this, a lighter or heavier weight entered for the next set
-    /// can otherwise make the raw pro-rata countdown jump around in a way
-    /// that reads as broken (e.g. "need 4" -> hit 4 -> "need 5").
-    ///
-    /// The clamp only ever engages across a weight *change* — that's the
-    /// one thing that can make the raw countdown swing unpredictably. Back
-    /// to back sets at the SAME weight have no such discontinuity: the raw
-    /// requirement there is just the direct continuation of the same pace
-    /// line, including whatever fractional rep got rounded away last time,
-    /// so it's shown as-is even if that means it goes up right after being
-    /// met exactly — that's a real, earned increase, not noise. (Reported
-    /// bug: two 155 lb sets in a row, hit the shown "4" in the first one,
-    /// and the second one silently stayed pinned at "4" too instead of the
-    /// true "5" the rounding had quietly deferred.)
+    /// this must hold in both directions across two sets at the SAME
+    /// weight (never miss a set and see the number go down; never hit a
+    /// set and see the number go up), and also protects against a lighter
+    /// or heavier weight entered for the next set otherwise making the raw
+    /// pro-rata countdown jump around in a way that reads as broken (e.g.
+    /// "need 4" -> hit 4 -> "need 5").
     ///
     /// Walks every already-logged set in order, recomputing what its own
     /// requirement would have been and clamping it against the ratchet
@@ -268,19 +260,20 @@ enum PaceEngine {
     /// the ratchet only governs the positive ("reps still needed") side.
     ///
     /// `isFinalSet` — true when the upcoming set is the last one left in
-    /// today's exercise, with nothing after it to make up ground on. The
-    /// ratchet exists to keep the number from prematurely looking easier
-    /// mid-workout, but that protection has no meaning on the last set:
-    /// its raw requirement already *is* the exact number of reps needed to
-    /// cross the target's total, so clamping it up any further would
-    /// overstate what's actually needed to win.
+    /// today's exercise, with nothing after it to make up ground on. This
+    /// is the one case the ratchet must NOT govern, even though it's
+    /// usually also a same-weight, just-hit-it set: the last set's raw
+    /// requirement already *is* the exact number of reps needed to cross
+    /// the target's total, so honoring the "just hit it, can't ask for
+    /// more" rule here would understate — sometimes to the point of
+    /// promising a win that a literal reading of the target's total says
+    /// isn't actually there yet.
     static func ratchetedPaceCellValue(target: ComparisonTarget, loggedSets: [LoggedSetEntry],
                                        upcomingSetIndex: Int, upcomingRawWeight: Double,
                                        isFinalSet: Bool = false) -> Double? {
         guard upcomingRawWeight > 0 else { return nil }
         var cumulative = 0.0
         var lastRequirement: Int?
-        var lastWeight: Double?
         // Whether the set that produced lastRequirement actually met ITS
         // OWN (already-clamped) requirement — this, not the requirement
         // number itself, is what decides which direction the next set's
@@ -292,17 +285,16 @@ enum PaceEngine {
         var lastMet = true
         for (i, entry) in loggedSets.enumerated() {
             defer { cumulative += entry.effectiveWeightMoved }
-            guard entry.rawWeight > 0 else { lastRequirement = nil; lastWeight = nil; lastMet = true; continue }
+            guard entry.rawWeight > 0 else { lastRequirement = nil; lastMet = true; continue }
             let m = milestone(atSetIndex: i + 1, setWeightsMoved: target.setWeightsMoved,
                               total: target.totalWeightMoved)
             let raw = (m - cumulative) / entry.rawWeight
-            guard raw > 0 else { lastRequirement = nil; lastWeight = nil; lastMet = true; continue }
+            guard raw > 0 else { lastRequirement = nil; lastMet = true; continue }
             var req = Int(ceil(raw))
-            if let last = lastRequirement, entry.rawWeight != lastWeight {
+            if let last = lastRequirement {
                 req = lastMet ? min(req, last) : max(req, last)
             }
             lastRequirement = req
-            lastWeight = entry.rawWeight
             lastMet = entry.reps >= req
         }
         let m = milestone(atSetIndex: upcomingSetIndex, setWeightsMoved: target.setWeightsMoved,
@@ -310,7 +302,7 @@ enum PaceEngine {
         let raw = (m - cumulative) / upcomingRawWeight
         guard raw > 0 else { return raw }
         var req = Int(ceil(raw))
-        if !isFinalSet, let last = lastRequirement, upcomingRawWeight != lastWeight {
+        if !isFinalSet, let last = lastRequirement {
             req = lastMet ? min(req, last) : max(req, last)
         }
         return Double(req)
