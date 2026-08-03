@@ -115,4 +115,42 @@ final class PaceEngineTests: XCTestCase {
         }
         XCTAssertEqual(cell, 5, accuracy: 1e-9)
     }
+
+    /// Reproduces a real reported bug: Safety Squats, target 140/140/140/
+    /// 150/150/150 lbs x 7/7/7/5/5/5 (total 5190). Falling behind early
+    /// (6, then 7, then 7 reps -- all short of their own ratcheted
+    /// requirement) pins the ratchet at 8 for sets 4 and 5 too, which is
+    /// correct mid-workout smoothing. But by set 6 -- the last one, with
+    /// nothing left to make up ground on after it -- only 5 reps at 155
+    /// lbs are actually needed to cross the 5,190 lb total (155*5 = 775,
+    /// cumulative 4450+775 = 5225 > 5190). The ratchet must not keep
+    /// demanding 8 once there's no more room for that protection to matter.
+    func testRatchetDoesNotOverstateTheFinalSetsRequirement() {
+        let target = ComparisonTarget(
+            kind: .lastLogged, date: .now, totalWeightMoved: 5190,
+            setWeightsMoved: [980, 980, 980, 750, 750, 750],
+            reps: [7, 7, 7, 5, 5, 5],
+            weightLabels: ["140", "140", "140", "150", "150", "150"])
+        let logged = [
+            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 870, reps: 6),
+            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1015, reps: 7),
+            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1015, reps: 7),
+            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 775, reps: 5),
+            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 775, reps: 5),
+        ]
+        // Sanity check: without isFinalSet, this still reproduces the
+        // reported (wrong-feeling but intentional mid-workout) 8.
+        guard let midWorkout = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: logged,
+                                                                  upcomingSetIndex: 6, upcomingRawWeight: 155) else {
+            return XCTFail("Expected a cell value")
+        }
+        XCTAssertEqual(midWorkout, 8, accuracy: 1e-9)
+
+        guard let cell = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: logged,
+                                                            upcomingSetIndex: 6, upcomingRawWeight: 155,
+                                                            isFinalSet: true) else {
+            return XCTFail("Expected a cell value")
+        }
+        XCTAssertEqual(cell, 5, accuracy: 1e-9)
+    }
 }

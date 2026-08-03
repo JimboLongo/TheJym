@@ -2288,7 +2288,8 @@ struct PaceRow: View {
         let setIndex = draft.sets.filter(\.isLogged).count + 1
         if let cell = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: loggedSetEntries,
                                                         upcomingSetIndex: setIndex,
-                                                        upcomingRawWeight: remainingWeights.first ?? 0) {
+                                                        upcomingRawWeight: remainingWeights.first ?? 0,
+                                                        isFinalSet: remainingWeights.count == 1) {
             // Whole reps only — you can't do a fractional one. Round toward
             // whichever direction doesn't overstate the claim: floor "ahead"
             // (don't claim more cushion than's actually banked), ceil "need"

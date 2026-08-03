@@ -255,8 +255,17 @@ enum PaceEngine {
     /// upcoming weight). A negative result still means "ahead of pace by
     /// this many reps," same as paceCellValue, and is returned unclamped —
     /// the ratchet only governs the positive ("reps still needed") side.
+    ///
+    /// `isFinalSet` — true when the upcoming set is the last one left in
+    /// today's exercise, with nothing after it to make up ground on. The
+    /// ratchet exists to keep the number from prematurely looking easier
+    /// mid-workout, but that protection has no meaning on the last set:
+    /// its raw requirement already *is* the exact number of reps needed to
+    /// cross the target's total, so clamping it up any further would
+    /// overstate what's actually needed to win.
     static func ratchetedPaceCellValue(target: ComparisonTarget, loggedSets: [LoggedSetEntry],
-                                       upcomingSetIndex: Int, upcomingRawWeight: Double) -> Double? {
+                                       upcomingSetIndex: Int, upcomingRawWeight: Double,
+                                       isFinalSet: Bool = false) -> Double? {
         guard upcomingRawWeight > 0 else { return nil }
         var cumulative = 0.0
         var lastRequirement: Int?
@@ -288,7 +297,7 @@ enum PaceEngine {
         let raw = (m - cumulative) / upcomingRawWeight
         guard raw > 0 else { return raw }
         var req = Int(ceil(raw))
-        if let last = lastRequirement {
+        if !isFinalSet, let last = lastRequirement {
             req = lastMet ? min(req, last) : max(req, last)
         }
         return Double(req)
