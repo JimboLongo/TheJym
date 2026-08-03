@@ -102,40 +102,69 @@ final class RestBankEngineTests: XCTestCase {
         XCTAssertEqual(result.bankBalance, 0, accuracy: 1e-9)
     }
 
-    // MARK: - Logging a rest day spends the bank instead of growing it
+    // MARK: - Logging a rest day spends the bank, and can break the streak
 
     /// Day 1 trains (bank -> 1.0). Day 2 logs a plain rest day (the "Log
-    /// Rest Day" button, ActiveRecovery) — spends 1.0 from the bank rather
-    /// than earning at the rate, floored at 0, streak stays open. Day 3
-    /// logs another rest day — bank is already 0, stays at 0 (floor, not
-    /// negative), streak still doesn't break. Day 4 has nothing logged at
-    /// all — that DOES spend into negative and breaks the streak, since an
-    /// unlogged day (unlike an intentionally-logged rest day) isn't
-    /// accounted for.
-    func testLoggedRestDaySpendsBankButNeverBreaksStreak() {
+    /// Rest Day" button, ActiveRecovery) — spends 1.0 from the bank, same
+    /// as an unlogged day would, landing right at 0 (not yet negative), so
+    /// the streak survives. Day 3 logs another rest day with nothing left
+    /// in the bank to spend — that takes it negative and breaks the streak
+    /// right there, same as an unlogged day would. Logging it only buys an
+    /// accounted-for reason for the gap, not a free pass from the debt.
+    func testLoggedRestDaySpendsBankAndCanBreakTheStreak() {
         let rate = StatsEngine.earnRate(restDays: 1, trainingDays: 3)
         let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
 
         let afterOneRest = StatsEngine.computeRestBank(
             trainingCreditedDates: [day(1)], restCreditedDates: [day(2)],
             ratePeriods: periods, now: day(2))
-        XCTAssertEqual(afterOneRest.currentStreak, 2, "Logging a rest day keeps the streak alive")
+        XCTAssertEqual(afterOneRest.currentStreak, 2, "Exactly enough banked — the streak survives")
         XCTAssertEqual(afterOneRest.bankBalance, 0, accuracy: 1e-9, "Spent the 1.0 earned on day 1")
 
         let afterTwoRests = StatsEngine.computeRestBank(
             trainingCreditedDates: [day(1)], restCreditedDates: [day(2), day(3)],
             ratePeriods: periods, now: day(3))
-        XCTAssertEqual(afterTwoRests.currentStreak, 3, "Still alive — floored at 0, never went negative")
+        XCTAssertEqual(afterTwoRests.currentStreak, 0, "Nothing left to spend — the second rest day breaks it")
         XCTAssertEqual(afterTwoRests.bankBalance, 0, accuracy: 1e-9)
+    }
 
-        // now: day(5), not day(4) — "today" is left pending (neither earned
-        // nor spent) if nothing's logged for it yet, so day 4 needs to
-        // already be in the past to be processed as an actual miss.
-        let afterSilentDay = StatsEngine.computeRestBank(
-            trainingCreditedDates: [day(1)], restCreditedDates: [day(2), day(3)],
-            ratePeriods: periods, now: day(5))
-        XCTAssertEqual(afterSilentDay.currentStreak, 0, "An unlogged day, unlike a logged rest day, breaks the streak")
-        XCTAssertEqual(afterSilentDay.bankBalance, 0, accuracy: 1e-9)
+    /// A rest-day *activity* (a walk, cardio, mobility work) is credited
+    /// through trainingCreditedDates, not restCreditedDates — it earns the
+    /// bank same as training, it doesn't spend it. Real reported scenario:
+    /// Phase 1 (Lower1/Upper1/Rest/Lower2/Upper2/Rest, rate 0.5) trains day
+    /// 1 (bank 1.0), logs a plain rest day 2 (bank -> 0.0), trains (an
+    /// activity counts as training) on day 3 (bank -> 0.5), then logs
+    /// another plain rest day on day 4 — only 0.5 banked against a 1.0
+    /// spend, so it goes negative and breaks the streak right there. Day 5
+    /// (another plain rest, nothing open) starts a brand new streak fresh
+    /// at 1.0 the same way a training day would; day 6 (training) then
+    /// adds to it normally.
+    func testActivityEarnsButRepeatedPlainRestExhaustsTheBankAndBreaks() {
+        let rate = StatsEngine.earnRate(restDays: 2, trainingDays: 4)   // Phase 1's split -> 0.5
+        XCTAssertEqual(rate, 0.5, accuracy: 1e-9)
+        let periods = [StatsEngine.RatePeriod(start: .distantPast, earnRate: rate)]
+
+        let training = [day(1), day(3), day(6)]
+        let rest = [day(2), day(4), day(5)]
+
+        let atDay3 = StatsEngine.computeRestBank(trainingCreditedDates: training, restCreditedDates: rest,
+                                                  ratePeriods: periods, now: day(3))
+        XCTAssertEqual(atDay3.currentStreak, 3, "Day 3's activity is training-credited, keeping the streak going")
+        XCTAssertEqual(atDay3.bankBalance, 0.5, accuracy: 1e-9, "Earned like any other training day, not spent")
+
+        let atDay4 = StatsEngine.computeRestBank(trainingCreditedDates: training, restCreditedDates: rest,
+                                                  ratePeriods: periods, now: day(4))
+        XCTAssertEqual(atDay4.currentStreak, 0, "Only 0.5 banked against day 4's 1.0 spend — breaks")
+
+        let atDay5 = StatsEngine.computeRestBank(trainingCreditedDates: training, restCreditedDates: rest,
+                                                  ratePeriods: periods, now: day(5))
+        XCTAssertEqual(atDay5.currentStreak, 1, "Nothing open — day 5's rest starts a fresh streak")
+        XCTAssertEqual(atDay5.bankBalance, 1.0, accuracy: 1e-9)
+
+        let atDay6 = StatsEngine.computeRestBank(trainingCreditedDates: training, restCreditedDates: rest,
+                                                  ratePeriods: periods, now: day(6))
+        XCTAssertEqual(atDay6.currentStreak, 2, "Continues the streak day 5 started")
+        XCTAssertEqual(atDay6.bankBalance, 1.5, accuracy: 1e-9)
     }
 
     // MARK: - No-phase user, 4 days/week

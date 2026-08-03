@@ -405,21 +405,26 @@ enum StatsEngine {
     }
 
     /// Pure day-by-day walk of the rest-bank model. A streak begins on a
-    /// training day with the bank reset to 1.0 (capped at `bankCap`); every
-    /// other training day within that same streak adds that day's earn
-    /// rate — that's how rest days get "earned" in the first place. A
-    /// logged rest day (no training, just an explicit "I rested today"
-    /// credit) keeps the streak alive but *spends* a day from the bank
-    /// (floored at 0, never breaking the streak by itself) — it's drawing
-    /// down the reserve training built up, not adding to it. A day with
-    /// neither spends the same 1.0, but — unlike a logged rest day — can
-    /// actually break the streak if the bank goes negative, since it's
-    /// unaccounted for rather than an intentional rest. The moment the bank
-    /// drops below 0 from an unlogged day, the streak ends right there and
-    /// the ledger closes: further unlogged days do nothing (no more
-    /// spending) until the next credited day starts a brand-new streak,
-    /// fresh at 1.0 rather than inheriting whatever debt was left. Today is
-    /// left pending — neither earned nor spent — if nothing's logged yet.
+    /// training day (or a rest day, if nothing's open yet) with the bank
+    /// reset to 1.0 (capped at `bankCap`); every other training day within
+    /// that same streak adds that day's earn rate — that's how rest days
+    /// get "earned" in the first place. Note that a rest-day *activity*
+    /// (a walk, cardio, mobility work — anything with real exercise data
+    /// behind it) is passed in via `trainingCreditedDates`, not
+    /// `restCreditedDates`: doing something active earns the bank same as
+    /// training, it doesn't spend it.
+    ///
+    /// A logged rest day (`restCreditedDates` — no activity, just an
+    /// explicit "I rested today" credit) *spends* a day from the bank same
+    /// as an unlogged day does, and can break the streak the exact same
+    /// way if that spend takes the bank negative — the only thing logging
+    /// it buys you is that it's still an intentional, accounted-for rest
+    /// instead of a silent miss; it's not free. The moment the bank drops
+    /// below 0, the streak ends right there and the ledger closes: further
+    /// uncredited or rest days do nothing (no more spending) until the
+    /// next credited day starts a brand-new streak, fresh at 1.0 rather
+    /// than inheriting whatever debt was left. Today is left pending —
+    /// neither earned nor spent — if nothing's logged yet.
     static func computeRestBank(trainingCreditedDates: [Date],
                                 restCreditedDates: [Date],
                                 ratePeriods: [RatePeriod],
@@ -456,6 +461,34 @@ enum StatsEngine {
         var maxStreakPrecedingBreakDate: Date?
         var maxStreakFollowingBreakDate: Date?
 
+        // Only true once streak has just tied/exceeded the record — a
+        // streak that's still smaller than the historical max leaves
+        // maxStreak (and this check) untouched.
+        func recordCredit(on day: Date) {
+            streak += 1
+            maxStreak = max(maxStreak, streak)
+            if streak == maxStreak {
+                if maxStreakStartDate != currentStreakStart {
+                    // A new streak instance just took over the record.
+                    maxStreakStartDate = currentStreakStart
+                    maxStreakPrecedingBreakDate = lastBreakDate
+                    maxStreakFollowingBreakDate = nil
+                }
+                maxStreakEndDate = day
+            }
+        }
+
+        func breakStreak(on day: Date) {
+            if currentStreakStart == maxStreakStartDate {
+                maxStreakFollowingBreakDate = day
+            }
+            streakOpen = false
+            streak = 0
+            bank = 0   // ledger closed — no meaningful balance until the next streak starts
+            lastBreakDate = day
+            currentStreakStart = nil
+        }
+
         while day <= today, iterations < 20_000 {
             iterations += 1
             let isToday = day == today
@@ -465,40 +498,35 @@ enum StatsEngine {
 
             if isToday && !isCredited { break }   // pending — stop without processing today
 
-            if isTraining || isRest {
+            if isTraining {
                 if !streakOpen { currentStreakStart = day }
-                bank = streakOpen
-                    ? (isTraining ? min(bankCap, bank + rate(on: day)) : max(0, bank - 1.0))
-                    : 1.0
+                bank = streakOpen ? min(bankCap, bank + rate(on: day)) : 1.0
                 streakOpen = true
-                streak += 1
-                maxStreak = max(maxStreak, streak)
-                // Only true once streak has just tied/exceeded the record —
-                // a streak that's still smaller than the historical max
-                // leaves maxStreak (and this check) untouched.
-                if streak == maxStreak {
-                    if maxStreakStartDate != currentStreakStart {
-                        // A new streak instance just took over the record.
-                        maxStreakStartDate = currentStreakStart
-                        maxStreakPrecedingBreakDate = lastBreakDate
-                        maxStreakFollowingBreakDate = nil
+                recordCredit(on: day)
+            } else if isRest {
+                if !streakOpen {
+                    // Nothing banked yet to spend — a rest day can still
+                    // open a fresh streak the same way a training day can.
+                    currentStreakStart = day
+                    bank = 1.0
+                    streakOpen = true
+                    recordCredit(on: day)
+                } else {
+                    bank -= 1.0
+                    // Epsilon guards against floating-point residue (e.g. a
+                    // repeating-decimal earn rate landing at -1e-16 instead
+                    // of exactly 0) spuriously tripping a break right at
+                    // the edge.
+                    if bank < -1e-9 {
+                        breakStreak(on: day)
+                    } else {
+                        recordCredit(on: day)
                     }
-                    maxStreakEndDate = day
                 }
             } else if streakOpen {
                 bank -= 1.0
-                // Epsilon guards against floating-point residue (e.g. a
-                // repeating-decimal earn rate landing at -1e-16 instead of
-                // exactly 0) spuriously tripping a break right at the edge.
                 if bank < -1e-9 {
-                    if currentStreakStart == maxStreakStartDate {
-                        maxStreakFollowingBreakDate = day
-                    }
-                    streakOpen = false
-                    streak = 0
-                    bank = 0   // ledger closed — no meaningful balance until the next streak starts
-                    lastBreakDate = day
-                    currentStreakStart = nil
+                    breakStreak(on: day)
                 }
             }
             // else: ledger already closed, an unlogged day has no effect.
