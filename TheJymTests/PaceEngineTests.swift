@@ -116,41 +116,60 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(cell, 5, accuracy: 1e-9)
     }
 
-    /// Reproduces a real reported bug: Safety Squats, target 140/140/140/
-    /// 150/150/150 lbs x 7/7/7/5/5/5 (total 5190). Falling behind early
-    /// (6, then 7, then 7 reps -- all short of their own ratcheted
-    /// requirement) pins the ratchet at 8 for sets 4 and 5 too, which is
-    /// correct mid-workout smoothing. But by set 6 -- the last one, with
-    /// nothing left to make up ground on after it -- only 5 reps at 155
-    /// lbs are actually needed to cross the 5,190 lb total (155*5 = 775,
-    /// cumulative 4450+775 = 5225 > 5190). The ratchet must not keep
-    /// demanding 8 once there's no more room for that protection to matter.
-    func testRatchetDoesNotOverstateTheFinalSetsRequirement() {
-        let target = ComparisonTarget(
-            kind: .lastLogged, date: .now, totalWeightMoved: 5190,
-            setWeightsMoved: [980, 980, 980, 750, 750, 750],
-            reps: [7, 7, 7, 5, 5, 5],
-            weightLabels: ["140", "140", "140", "150", "150", "150"])
-        let logged = [
-            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 870, reps: 6),
-            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1015, reps: 7),
-            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1015, reps: 7),
-            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 775, reps: 5),
-            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 775, reps: 5),
-        ]
-        // Sanity check: without isFinalSet, this still reproduces the
-        // reported (wrong-feeling but intentional mid-workout) 8.
-        guard let midWorkout = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: logged,
-                                                                  upcomingSetIndex: 6, upcomingRawWeight: 155) else {
+    /// isFinalSet only needs to override the clamp when the final set's own
+    /// weight differs from the set before it -- reuses the exact numbers
+    /// from testRatchetedPaceCellClampsUpAfterFallingShort (set 1 needed 3,
+    /// got 1, fell short) but treats set 2 as the target's own last set.
+    /// Unclamped, set 2 at 100 lbs only needs 2 reps to cross the win
+    /// threshold (201); without isFinalSet the same-weight-unaware clamp
+    /// would force it up to 3, overstating what's actually needed to win.
+    func testFinalSetIgnoresTheClampAcrossAWeightChange() {
+        let logged = [PaceEngine.LoggedSetEntry(rawWeight: 50, effectiveWeightMoved: 50, reps: 1)]
+        guard let cell = PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: logged,
+                                                           upcomingSetIndex: 2, upcomingRawWeight: 100,
+                                                           isFinalSet: true) else {
             return XCTFail("Expected a cell value")
         }
-        XCTAssertEqual(midWorkout, 8, accuracy: 1e-9)
+        XCTAssertEqual(cell, 2, accuracy: 1e-9)
+    }
 
-        guard let cell = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: logged,
-                                                            upcomingSetIndex: 6, upcomingRawWeight: 155,
-                                                            isFinalSet: true) else {
+    /// Reproduces a real reported bug: Safety Squats, target 145/145/145/
+    /// 155/155/155 lbs x 6/7/7/5/5/5 (total 5225). Logging 5/8/9 in sets
+    /// 1-3 (all ahead or only barely behind) correctly showed "need 4" for
+    /// set 4 at 155 lbs; hitting exactly 4 there should NOT silently pin
+    /// set 5 -- same 155 lb weight, nothing changed -- back down to 4 too.
+    /// The true raw requirement at that point is 5 (rounding away a
+    /// fraction of a rep in set 4 quietly carries a small deficit forward),
+    /// and since the weight didn't change there's no risk of the clamp's
+    /// usual "jumped because the weight changed" confusion -- the increase
+    /// is real and must show. Set 6 (155 lbs again, still no weight
+    /// change, and also the actual final set) should then read 6.
+    func testRatchetShowsAGenuineIncreaseBetweenSetsAtTheSameWeight() {
+        let target = ComparisonTarget(
+            kind: .lastLogged, date: .now, totalWeightMoved: 5225,
+            setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
+            reps: [6, 7, 7, 5, 5, 5],
+            weightLabels: ["145", "145", "145", "155", "155", "155"])
+        let throughSet4 = [
+            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 725, reps: 5),
+            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1160, reps: 8),
+            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1305, reps: 9),
+            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 620, reps: 4),
+        ]
+        guard let needForSet5 = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: throughSet4,
+                                                                   upcomingSetIndex: 5, upcomingRawWeight: 155) else {
             return XCTFail("Expected a cell value")
         }
-        XCTAssertEqual(cell, 5, accuracy: 1e-9)
+        XCTAssertEqual(needForSet5, 5, accuracy: 1e-9)
+
+        let throughSet5 = throughSet4 + [
+            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 620, reps: 4),
+        ]
+        guard let needForSet6 = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: throughSet5,
+                                                                   upcomingSetIndex: 6, upcomingRawWeight: 155,
+                                                                   isFinalSet: true) else {
+            return XCTFail("Expected a cell value")
+        }
+        XCTAssertEqual(needForSet6, 6, accuracy: 1e-9)
     }
 }
