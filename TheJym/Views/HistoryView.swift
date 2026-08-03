@@ -253,7 +253,7 @@ struct HistoryView: View {
             }
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(log.isBodyweight ? "added" : "lbs")
+                    Text("lbs")
                     if showGoal { Text("target") }
                     Text("reps")
                 }
@@ -283,7 +283,7 @@ struct HistoryView: View {
         return Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
             GridRow {
                 ForEach(0..<columnCount, id: \.self) { idx in
-                    Text(idx < sortedSets.count ? weightLabel(sortedSets[idx], isBodyweight: log.isBodyweight) : "")
+                    Text(idx < sortedSets.count ? weightLabel(sortedSets[idx]) : "")
                     if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
                     }
@@ -312,11 +312,12 @@ struct HistoryView: View {
         .foregroundStyle(.secondary)
     }
 
-    /// Added weight for a bodyweight set (the resolved effective weight
-    /// isn't meaningful to display per-set, since bodyweight can drift
-    /// between sessions — the added load is what's actually comparable).
-    private func weightLabel(_ set: SetLog, isBodyweight: Bool) -> String {
-        isBodyweight ? Formatters.trim(set.addedWeight ?? 0) : Formatters.trim(set.weight)
+    /// `set.weight` already holds the correct effective total for a
+    /// bodyweight set (bodyweightAtLog + addedWeight, frozen at log time —
+    /// see SetLog's own doc), same as any other set, so there's no separate
+    /// bodyweight case to handle here.
+    private func weightLabel(_ set: SetLog) -> String {
+        Formatters.trim(set.weight)
     }
 
     private func handleImport(_ result: Result<URL, Error>) {

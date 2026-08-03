@@ -51,6 +51,10 @@ struct WorkoutLogView: View {
     /// weights). A draft that's only ever had its suggested starting
     /// weights auto-filled (nothing logged yet) resumes silently as before.
     @State private var showResumePrompt = false
+    /// A second confirmation before Start Fresh actually discards the
+    /// already-logged sets — that's a destructive, unrecoverable action, so
+    /// it shouldn't fire off one tap on the resume prompt alone.
+    @State private var showStartFreshConfirm = false
     /// Last time the user touched anything in this workout — used to keep
     /// the screen from auto-locking for up to 3 minutes of idle time.
     @State private var lastInteraction = Date()
@@ -331,9 +335,7 @@ struct WorkoutLogView: View {
                             .multilineTextAlignment(.center)
                         HStack {
                             Button(role: .destructive) {
-                                clearSavedDraft()
-                                showResumePrompt = false
-                                buildDrafts()
+                                showStartFreshConfirm = true
                             } label: {
                                 Text("Start Fresh")
                             }
@@ -358,6 +360,16 @@ struct WorkoutLogView: View {
         .animation(.easeInOut(duration: 0.2), value: showDatePicker)
         .animation(.easeInOut(duration: 0.2), value: showBodyWeightPrompt)
         .animation(.easeInOut(duration: 0.2), value: showResumePrompt)
+        .confirmationDialog("Are you sure you want to start fresh?", isPresented: $showStartFreshConfirm, titleVisibility: .visible) {
+            Button("Start Fresh", role: .destructive) {
+                clearSavedDraft()
+                showResumePrompt = false
+                buildDrafts()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This discards every set already logged in this workout. This can't be undone.")
+        }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -1141,12 +1153,16 @@ struct ExercisePageView: View {
     /// fit without any of them needing to scroll internally, plus room for
     /// the Pace Calculator page's 3rd (per-set delta) grid row.
     private let pacePanelHeight: CGFloat = 290
+    /// The bottom up/down navigation bar's fixed height, including its own
+    /// top padding — counted into chromeHeight below so the weight/reps
+    /// wheels shrink to leave room for it instead of pushing it off-page.
+    private let navBarHeight: CGFloat = 46
     /// Shrinks the weight/reps wheels as needed so all of this exercise's
     /// sets, plus the header and pace panel, fit within one page height.
     private var wheelHeight: CGFloat {
         // header + paddings, estimated, plus the pace panel's own fixed
         // height and some room for its page dots.
-        let chromeHeight: CGFloat = 150 + pacePanelHeight
+        let chromeHeight: CGFloat = 150 + pacePanelHeight + navBarHeight
         let available = pageHeight - chromeHeight
         let setCount = max(draft.sets.count, 1)
         let perSet = available / CGFloat(setCount)
@@ -1222,6 +1238,8 @@ struct ExercisePageView: View {
                     withTransaction(transaction) { paceTabSelection = real }
                 }
             }
+
+            navBar
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
@@ -1539,6 +1557,60 @@ struct ExercisePageView: View {
         return "summary"
     }
 
+    /// The previous still-open exercise before this one in plan order, for
+    /// the navigation bar's up arrow — nil (arrow hidden/disabled) when
+    /// this is the first open exercise, since there's nowhere to go back to.
+    private func previousOpenPageID() -> String? {
+        guard let myIndex = allDrafts.firstIndex(where: { $0.id == draft.id }) else { return nil }
+        let openIndices = allDrafts.indices.filter { $0 != myIndex && allDrafts[$0].isExpanded }
+        guard let prev = openIndices.last(where: { $0 < myIndex }) else { return nil }
+        return "ex-\(allDrafts[prev].id)"
+    }
+
+    /// The next still-open exercise after this one in plan order, for the
+    /// navigation bar's down arrow — unlike nextOpenPageID() (which wraps
+    /// around, meant for auto-advancing on collapse), this always moves
+    /// strictly forward, landing on the shared completed page once nothing
+    /// else follows.
+    private func nextOpenPageIDForNav() -> String {
+        guard let myIndex = allDrafts.firstIndex(where: { $0.id == draft.id }) else { return "summary" }
+        if let next = allDrafts.indices.first(where: { $0 > myIndex && allDrafts[$0].isExpanded }) {
+            return "ex-\(allDrafts[next].id)"
+        }
+        return "summary"
+    }
+
+    /// Bottom bar for jumping directly between exercises — left half moves
+    /// up to the previous open exercise, right half moves down to the next
+    /// one (or the completed summary page, past the last exercise).
+    private var navBar: some View {
+        let previous = previousOpenPageID()
+        return HStack(spacing: 0) {
+            Button {
+                if let previous { withAnimation { currentPageID = previous } }
+            } label: {
+                Image(systemName: "chevron.up")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(previous == nil)
+
+            Divider().frame(height: 20)
+
+            Button {
+                withAnimation { currentPageID = nextOpenPageIDForNav() }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(.plain)
+        .font(.body.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.top, 10)
+    }
+
     /// The most prestigious comparison today's total actually beat, if any
     /// — same "beaten" definition PaceRow/RepTotalPaceRow use (today's
     /// resolved total vs. that comparison's), just picking the best one
@@ -1628,7 +1700,12 @@ struct ExercisePageView: View {
     /// an "Add Set" button, and a delete affordance once there's more than
     /// one set (so an accidental extra Add Set isn't a dead end).
     private var repTotalSetRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // -8, matching setRows' own overlap: each wheel row already centers
+        // its selected value within its own tall frame, so any positive
+        // gap here just reads as extra dead space between sets — more
+        // noticeable here than in setRows since a repTotal exercise's set
+        // count is open-ended (via Add Set) rather than fixed up front.
+        VStack(alignment: .leading, spacing: -8) {
             ForEach(Array(draft.sets.enumerated()), id: \.element.id) { i, _ in
                 HStack(spacing: 12) {
                     Text("Set \(i + 1)")
@@ -1685,7 +1762,10 @@ struct ExercisePageView: View {
                     .font(.subheadline)
             }
             .buttonStyle(.bordered)
-            .padding(.top, 4)
+            // Counteracts the VStack's own -8 spacing (see repTotalSetRows'
+            // doc) so Add Set keeps a real gap below the last wheel instead
+            // of overlapping it the same way adjacent set rows do.
+            .padding(.top, 20)
         }
     }
 
@@ -2042,11 +2122,15 @@ struct RepTotalPaceRow: View {
         }
     }
 
+    /// Actual reps achieved that log — sum of every logged set, not just
+    /// the nominal target it reached (could run a little over).
+    private var totalReps: Int { target.reps.reduce(0, +) }
+
     @ViewBuilder
     private var comparisonLine: some View {
         if let setsToComplete = target.setsToComplete {
             if target.kind == .lastLogged {
-                Text("Finished in \(setsToComplete) set\(setsToComplete == 1 ? "" : "s"), first set \(target.firstSetReps ?? 0) reps")
+                Text("Finished \(totalReps) reps in \(setsToComplete) set\(setsToComplete == 1 ? "" : "s")")
                     .font(.caption).foregroundStyle(.secondary)
             } else if let room = PaceEngine.repTotalPRRoom(setsLoggedSoFar: setsLoggedSoFar, bestSetsToComplete: setsToComplete) {
                 Label("Finish in \(room) more set\(room == 1 ? "" : "s") for a PR", systemImage: "target")
@@ -2055,7 +2139,7 @@ struct RepTotalPaceRow: View {
                 Label("Matched or beat the \(setsToComplete)-set record 🔥", systemImage: "flame.fill")
                     .font(.caption).foregroundStyle(.green)
             } else {
-                Text("Best: \(setsToComplete) set\(setsToComplete == 1 ? "" : "s") to finish, first set \(target.firstSetReps ?? 0) reps")
+                Text("Best: finished \(totalReps) reps in \(setsToComplete) set\(setsToComplete == 1 ? "" : "s")")
                     .font(.caption).foregroundStyle(.secondary)
             }
         } else if loggedTotal > target.totalWeightMoved {

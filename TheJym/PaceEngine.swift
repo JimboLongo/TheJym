@@ -25,8 +25,8 @@ struct ComparisonTarget: Identifiable {
     /// total was distributed across its sets, not just the final number.
     let setWeightsMoved: [Double]
     let reps: [Int]
-    /// Per-set weight label, bodyweight-aware ("BW+25" vs a plain trimmed
-    /// weight) — paired with `reps` (same index) in a SetsGrid.
+    /// Per-set resolved weight label — paired with `reps` (same index) in a
+    /// SetsGrid.
     let weightLabels: [String]
     var hasData: Bool { date != nil }
 }
@@ -99,13 +99,12 @@ enum PaceEngine {
         return "\(addedSeq) (\(bw) BW) lbs"
     }
 
-    /// Per-set weight label, bodyweight-aware ("BW+25" vs a plain trimmed
-    /// weight) — same convention as weightsSummaryString, just not joined
-    /// into one line, so a caller can grid-align them with reps instead.
+    /// Per-set weight label — the resolved effective total (bodyweightAtLog
+    /// + addedWeight for a bodyweight set, same as any other set's `weight`)
+    /// so History, the Pace Calculator, and Previous Workouts all read the
+    /// same number a non-bodyweight exercise would show.
     static func weightLabels(for log: ExerciseLog) -> [String] {
-        log.sortedSets.map { set in
-            log.isBodyweight ? "BW+\(Formatters.trim(set.addedWeight ?? 0))" : Formatters.trim(set.weight)
-        }
+        log.sortedSets.map { Formatters.trim($0.weight) }
     }
 
     // MARK: - repTotal comparisons (sets-to-complete, not reps-to-beat)
@@ -119,7 +118,6 @@ enum PaceEngine {
         /// weight moved instead, since "sets to complete" isn't meaningful
         /// for a session that never finished.
         let setsToComplete: Int?
-        let firstSetReps: Int?
         let totalWeightMoved: Double
         let reps: [Int]
         let weightLabels: [String]
@@ -127,9 +125,9 @@ enum PaceEngine {
     }
 
     /// Same three kinds as `comparisons`, but for a repTotal exercise: shows
-    /// sets-to-complete + first-set reps instead of total-weight reps-to-
-    /// beat math. `currentWeightsKey` should already be BW-aware (built the
-    /// same way ExerciseLog.weightsKey is) if this exercise is bodyweight.
+    /// sets-to-complete + reps finished instead of total-weight reps-to-beat
+    /// math. `currentWeightsKey` should already be BW-aware (built the same
+    /// way ExerciseLog.weightsKey is) if this exercise is bodyweight.
     static func repTotalComparisons(for exerciseName: String,
                                     target: Int,
                                     currentWeightsKey: String,
@@ -164,13 +162,12 @@ enum PaceEngine {
     private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> RepTotalComparisonTarget {
         guard let log else {
             return RepTotalComparisonTarget(kind: kind, date: nil, setsToComplete: nil,
-                                            firstSetReps: nil, totalWeightMoved: 0, reps: [], weightLabels: [])
+                                            totalWeightMoved: 0, reps: [], weightLabels: [])
         }
         let sortedSets = log.sortedSets
         return RepTotalComparisonTarget(kind: kind,
                                         date: log.session?.date ?? .distantPast,
                                         setsToComplete: log.repTotalReached ? sortedSets.count : nil,
-                                        firstSetReps: sortedSets.first?.reps,
                                         totalWeightMoved: log.totalWeightMoved,
                                         reps: sortedSets.map(\.reps),
                                         weightLabels: weightLabels(for: log))
