@@ -24,6 +24,9 @@ struct ComparisonTarget: Identifiable {
     /// pro-rata pace milestone, which needs to know how the target's own
     /// total was distributed across its sets, not just the final number.
     let setWeightsMoved: [Double]
+    /// The target's own per-set weight (not weight × reps) — the rate the
+    /// even-pace calculation spreads the remaining deficit across.
+    let weights: [Double]
     let reps: [Int]
     /// Per-set resolved weight label — paired with `reps` (same index) in a
     /// SetsGrid.
@@ -74,13 +77,14 @@ enum PaceEngine {
 
     private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> ComparisonTarget {
         guard let log else {
-            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], reps: [], weightLabels: [])
+            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], weights: [], reps: [], weightLabels: [])
         }
         let sortedSets = log.sortedSets
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
                                 setWeightsMoved: sortedSets.map { $0.weight * Double($0.reps) },
+                                weights: sortedSets.map(\.weight),
                                 reps: sortedSets.map(\.reps),
                                 weightLabels: weightLabels(for: log))
     }
@@ -222,89 +226,34 @@ enum PaceEngine {
         return (m - loggedSoFar) / columnWeight
     }
 
-    /// One already-logged set's numbers, as needed to reconstruct what its
-    /// own pace requirement was at the time — `rawWeight` is what was
-    /// actually loaded (the countdown's own denominator, same convention as
-    /// paceCellValue's columnWeight), `effectiveWeightMoved` is what that
-    /// set contributed to the session's cumulative total (bodyweight-
-    /// resolved for a bodyweight exercise, matching ExerciseDraft.loggedTotal).
-    struct LoggedSetEntry {
-        let rawWeight: Double
-        let effectiveWeightMoved: Double
-        let reps: Int
-    }
-
-    /// Reps needed for the upcoming set, ratcheted against the previous
-    /// set's own requirement and whether it was met: hitting (or beating)
-    /// what a set asked for can never make the next set demand *more*, and
-    /// falling short of a set can never make the next set demand *less* —
-    /// this must hold in both directions across two sets at the SAME
-    /// weight (never miss a set and see the number go down; never hit a
-    /// set and see the number go up), and also protects against a lighter
-    /// or heavier weight entered for the next set otherwise making the raw
-    /// pro-rata countdown jump around in a way that reads as broken (e.g.
-    /// "need 4" -> hit 4 -> "need 5").
+    /// Reps needed in the immediate next set to stay on pace to beat the
+    /// target's total — ports a reference spreadsheet formula: spreads the
+    /// remaining weight deficit evenly across every set still remaining
+    /// today, using the target's own weight at each remaining set position
+    /// (averaged) as the rate. Deliberately ignores today's own upcoming
+    /// weight and any ratchet/history from earlier sets — it's a fresh,
+    /// stateless recompute every time, driven entirely by the target's
+    /// weights and however much of the deficit is left right now:
     ///
-    /// Walks every already-logged set in order, recomputing what its own
-    /// requirement would have been and clamping it against the ratchet
-    /// carried from the set before it, then applies the same clamp to the
-    /// upcoming set. An ahead-of-pace set (raw <= 0) has no positive
-    /// "needed" number to carry forward, so the ratchet resets fresh right
-    /// after it — otherwise a big enough early lead would permanently pin
-    /// every later set's requirement to (near) zero even if you actually
-    /// fall behind on a much heavier set down the line.
+    ///   reps needed = ROUNDUP( (target total − today's total so far)
+    ///                          ÷ average(target's weight at each
+    ///                            still-remaining set position)
+    ///                          ÷ sets still remaining )
     ///
-    /// Returns nil under the same condition paceCellValue does (no usable
-    /// upcoming weight). A negative result still means "ahead of pace by
-    /// this many reps," same as paceCellValue, and is returned unclamped —
-    /// the ratchet only governs the positive ("reps still needed") side.
-    ///
-    /// `isFinalSet` — true when the upcoming set is the last one left in
-    /// today's exercise, with nothing after it to make up ground on. This
-    /// is the one case the ratchet must NOT govern, even though it's
-    /// usually also a same-weight, just-hit-it set: the last set's raw
-    /// requirement already *is* the exact number of reps needed to cross
-    /// the target's total, so honoring the "just hit it, can't ask for
-    /// more" rule here would understate — sometimes to the point of
-    /// promising a win that a literal reading of the target's total says
-    /// isn't actually there yet.
-    static func ratchetedPaceCellValue(target: ComparisonTarget, loggedSets: [LoggedSetEntry],
-                                       upcomingSetIndex: Int, upcomingRawWeight: Double,
-                                       isFinalSet: Bool = false) -> Double? {
-        guard upcomingRawWeight > 0 else { return nil }
-        var cumulative = 0.0
-        var lastRequirement: Int?
-        // Whether the set that produced lastRequirement actually met ITS
-        // OWN (already-clamped) requirement — this, not the requirement
-        // number itself, is what decides which direction the next set's
-        // clamp goes. Comparing a set's reps against a DIFFERENT set's
-        // requirement (e.g. set 2's reps against set 1's number) was the
-        // bug: two sets can need completely different rep counts at
-        // completely different weights, so 9 reps "failing" a 13-rep bar
-        // set by a heavier set doesn't mean anything.
-        var lastMet = true
-        for (i, entry) in loggedSets.enumerated() {
-            defer { cumulative += entry.effectiveWeightMoved }
-            guard entry.rawWeight > 0 else { lastRequirement = nil; lastMet = true; continue }
-            let m = milestone(atSetIndex: i + 1, setWeightsMoved: target.setWeightsMoved,
-                              total: target.totalWeightMoved)
-            let raw = (m - cumulative) / entry.rawWeight
-            guard raw > 0 else { lastRequirement = nil; lastMet = true; continue }
-            var req = Int(ceil(raw))
-            if let last = lastRequirement {
-                req = lastMet ? min(req, last) : max(req, last)
-            }
-            lastRequirement = req
-            lastMet = entry.reps >= req
-        }
-        let m = milestone(atSetIndex: upcomingSetIndex, setWeightsMoved: target.setWeightsMoved,
-                          total: target.totalWeightMoved)
-        let raw = (m - cumulative) / upcomingRawWeight
-        guard raw > 0 else { return raw }
-        var req = Int(ceil(raw))
-        if !isFinalSet, let last = lastRequirement {
-            req = lastMet ? min(req, last) : max(req, last)
-        }
-        return Double(req)
+    /// On the last remaining set this reduces to exactly "deficit ÷ that
+    /// set's own target weight" — the literal number of reps needed to
+    /// cross the total, with nothing left to average or spread across.
+    static func evenPaceCellValue(target: ComparisonTarget, loggedSoFar: Double,
+                                  setsLoggedSoFar: Int, totalSetsToday: Int) -> Double? {
+        let setsRemain = totalSetsToday - setsLoggedSoFar
+        guard setsRemain > 0, !target.weights.isEmpty else { return nil }
+        let wtRemain = target.totalWeightMoved - loggedSoFar
+        let endIndex = min(totalSetsToday, target.weights.count)
+        let startIndex = min(setsLoggedSoFar, endIndex)
+        let validWeights = Array(target.weights[startIndex..<endIndex])
+        guard !validWeights.isEmpty else { return nil }
+        let avg = validWeights.reduce(0, +) / Double(validWeights.count)
+        guard avg > 0 else { return nil }
+        return (wtRemain / avg / Double(setsRemain)).rounded(.up)
     }
 }

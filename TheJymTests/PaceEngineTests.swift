@@ -16,7 +16,7 @@ import XCTest
 final class PaceEngineTests: XCTestCase {
     private let target = ComparisonTarget(
         kind: .lastLogged, date: .now, totalWeightMoved: 1000,
-        setWeightsMoved: [200, 200, 200, 200, 200],
+        setWeightsMoved: [200, 200, 200, 200, 200], weights: [20, 20, 20, 20, 20],
         reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"])
 
     func testMilestoneAtSetIndexWithinTargetsOwnSetCount() {
@@ -52,125 +52,70 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertNil(PaceEngine.paceCellValue(target: target, setIndex: 3, loggedSoFar: 500, columnWeight: 0))
     }
 
-    // MARK: - Ratcheted pace cell (monotonic across sets)
+    // MARK: - Even pace cell (spreadsheet-ported "reps needed" formula)
 
-    private let ratchetTarget = ComparisonTarget(
-        kind: .lastLogged, date: .now, totalWeightMoved: 200,
-        setWeightsMoved: [100, 100], reps: [2, 2], weightLabels: ["50", "50"])
-
-    func testRatchetedPaceCellClampsDownAfterMeetingRequirement() {
-        // Set 1 needed 3 (raw ceil of 2.01) and got exactly 3 -- met it.
-        let logged = [PaceEngine.LoggedSetEntry(rawWeight: 50, effectiveWeightMoved: 150, reps: 3)]
-        // Unclamped, a much lighter set-2 weight would raw out to needing 6
-        // reps -- but since set 1 was met, set 2 must not demand more than 3.
-        guard let cell = PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: logged,
-                                                           upcomingSetIndex: 2, upcomingRawWeight: 10) else {
-            return XCTFail("Expected a cell value")
-        }
-        XCTAssertEqual(cell, 3, accuracy: 1e-9)
-    }
-
-    func testRatchetedPaceCellClampsUpAfterFallingShort() {
-        // Set 1 needed 3 but only got 1 -- fell short.
-        let logged = [PaceEngine.LoggedSetEntry(rawWeight: 50, effectiveWeightMoved: 50, reps: 1)]
-        // Unclamped, a much heavier set-2 weight would raw out to needing
-        // only 2 reps -- but since set 1 fell short, set 2 must not demand
-        // fewer than 3.
-        guard let cell = PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: logged,
-                                                           upcomingSetIndex: 2, upcomingRawWeight: 100) else {
-            return XCTFail("Expected a cell value")
-        }
-        XCTAssertEqual(cell, 3, accuracy: 1e-9)
-    }
-
-    func testRatchetedPaceCellNilWithoutAnUpcomingWeight() {
-        XCTAssertNil(PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: [],
-                                                       upcomingSetIndex: 1, upcomingRawWeight: 0))
-    }
-
-    /// Reproduces a real reported bug: Low Incline DB Press, previous
-    /// workout 12/9/5 reps @ 25/30/35. Set 1 needed 13 and got exactly 13
-    /// (met); set 2 needed 9 (a lighter requirement than set 1's 13, since
-    /// it's a different weight) and got exactly 9 (also met). Set 3 should
-    /// then need 5 -- just enough to beat the 745 lb total outright -- not
-    /// 13, which is what a version of the ratchet that compared set 2's 9
-    /// reps against set 1's 13-rep requirement (instead of set 2's own
-    /// 9-rep requirement) incorrectly produced.
-    func testRatchetDoesNotCompareASetAgainstADifferentSetsRequirement() {
-        let set1: Double = 300   // 25 lbs x 12 reps
-        let set2: Double = 270   // 30 lbs x 9 reps
-        let set3: Double = 175   // 35 lbs x 5 reps
-        let total: Double = 745
-        let previousWorkout = ComparisonTarget(
-            kind: .lastLogged, date: .now, totalWeightMoved: total,
-            setWeightsMoved: [set1, set2, set3],
-            reps: [12, 9, 5], weightLabels: ["25", "30", "35"])
-        let logged = [
-            PaceEngine.LoggedSetEntry(rawWeight: 25, effectiveWeightMoved: 325, reps: 13),
-            PaceEngine.LoggedSetEntry(rawWeight: 30, effectiveWeightMoved: 270, reps: 9),
-        ]
-        guard let cell = PaceEngine.ratchetedPaceCellValue(target: previousWorkout, loggedSets: logged,
-                                                           upcomingSetIndex: 3, upcomingRawWeight: 35) else {
-            return XCTFail("Expected a cell value")
-        }
-        XCTAssertEqual(cell, 5, accuracy: 1e-9)
-    }
-
-    /// The clamp applies whether or not the weight changed -- reuses the
-    /// exact numbers from testRatchetedPaceCellClampsUpAfterFallingShort
-    /// (set 1 needed 3, got 1, fell short) but treats set 2 as the
-    /// target's own last set. Unclamped, set 2 at 100 lbs only needs 2
-    /// reps to cross the win threshold (201); without isFinalSet the
-    /// ordinary "fell short, can't ask for less" clamp would force it up
-    /// to 3, overstating what's actually needed to win.
-    func testFinalSetIgnoresTheClamp() {
-        let logged = [PaceEngine.LoggedSetEntry(rawWeight: 50, effectiveWeightMoved: 50, reps: 1)]
-        guard let cell = PaceEngine.ratchetedPaceCellValue(target: ratchetTarget, loggedSets: logged,
-                                                           upcomingSetIndex: 2, upcomingRawWeight: 100,
-                                                           isFinalSet: true) else {
-            return XCTFail("Expected a cell value")
-        }
-        XCTAssertEqual(cell, 2, accuracy: 1e-9)
-    }
-
-    /// Reproduces a real reported bug: Safety Squats, target 145/145/145/
-    /// 155/155/155 lbs x 6/7/7/5/5/5 (total 5225). Logging 5/8/9/4 in sets
-    /// 1-4 correctly showed "need 4" for set 4 at 155 lbs and it was hit
-    /// exactly. Set 5 is also 155 lbs -- same weight, and the set before it
-    /// was just met -- so per the "just hit it, can't demand more" rule it
-    /// must not ask for more than 4 either, even though the raw pro-rata
-    /// math (which doesn't know about the ratchet) would want 5. Set 6 is
-    /// 155 lbs too and is ALSO the true final set: this is the one place
-    /// the same "just hit it" rule has to be overridden by isFinalSet,
-    /// since only the literal win-threshold math (6) is actually correct
-    /// there -- clamping it down to 4 like set 5 would tell the lifter 4
-    /// reps are enough to win when they're 155 lbs short of the total.
-    func testRatchetNeverIncreasesAfterAHitAtTheSameWeightExceptOnTheFinalSet() {
-        let target = ComparisonTarget(
+    /// Real reported scenario: Safety Squats, target 145/145/145/155/155/
+    /// 155 lbs x 6/7/7/5/5/5 (total 5225). After logging 5/6/6/6 in sets
+    /// 1-4 (today's own total so far: 725+870+870+930 = 3395), the deficit
+    /// is 5225-3395 = 1830 with 2 sets (5 sets) remaining -- average of the
+    /// target's own weight at set positions 5 and 6 (155, 155) is 155, so
+    /// ROUNDUP(1830/155/2) = 6.
+    func testEvenPaceCellSpreadsTheDeficitAcrossRemainingSets() {
+        let safetySquats = ComparisonTarget(
             kind: .lastLogged, date: .now, totalWeightMoved: 5225,
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
+            weights: [145, 145, 145, 155, 155, 155],
             reps: [6, 7, 7, 5, 5, 5],
             weightLabels: ["145", "145", "145", "155", "155", "155"])
-        let throughSet4 = [
-            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 725, reps: 5),
-            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1160, reps: 8),
-            PaceEngine.LoggedSetEntry(rawWeight: 145, effectiveWeightMoved: 1305, reps: 9),
-            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 620, reps: 4),
-        ]
-        guard let needForSet5 = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: throughSet4,
-                                                                   upcomingSetIndex: 5, upcomingRawWeight: 155) else {
+        guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3395,
+                                                       setsLoggedSoFar: 4, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
         }
-        XCTAssertEqual(needForSet5, 4, accuracy: 1e-9)
+        XCTAssertEqual(cell, 6, accuracy: 1e-9)
+    }
 
-        let throughSet5 = throughSet4 + [
-            PaceEngine.LoggedSetEntry(rawWeight: 155, effectiveWeightMoved: 620, reps: 4),
-        ]
-        guard let needForSet6 = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: throughSet5,
-                                                                   upcomingSetIndex: 6, upcomingRawWeight: 155,
-                                                                   isFinalSet: true) else {
+    /// Continuing the same scenario: logging only 3 reps (not 6) in set 5
+    /// brings today's total to 3395 + 155*3 = 3860, deficit 5225-3860 =
+    /// 1365, with exactly 1 set remaining at 155 lbs -- ROUNDUP(1365/155)
+    /// = 9. On this last remaining set the average collapses to that one
+    /// set's own weight, so this is also the literal number of reps
+    /// needed to cross the target's total outright.
+    func testEvenPaceCellOnTheLastRemainingSetIsTheLiteralWinThreshold() {
+        let safetySquats = ComparisonTarget(
+            kind: .lastLogged, date: .now, totalWeightMoved: 5225,
+            setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
+            weights: [145, 145, 145, 155, 155, 155],
+            reps: [6, 7, 7, 5, 5, 5],
+            weightLabels: ["145", "145", "145", "155", "155", "155"])
+        guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3860,
+                                                       setsLoggedSoFar: 5, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
         }
-        XCTAssertEqual(needForSet6, 6, accuracy: 1e-9)
+        XCTAssertEqual(cell, 9, accuracy: 1e-9)
+    }
+
+    func testEvenPaceCellNilWhenNoSetsRemain() {
+        XCTAssertNil(PaceEngine.evenPaceCellValue(target: target, loggedSoFar: 1000,
+                                                   setsLoggedSoFar: 5, totalSetsToday: 5))
+    }
+
+    func testEvenPaceCellNilWithoutTargetData() {
+        let empty = ComparisonTarget(kind: .lastLogged, date: nil, totalWeightMoved: 0,
+                                     setWeightsMoved: [], weights: [], reps: [], weightLabels: [])
+        XCTAssertNil(PaceEngine.evenPaceCellValue(target: empty, loggedSoFar: 0,
+                                                   setsLoggedSoFar: 0, totalSetsToday: 3))
+    }
+
+    /// A single-set target should behave the same as any other final set:
+    /// the "average" of one weight is just that weight.
+    func testEvenPaceCellWithASingleSetTarget() {
+        let oneSet = ComparisonTarget(
+            kind: .lastLogged, date: .now, totalWeightMoved: 200, setWeightsMoved: [200],
+            weights: [40], reps: [5], weightLabels: ["40"])
+        guard let cell = PaceEngine.evenPaceCellValue(target: oneSet, loggedSoFar: 0,
+                                                       setsLoggedSoFar: 0, totalSetsToday: 1) else {
+            return XCTFail("Expected a cell value")
+        }
+        XCTAssertEqual(cell, 5, accuracy: 1e-9) // ROUNDUP(200/40/1) = 5
     }
 }

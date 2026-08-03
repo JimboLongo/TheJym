@@ -2170,17 +2170,6 @@ struct PaceRow: View {
         guard totalReps > 0 else { return 0 }
         return loggedSoFar / Double(totalReps)
     }
-    /// Each already-logged set's own numbers, in the shape the ratcheted
-    /// pace math needs to reconstruct what each set's own requirement was.
-    private var loggedSetEntries: [PaceEngine.LoggedSetEntry] {
-        draft.sets.filter(\.isLogged).map { s in
-            let raw = s.weight ?? 0
-            let effective = draft.isBodyweight ? raw + (currentBodyweight ?? 0) : raw
-            return PaceEngine.LoggedSetEntry(rawWeight: raw, effectiveWeightMoved: effective * Double(s.reps ?? 0),
-                                             reps: s.reps ?? 0)
-        }
-    }
-
     /// Whole reps (rounded up — a partial rep still costs you a full one).
     private func repsEquivalent(_ lbsDelta: Double) -> String {
         guard avgWeightPerRep > 0 else { return "0 reps" }
@@ -2279,17 +2268,15 @@ struct PaceRow: View {
         }
     }
 
-    /// The pro-rata pace cell for the upcoming set, ratcheted against the
-    /// previous set's own requirement (PaceEngine.ratchetedPaceCellValue) —
-    /// nil (and so nothing rendered here) once there's no next set left to
+    /// The even-pace cell for the upcoming set (PaceEngine.evenPaceCellValue)
+    /// — nil (and so nothing rendered here) once there's no next set left to
     /// give a pace reading for.
     @ViewBuilder
     private var paceCellLabel: some View {
-        let setIndex = draft.sets.filter(\.isLogged).count + 1
-        if let cell = PaceEngine.ratchetedPaceCellValue(target: target, loggedSets: loggedSetEntries,
-                                                        upcomingSetIndex: setIndex,
-                                                        upcomingRawWeight: remainingWeights.first ?? 0,
-                                                        isFinalSet: remainingWeights.count == 1) {
+        let setsLoggedSoFar = draft.sets.filter(\.isLogged).count
+        if let cell = PaceEngine.evenPaceCellValue(target: target, loggedSoFar: loggedSoFar,
+                                                    setsLoggedSoFar: setsLoggedSoFar,
+                                                    totalSetsToday: draft.sets.count) {
             // Whole reps only — you can't do a fractional one. Round toward
             // whichever direction doesn't overstate the claim: floor "ahead"
             // (don't claim more cushion than's actually banked), ceil "need"
