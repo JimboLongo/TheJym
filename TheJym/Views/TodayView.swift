@@ -514,6 +514,7 @@ struct TodayView: View {
 /// here is safe to do out of order without disturbing that.
 struct RestDayLogView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \RestDayActivity.date, order: .reverse) private var allActivities: [RestDayActivity]
     @Query(sort: \ActiveRecovery.date, order: .reverse) private var allActiveRecoveries: [ActiveRecovery]
@@ -711,6 +712,7 @@ struct RestDayLogView: View {
         session.phase = phase
         context.insert(session)
         try? context.save()
+        dismiss()
     }
 
     /// Undoes logPlainRestDay() for the selected date — a no-op if nothing's
@@ -754,6 +756,7 @@ struct RestDayLogView: View {
         try? context.save()
         activityName = ""
         distanceText = ""
+        dismiss()
     }
 
     private func saveExercises() {
@@ -785,6 +788,7 @@ struct RestDayLogView: View {
         }
         try? context.save()
         exercises = [ExDraft()]
+        dismiss()
     }
 }
 
