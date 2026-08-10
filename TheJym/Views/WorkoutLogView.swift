@@ -1755,11 +1755,10 @@ struct ExercisePageView: View {
                                 scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
                             }
                         } label: {
-                            Label("Add Set", systemImage: "plus.circle.fill")
-                                .font(.caption)
+                            Image(systemName: "plus.circle.fill")
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.green)
                         .id("repTotalBottomAnchor")
                     }
 
