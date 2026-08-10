@@ -1773,11 +1773,11 @@ struct ExercisePageView: View {
                     }
                     .frame(width: 24)
 
-                    Spacer()
-
-                    // Fixed-width delete slot so it lands at the same x
-                    // position on every row, last row (which also has the
-                    // Add Set slot before it) included.
+                    // Fixed-width delete slot, right after Add Set's (with
+                    // the row's normal 12pt gap, not pushed out toward the
+                    // trailing edge) so it lands at the same x position on
+                    // every row, last row (which also has the Add Set slot
+                    // before it) included.
                     Group {
                         if draft.sets.count > 1 {
                             Button {
