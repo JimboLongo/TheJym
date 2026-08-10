@@ -1753,12 +1753,13 @@ struct ExercisePageView: View {
                     Button {
                         let carryWeight = draft.sets.last?.weightText ?? ""
                         draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
-                        // The new set lands below the fixed-height scroll
-                        // area's fold — scroll it into view once the
-                        // appended row has actually laid out, not on this
-                        // same run-loop turn (the anchor's still on the old
-                        // last row until then, so scrolling immediately
-                        // targets the wrong spot).
+                        // Scroll to the marker below every row, not this
+                        // button itself — the button's small icon sits
+                        // vertically centered in its (much taller) row, so
+                        // anchoring on it left the bottom of the new row
+                        // still clipped. Deferred a run-loop turn since the
+                        // marker hasn't moved down to sit below the new row
+                        // until it's actually laid out.
                         DispatchQueue.main.async {
                             withAnimation {
                                 scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
@@ -1773,7 +1774,6 @@ struct ExercisePageView: View {
                     .disabled(!isLastRow)
                     .allowsHitTesting(isLastRow)
                     .frame(width: 24)
-                    .id(isLastRow ? "repTotalBottomAnchor" : "repTotalAddSetPlaceholder-\(i)")
 
                     // Delete, right after Add Set's slot (with the row's
                     // normal 12pt gap, not pushed out toward the trailing
@@ -1794,6 +1794,12 @@ struct ExercisePageView: View {
                     .frame(width: 24)
                 }
             }
+
+            // Scroll target for the Add Set button above — sits below every
+            // row, so scrolling to it always reaches the true bottom of the
+            // list instead of stopping wherever the last row's own Add Set
+            // icon happens to be.
+            Color.clear.frame(height: 1).id("repTotalBottomAnchor")
         }
     }
 
