@@ -31,17 +31,20 @@ struct ComparisonTarget: Identifiable {
     /// Per-set resolved weight label — paired with `reps` (same index) in a
     /// SetsGrid.
     let weightLabels: [String]
-    /// For `.lastLogged` only: how many sessions in a row (ending at this
-    /// one, going backward through history) used this exact weights
-    /// sequence — powers the "(2x)", "(3x)", etc. suffix on its label.
-    let weightsStreak: Int
+    /// How many times this kind's own criterion has occurred in history —
+    /// for `.lastLogged`, sessions in a row (ending at this one, going
+    /// backward through history) at this exact weights sequence; for
+    /// `.bestAtTheseWeights`, total sessions ever logged at these weights;
+    /// for `.bestForExercise`, total sessions ever logged with this rep/set
+    /// structure. Powers the "(2x)", "(3x)", etc. suffix on the label.
+    let occurrenceCount: Int
     var hasData: Bool { date != nil }
 
-    /// The kind's display name, with a "(Nx)" streak suffix appended for
-    /// `.lastLogged` once there's actually a previous workout to count.
+    /// The kind's display name, with a "(Nx)" occurrence-count suffix
+    /// appended once there's actually a log to count.
     var label: String {
-        guard kind == .lastLogged, hasData else { return kind.rawValue }
-        return "\(kind.rawValue) (\(weightsStreak)x)"
+        guard hasData else { return kind.rawValue }
+        return "\(kind.rawValue) (\(occurrenceCount)x)"
     }
 }
 
@@ -73,17 +76,15 @@ enum PaceEngine {
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
         let lastStreak = last.map { consecutiveWeightsStreak(endingAt: $0, in: byName) } ?? 1
-        let bestWeights = currentWeights.isEmpty ? nil : byName
-            .filter({ $0.weightsKey == weightsKey })
-            .max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
-        let bestPlan = byName
-            .filter({ $0.planKey == planKey })
-            .max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
+        let atWeights = currentWeights.isEmpty ? [] : byName.filter({ $0.weightsKey == weightsKey })
+        let bestWeights = atWeights.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
+        let atPlan = byName.filter({ $0.planKey == planKey })
+        let bestPlan = atPlan.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
 
         return [
-            target(.lastLogged, from: last, weightsStreak: lastStreak),
-            target(.bestAtTheseWeights, from: bestWeights),
-            target(.bestForExercise, from: bestPlan),
+            target(.lastLogged, from: last, occurrenceCount: lastStreak),
+            target(.bestAtTheseWeights, from: bestWeights, occurrenceCount: atWeights.count),
+            target(.bestForExercise, from: bestPlan, occurrenceCount: atPlan.count),
         ]
     }
 
@@ -102,9 +103,9 @@ enum PaceEngine {
         return count
     }
 
-    private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, weightsStreak: Int = 1) -> ComparisonTarget {
+    private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, occurrenceCount: Int = 1) -> ComparisonTarget {
         guard let log else {
-            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], weights: [], reps: [], weightLabels: [], weightsStreak: 1)
+            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], weights: [], reps: [], weightLabels: [], occurrenceCount: 1)
         }
         let sortedSets = log.sortedSets
         return ComparisonTarget(kind: kind,
@@ -114,7 +115,7 @@ enum PaceEngine {
                                 weights: sortedSets.map(\.weight),
                                 reps: sortedSets.map(\.reps),
                                 weightLabels: weightLabels(for: log),
-                                weightsStreak: weightsStreak)
+                                occurrenceCount: occurrenceCount)
     }
 
     /// "135/135/135 lbs" for a normal log, or "BW+25/BW+25/BW+25 (172 BW)
@@ -153,14 +154,14 @@ enum PaceEngine {
         let totalWeightMoved: Double
         let reps: [Int]
         let weightLabels: [String]
-        /// See `ComparisonTarget.weightsStreak`.
-        let weightsStreak: Int
+        /// See `ComparisonTarget.occurrenceCount`.
+        let occurrenceCount: Int
         var hasData: Bool { date != nil }
 
         /// See `ComparisonTarget.label`.
         var label: String {
-            guard kind == .lastLogged, hasData else { return kind.rawValue }
-            return "\(kind.rawValue) (\(weightsStreak)x)"
+            guard hasData else { return kind.rawValue }
+            return "\(kind.rawValue) (\(occurrenceCount)x)"
         }
     }
 
@@ -181,12 +182,13 @@ enum PaceEngine {
         let lastStreak = last.map { consecutiveWeightsStreak(endingAt: $0, in: byName) } ?? 1
         let atWeights = currentWeightsKey.isEmpty ? [] : byName.filter { $0.weightsKey == currentWeightsKey }
         let bestAtWeights = bestRepTotalLog(among: atWeights)
-        let bestOverall = bestRepTotalLog(among: byName.filter { $0.planKey == planKey })
+        let atPlan = byName.filter { $0.planKey == planKey }
+        let bestOverall = bestRepTotalLog(among: atPlan)
 
         return [
-            repTotalTarget(.lastLogged, from: last, weightsStreak: lastStreak),
-            repTotalTarget(.bestAtTheseWeights, from: bestAtWeights),
-            repTotalTarget(.bestForExercise, from: bestOverall),
+            repTotalTarget(.lastLogged, from: last, occurrenceCount: lastStreak),
+            repTotalTarget(.bestAtTheseWeights, from: bestAtWeights, occurrenceCount: atWeights.count),
+            repTotalTarget(.bestForExercise, from: bestOverall, occurrenceCount: atPlan.count),
         ]
     }
 
@@ -200,10 +202,10 @@ enum PaceEngine {
         return logs.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
     }
 
-    private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, weightsStreak: Int = 1) -> RepTotalComparisonTarget {
+    private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, occurrenceCount: Int = 1) -> RepTotalComparisonTarget {
         guard let log else {
             return RepTotalComparisonTarget(kind: kind, date: nil, setsToComplete: nil,
-                                            totalWeightMoved: 0, reps: [], weightLabels: [], weightsStreak: 1)
+                                            totalWeightMoved: 0, reps: [], weightLabels: [], occurrenceCount: 1)
         }
         let sortedSets = log.sortedSets
         return RepTotalComparisonTarget(kind: kind,
@@ -212,7 +214,7 @@ enum PaceEngine {
                                         totalWeightMoved: log.totalWeightMoved,
                                         reps: sortedSets.map(\.reps),
                                         weightLabels: weightLabels(for: log),
-                                        weightsStreak: weightsStreak)
+                                        occurrenceCount: occurrenceCount)
     }
 
     /// "Finish in N more sets for a PR" — how many sets of room are left
