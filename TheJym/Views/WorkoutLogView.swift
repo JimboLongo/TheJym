@@ -1741,23 +1741,27 @@ struct ExercisePageView: View {
                         }
                     }
 
-                    // Add Set (last row only) and delete share this trailing
-                    // region, spaced evenly across it — from the wheel's
-                    // right edge to the screen's — rather than Add Set
-                    // sitting flush against the wheel with all the slack
-                    // pushed into one gap before delete.
-                    HStack(spacing: 0) {
-                        Spacer()
+                    // Add Set's slot — right after the wheel rather than
+                    // floating out in the trailing gap — reserves its width
+                    // on every row (even where empty) so delete's position
+                    // below doesn't shift depending on whether this happens
+                    // to be the last row.
+                    Group {
                         if i == draft.sets.count - 1 {
                             Button {
                                 let carryWeight = draft.sets.last?.weightText ?? ""
                                 draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
                                 // The new set lands below the fixed-height
                                 // scroll area's fold — scroll it into view
-                                // instead of leaving it hidden until the
-                                // user notices and scrolls manually.
-                                withAnimation {
-                                    scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
+                                // once the appended row has actually laid
+                                // out, not on this same run-loop turn (the
+                                // anchor's still on the old last row until
+                                // then, so scrolling immediately targets
+                                // the wrong spot).
+                                DispatchQueue.main.async {
+                                    withAnimation {
+                                        scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
+                                    }
                                 }
                             } label: {
                                 Image(systemName: "plus.circle.fill")
@@ -1766,7 +1770,15 @@ struct ExercisePageView: View {
                             .foregroundStyle(.green)
                             .id("repTotalBottomAnchor")
                         }
-                        Spacer()
+                    }
+                    .frame(width: 24)
+
+                    Spacer()
+
+                    // Fixed-width delete slot so it lands at the same x
+                    // position on every row, last row (which also has the
+                    // Add Set slot before it) included.
+                    Group {
                         if draft.sets.count > 1 {
                             Button {
                                 draft.sets.remove(at: i)
@@ -1777,8 +1789,8 @@ struct ExercisePageView: View {
                             .buttonStyle(.plain)
                             .foregroundStyle(.red)
                         }
-                        Spacer()
                     }
+                    .frame(width: 24)
                 }
             }
         }
