@@ -1741,6 +1741,27 @@ struct ExercisePageView: View {
                         }
                     }
 
+                    // Lives on the last row, right after its reps wheel,
+                    // instead of as its own row below everything.
+                    if i == draft.sets.count - 1 {
+                        Button {
+                            let carryWeight = draft.sets.last?.weightText ?? ""
+                            draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
+                            // The new set lands below the fixed-height
+                            // scroll area's fold — scroll it into view
+                            // instead of leaving it hidden until the user
+                            // notices and scrolls manually.
+                            withAnimation {
+                                scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
+                            }
+                        } label: {
+                            Label("Add Set", systemImage: "plus.circle.fill")
+                                .font(.subheadline)
+                        }
+                        .buttonStyle(.bordered)
+                        .id("repTotalBottomAnchor")
+                    }
+
                     Spacer()
 
                     if draft.sets.count > 1 {
@@ -1755,26 +1776,6 @@ struct ExercisePageView: View {
                     }
                 }
             }
-
-            Button {
-                let carryWeight = draft.sets.last?.weightText ?? ""
-                draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
-                // The new set lands below the fixed-height scroll area's
-                // fold — scroll it into view instead of leaving it hidden
-                // until the user notices and scrolls manually.
-                withAnimation {
-                    scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
-                }
-            } label: {
-                Label("Add Set", systemImage: "plus.circle.fill")
-                    .font(.subheadline)
-            }
-            .buttonStyle(.bordered)
-            // Counteracts the VStack's own -8 spacing (see repTotalSetRows'
-            // doc) so Add Set keeps a real gap below the last wheel instead
-            // of overlapping it the same way adjacent set rows do.
-            .padding(.top, 20)
-            .id("repTotalBottomAnchor")
         }
     }
 
