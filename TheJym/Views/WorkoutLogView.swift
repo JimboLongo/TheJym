@@ -1741,38 +1741,43 @@ struct ExercisePageView: View {
                         }
                     }
 
-                    // Lives on the last row, right after its reps wheel,
-                    // instead of as its own row below everything.
-                    if i == draft.sets.count - 1 {
-                        Button {
-                            let carryWeight = draft.sets.last?.weightText ?? ""
-                            draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
-                            // The new set lands below the fixed-height
-                            // scroll area's fold — scroll it into view
-                            // instead of leaving it hidden until the user
-                            // notices and scrolls manually.
-                            withAnimation {
-                                scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
+                    // Add Set (last row only) and delete share this trailing
+                    // region, spaced evenly across it — from the wheel's
+                    // right edge to the screen's — rather than Add Set
+                    // sitting flush against the wheel with all the slack
+                    // pushed into one gap before delete.
+                    HStack(spacing: 0) {
+                        Spacer()
+                        if i == draft.sets.count - 1 {
+                            Button {
+                                let carryWeight = draft.sets.last?.weightText ?? ""
+                                draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
+                                // The new set lands below the fixed-height
+                                // scroll area's fold — scroll it into view
+                                // instead of leaving it hidden until the
+                                // user notices and scrolls manually.
+                                withAnimation {
+                                    scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
+                                }
+                            } label: {
+                                Image(systemName: "plus.circle.fill")
                             }
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.green)
+                            .id("repTotalBottomAnchor")
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.green)
-                        .id("repTotalBottomAnchor")
-                    }
-
-                    Spacer()
-
-                    if draft.sets.count > 1 {
-                        Button {
-                            draft.sets.remove(at: i)
-                            checkAutoCollapse()
-                        } label: {
-                            Image(systemName: "minus.circle")
+                        Spacer()
+                        if draft.sets.count > 1 {
+                            Button {
+                                draft.sets.remove(at: i)
+                                checkAutoCollapse()
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.red)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.red)
+                        Spacer()
                     }
                 }
             }
