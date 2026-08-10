@@ -1756,9 +1756,10 @@ struct ExercisePageView: View {
                             }
                         } label: {
                             Label("Add Set", systemImage: "plus.circle.fill")
-                                .font(.subheadline)
+                                .font(.caption)
                         }
                         .buttonStyle(.bordered)
+                        .controlSize(.mini)
                         .id("repTotalBottomAnchor")
                     }
 
