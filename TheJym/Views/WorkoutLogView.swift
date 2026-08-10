@@ -1190,8 +1190,10 @@ struct ExercisePageView: View {
                     case .fixedSets:
                         setRows
                     case .repTotal:
-                        ScrollView {
-                            repTotalSetRows
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                repTotalSetRows(scrollProxy: proxy)
+                            }
                         }
                         .frame(maxHeight: 260)
                     }
@@ -1699,7 +1701,7 @@ struct ExercisePageView: View {
     /// repTotal logging: open-ended set list (no fixed target per set) with
     /// an "Add Set" button, and a delete affordance once there's more than
     /// one set (so an accidental extra Add Set isn't a dead end).
-    private var repTotalSetRows: some View {
+    private func repTotalSetRows(scrollProxy: ScrollViewProxy) -> some View {
         // -8, matching setRows' own overlap: each wheel row already centers
         // its selected value within its own tall frame, so any positive
         // gap here just reads as extra dead space between sets — more
@@ -1757,6 +1759,12 @@ struct ExercisePageView: View {
             Button {
                 let carryWeight = draft.sets.last?.weightText ?? ""
                 draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
+                // The new set lands below the fixed-height scroll area's
+                // fold — scroll it into view instead of leaving it hidden
+                // until the user notices and scrolls manually.
+                withAnimation {
+                    scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
+                }
             } label: {
                 Label("Add Set", systemImage: "plus.circle.fill")
                     .font(.subheadline)
@@ -1766,6 +1774,7 @@ struct ExercisePageView: View {
             // doc) so Add Set keeps a real gap below the last wheel instead
             // of overlapping it the same way adjacent set rows do.
             .padding(.top, 20)
+            .id("repTotalBottomAnchor")
         }
     }
 
