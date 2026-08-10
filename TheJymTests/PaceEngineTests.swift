@@ -11,13 +11,14 @@
 //
 
 import XCTest
+import SwiftData
 @testable import TheJym
 
 final class PaceEngineTests: XCTestCase {
     private let target = ComparisonTarget(
         kind: .lastLogged, date: .now, totalWeightMoved: 1000,
         setWeightsMoved: [200, 200, 200, 200, 200], weights: [20, 20, 20, 20, 20],
-        reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"])
+        reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"], weightsStreak: 1)
 
     func testMilestoneAtSetIndexWithinTargetsOwnSetCount() {
         // Through set 3: cumulative 600, share 0.6 of 1000 -> 0.6 * 1001 = 600.6
@@ -66,7 +67,7 @@ final class PaceEngineTests: XCTestCase {
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
             weights: [145, 145, 145, 155, 155, 155],
             reps: [6, 7, 7, 5, 5, 5],
-            weightLabels: ["145", "145", "145", "155", "155", "155"])
+            weightLabels: ["145", "145", "145", "155", "155", "155"], weightsStreak: 1)
         guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3395,
                                                        setsLoggedSoFar: 4, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
@@ -86,7 +87,7 @@ final class PaceEngineTests: XCTestCase {
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
             weights: [145, 145, 145, 155, 155, 155],
             reps: [6, 7, 7, 5, 5, 5],
-            weightLabels: ["145", "145", "145", "155", "155", "155"])
+            weightLabels: ["145", "145", "145", "155", "155", "155"], weightsStreak: 1)
         guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3860,
                                                        setsLoggedSoFar: 5, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
@@ -101,7 +102,7 @@ final class PaceEngineTests: XCTestCase {
 
     func testEvenPaceCellNilWithoutTargetData() {
         let empty = ComparisonTarget(kind: .lastLogged, date: nil, totalWeightMoved: 0,
-                                     setWeightsMoved: [], weights: [], reps: [], weightLabels: [])
+                                     setWeightsMoved: [], weights: [], reps: [], weightLabels: [], weightsStreak: 1)
         XCTAssertNil(PaceEngine.evenPaceCellValue(target: empty, loggedSoFar: 0,
                                                    setsLoggedSoFar: 0, totalSetsToday: 3))
     }
@@ -111,11 +112,112 @@ final class PaceEngineTests: XCTestCase {
     func testEvenPaceCellWithASingleSetTarget() {
         let oneSet = ComparisonTarget(
             kind: .lastLogged, date: .now, totalWeightMoved: 200, setWeightsMoved: [200],
-            weights: [40], reps: [5], weightLabels: ["40"])
+            weights: [40], reps: [5], weightLabels: ["40"], weightsStreak: 1)
         guard let cell = PaceEngine.evenPaceCellValue(target: oneSet, loggedSoFar: 0,
                                                        setsLoggedSoFar: 0, totalSetsToday: 1) else {
             return XCTFail("Expected a cell value")
         }
         XCTAssertEqual(cell, 5, accuracy: 1e-9) // ROUNDUP(200/40/1) = 5
+    }
+
+    // MARK: - "Previous Workout (Nx)" weights streak
+
+    @MainActor
+    private func makeContext() -> ModelContext {
+        let container = try! ModelContainer(
+            for: WorkoutSession.self, ExerciseLog.self, SetLog.self,
+            configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+        )
+        return ModelContext(container)
+    }
+
+    /// A completed log of `exerciseName` at `weights` (one set each, all the
+    /// same rep count), `daysAgo` days back.
+    @MainActor
+    @discardableResult
+    private func log(_ exerciseName: String, weights: [Double], daysAgo: Int, context: ModelContext) -> ExerciseLog {
+        let date = Calendar.current.date(byAdding: .day, value: -daysAgo, to: .now)!
+        let session = WorkoutSession(date: date, dayLabel: "Day", cycleNumber: 1)
+        context.insert(session)
+        let targetReps = Array(repeating: 8, count: weights.count)
+        let exerciseLog = ExerciseLog(exerciseName: exerciseName, targetReps: targetReps, order: 0)
+        exerciseLog.session = session
+        context.insert(exerciseLog)
+        for (i, w) in weights.enumerated() {
+            let set = SetLog(index: i, weight: w, reps: 8)
+            set.exerciseLog = exerciseLog
+            context.insert(set)
+        }
+        return exerciseLog
+    }
+
+    /// Reported scenario: the same weights logged twice in a row (the
+    /// oldest at these weights, then the most recent — "Previous Workout"),
+    /// with today's session (not yet saved, so absent from `allLogs`) about
+    /// to be the 3rd. The most recent log is only the 2nd consecutive
+    /// occurrence, so its streak — and label — should read "(2x)", not
+    /// "(3x)" (which would double-count today before it's even logged).
+    @MainActor
+    func testLastLoggedStreakCountsConsecutiveSessionsAtTheSameWeights() {
+        let context = makeContext()
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
+            return XCTFail("Expected a .lastLogged comparison")
+        }
+        XCTAssertEqual(lastLogged.weightsStreak, 2)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
+    }
+
+    /// Same shape, but the session before "Previous Workout" was at
+    /// different weights — so "Previous Workout" is only the 1st time in a
+    /// row at 135s, and the label should read "(1x)".
+    @MainActor
+    func testLastLoggedStreakResetsWhenThePriorSessionUsedDifferentWeights() {
+        let context = makeContext()
+        log("Bench Press", weights: [130, 130, 130], daysAgo: 14, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
+            return XCTFail("Expected a .lastLogged comparison")
+        }
+        XCTAssertEqual(lastLogged.weightsStreak, 1)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (1x)")
+    }
+
+    /// Three sessions in a row at the same weights should read "(3x)" on
+    /// the most recent one.
+    @MainActor
+    func testLastLoggedStreakCountsThreeInARow() {
+        let context = makeContext()
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 21, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
+            return XCTFail("Expected a .lastLogged comparison")
+        }
+        XCTAssertEqual(lastLogged.weightsStreak, 3)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (3x)")
+    }
+
+    /// No prior log at all — no streak count should be shown.
+    func testLastLoggedLabelHasNoStreakSuffixWithoutData() {
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: [])
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
+            return XCTFail("Expected a .lastLogged comparison")
+        }
+        XCTAssertEqual(lastLogged.label, "Previous Workout")
     }
 }

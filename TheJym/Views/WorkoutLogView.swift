@@ -1204,8 +1204,8 @@ struct ExercisePageView: View {
             // transition between any two rows below it.
             .padding(.top, -8)
 
-            // Pace panel — 4 real pages (Pace Calculator, Previous Workouts,
-            // Plate Calculator, Warm-Up Sets), each wrapped with an
+            // Pace panel — 4 real pages (Pace Calculator, Plate Calculator,
+            // Previous Workouts, Warm-Up Sets), each wrapped with an
             // invisible clone of its opposite neighbor on either side (tags
             // 0 and 5) so swiping past either end lands on a decoy that
             // onChange below silently snaps to the real page right after —
@@ -1216,8 +1216,8 @@ struct ExercisePageView: View {
             TabView(selection: $paceTabSelection) {
                 warmupPage.tag(0)          // decoy: swiping back past page 1 lands here
                 comparisonsPage.tag(1)     // Pace Calculator (real "page 0")
-                previousLogsPage.tag(2)
-                plateCalculatorPage.tag(3)
+                plateCalculatorPage.tag(2)
+                previousLogsPage.tag(3)
                 warmupPage.tag(4)
                 comparisonsPage.tag(5)     // decoy: swiping forward past page 4 lands here
             }
@@ -2105,7 +2105,7 @@ struct RepTotalPaceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(target.kind.rawValue).font(.caption.bold())
+                Text(target.label).font(.caption.bold())
                 Spacer()
                 if let date = target.date {
                     Text(Formatters.date.string(from: date))
@@ -2230,7 +2230,7 @@ struct PaceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(target.kind.rawValue).font(.caption.bold())
+                Text(target.label).font(.caption.bold())
                 Spacer()
                 if let date = target.date {
                     Text(Formatters.date.string(from: date))
@@ -2517,7 +2517,7 @@ struct CompletedSummaryPageView: View {
             case .fixedSets:
                 ForEach(comparisons(for: draft)) { c in
                     let result = fixedSetsResult(c, draft: draft)
-                    (Text("\(c.kind.rawValue): ").foregroundStyle(.secondary)
+                    (Text("\(c.label): ").foregroundStyle(.secondary)
                      + Text(result.text).foregroundStyle(result.color))
                         .font(.caption2)
                 }
@@ -2525,7 +2525,7 @@ struct CompletedSummaryPageView: View {
                 ForEach(repTotalComparisons(for: draft, target: target)) { c in
                     let result = repTotalResult(c, setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
                                                 loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
-                    (Text("\(c.kind.rawValue): ").foregroundStyle(.secondary)
+                    (Text("\(c.label): ").foregroundStyle(.secondary)
                      + Text(result.text).foregroundStyle(result.color))
                         .font(.caption2)
                 }

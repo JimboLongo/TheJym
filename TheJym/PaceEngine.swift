@@ -31,7 +31,18 @@ struct ComparisonTarget: Identifiable {
     /// Per-set resolved weight label — paired with `reps` (same index) in a
     /// SetsGrid.
     let weightLabels: [String]
+    /// For `.lastLogged` only: how many sessions in a row (ending at this
+    /// one, going backward through history) used this exact weights
+    /// sequence — powers the "(2x)", "(3x)", etc. suffix on its label.
+    let weightsStreak: Int
     var hasData: Bool { date != nil }
+
+    /// The kind's display name, with a "(Nx)" streak suffix appended for
+    /// `.lastLogged` once there's actually a previous workout to count.
+    var label: String {
+        guard kind == .lastLogged, hasData else { return kind.rawValue }
+        return "\(kind.rawValue) (\(weightsStreak)x)"
+    }
 }
 
 enum PaceEngine {
@@ -61,6 +72,7 @@ enum PaceEngine {
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
+        let lastStreak = last.map { consecutiveWeightsStreak(endingAt: $0, in: byName) } ?? 1
         let bestWeights = currentWeights.isEmpty ? nil : byName
             .filter({ $0.weightsKey == weightsKey })
             .max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
@@ -69,15 +81,30 @@ enum PaceEngine {
             .max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
 
         return [
-            target(.lastLogged, from: last),
+            target(.lastLogged, from: last, weightsStreak: lastStreak),
             target(.bestAtTheseWeights, from: bestWeights),
             target(.bestForExercise, from: bestPlan),
         ]
     }
 
-    private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> ComparisonTarget {
+    /// How many sessions in a row, counting backward in time from `log`
+    /// itself, share `log`'s exact weights sequence — 1 if the session
+    /// before it used different weights (or there was none). `logs` must
+    /// already be sorted most-recent-first and contain `log`.
+    private static func consecutiveWeightsStreak(endingAt log: ExerciseLog, in logs: [ExerciseLog]) -> Int {
+        guard let startIndex = logs.firstIndex(where: { $0 === log }) else { return 1 }
+        let key = log.weightsKey
+        var count = 0
+        for entry in logs[startIndex...] {
+            guard entry.weightsKey == key else { break }
+            count += 1
+        }
+        return count
+    }
+
+    private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, weightsStreak: Int = 1) -> ComparisonTarget {
         guard let log else {
-            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], weights: [], reps: [], weightLabels: [])
+            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], weights: [], reps: [], weightLabels: [], weightsStreak: 1)
         }
         let sortedSets = log.sortedSets
         return ComparisonTarget(kind: kind,
@@ -86,7 +113,8 @@ enum PaceEngine {
                                 setWeightsMoved: sortedSets.map { $0.weight * Double($0.reps) },
                                 weights: sortedSets.map(\.weight),
                                 reps: sortedSets.map(\.reps),
-                                weightLabels: weightLabels(for: log))
+                                weightLabels: weightLabels(for: log),
+                                weightsStreak: weightsStreak)
     }
 
     /// "135/135/135 lbs" for a normal log, or "BW+25/BW+25/BW+25 (172 BW)
@@ -125,7 +153,15 @@ enum PaceEngine {
         let totalWeightMoved: Double
         let reps: [Int]
         let weightLabels: [String]
+        /// See `ComparisonTarget.weightsStreak`.
+        let weightsStreak: Int
         var hasData: Bool { date != nil }
+
+        /// See `ComparisonTarget.label`.
+        var label: String {
+            guard kind == .lastLogged, hasData else { return kind.rawValue }
+            return "\(kind.rawValue) (\(weightsStreak)x)"
+        }
     }
 
     /// Same three kinds as `comparisons`, but for a repTotal exercise: shows
@@ -142,12 +178,13 @@ enum PaceEngine {
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
+        let lastStreak = last.map { consecutiveWeightsStreak(endingAt: $0, in: byName) } ?? 1
         let atWeights = currentWeightsKey.isEmpty ? [] : byName.filter { $0.weightsKey == currentWeightsKey }
         let bestAtWeights = bestRepTotalLog(among: atWeights)
         let bestOverall = bestRepTotalLog(among: byName.filter { $0.planKey == planKey })
 
         return [
-            repTotalTarget(.lastLogged, from: last),
+            repTotalTarget(.lastLogged, from: last, weightsStreak: lastStreak),
             repTotalTarget(.bestAtTheseWeights, from: bestAtWeights),
             repTotalTarget(.bestForExercise, from: bestOverall),
         ]
@@ -163,10 +200,10 @@ enum PaceEngine {
         return logs.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
     }
 
-    private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?) -> RepTotalComparisonTarget {
+    private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, weightsStreak: Int = 1) -> RepTotalComparisonTarget {
         guard let log else {
             return RepTotalComparisonTarget(kind: kind, date: nil, setsToComplete: nil,
-                                            totalWeightMoved: 0, reps: [], weightLabels: [])
+                                            totalWeightMoved: 0, reps: [], weightLabels: [], weightsStreak: 1)
         }
         let sortedSets = log.sortedSets
         return RepTotalComparisonTarget(kind: kind,
@@ -174,7 +211,8 @@ enum PaceEngine {
                                         setsToComplete: log.repTotalReached ? sortedSets.count : nil,
                                         totalWeightMoved: log.totalWeightMoved,
                                         reps: sortedSets.map(\.reps),
-                                        weightLabels: weightLabels(for: log))
+                                        weightLabels: weightLabels(for: log),
+                                        weightsStreak: weightsStreak)
     }
 
     /// "Finish in N more sets for a PR" — how many sets of room are left
