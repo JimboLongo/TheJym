@@ -1742,42 +1742,43 @@ struct ExercisePageView: View {
                     }
 
                     // Add Set's slot — right after the wheel rather than
-                    // floating out in the trailing gap — reserves its width
-                    // on every row (even where empty) so delete's position
-                    // below doesn't shift depending on whether this happens
-                    // to be the last row.
-                    Group {
-                        if i == draft.sets.count - 1 {
-                            Button {
-                                let carryWeight = draft.sets.last?.weightText ?? ""
-                                draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
-                                // The new set lands below the fixed-height
-                                // scroll area's fold — scroll it into view
-                                // once the appended row has actually laid
-                                // out, not on this same run-loop turn (the
-                                // anchor's still on the old last row until
-                                // then, so scrolling immediately targets
-                                // the wrong spot).
-                                DispatchQueue.main.async {
-                                    withAnimation {
-                                        scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
-                                    }
-                                }
-                            } label: {
-                                Image(systemName: "plus.circle.fill")
+                    // floating out in the trailing gap. Rendered on every
+                    // row, not just the last one — invisible and untappable
+                    // where it doesn't apply — so its 24pt column is always
+                    // really there instead of relying on an empty
+                    // conditional view to still reserve the same width,
+                    // which is what left delete misaligned between the last
+                    // row and every other one.
+                    let isLastRow = i == draft.sets.count - 1
+                    Button {
+                        let carryWeight = draft.sets.last?.weightText ?? ""
+                        draft.sets.append(WorkoutLogView.SetDraft(weightText: carryWeight, repsText: ""))
+                        // The new set lands below the fixed-height scroll
+                        // area's fold — scroll it into view once the
+                        // appended row has actually laid out, not on this
+                        // same run-loop turn (the anchor's still on the old
+                        // last row until then, so scrolling immediately
+                        // targets the wrong spot).
+                        DispatchQueue.main.async {
+                            withAnimation {
+                                scrollProxy.scrollTo("repTotalBottomAnchor", anchor: .bottom)
                             }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.green)
-                            .id("repTotalBottomAnchor")
                         }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.green)
+                    .opacity(isLastRow ? 1 : 0)
+                    .disabled(!isLastRow)
+                    .allowsHitTesting(isLastRow)
                     .frame(width: 24)
+                    .id(isLastRow ? "repTotalBottomAnchor" : "repTotalAddSetPlaceholder-\(i)")
 
-                    // Fixed-width delete slot, right after Add Set's (with
-                    // the row's normal 12pt gap, not pushed out toward the
-                    // trailing edge) so it lands at the same x position on
-                    // every row, last row (which also has the Add Set slot
-                    // before it) included.
+                    // Delete, right after Add Set's slot (with the row's
+                    // normal 12pt gap, not pushed out toward the trailing
+                    // edge) — always shown once there's more than one set,
+                    // so no per-row conditional here to misalign.
                     Group {
                         if draft.sets.count > 1 {
                             Button {
