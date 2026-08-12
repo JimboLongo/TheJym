@@ -624,6 +624,24 @@ final class PlannedExercise {
             return "\(target) Total"
         }
     }
+
+    /// Reps and planned weights as a matched pair of "/"-joined lines, each
+    /// pair padded to the same width so the "/"s land in the same column
+    /// when the two are stacked (reps on top, weights below) — e.g.
+    ///     5/5/5/5/3/3
+    ///   135/135/135/95/95/95
+    /// Nil for repTotal (no fixed per-set scheme to align against) or once
+    /// there isn't a suggested weight for every set yet.
+    var alignedRepsAndWeights: (reps: String, weights: String)? {
+        guard case .fixedSets = goalType, !targetReps.isEmpty,
+              suggestedWeights.count == targetReps.count else { return nil }
+        let repStrs = targetReps.map(String.init)
+        let weightStrs = suggestedWeights.map { isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
+        let pairs = zip(repStrs, weightStrs).map { rep, weight in (rep, weight, max(rep.count, weight.count)) }
+        let paddedReps = pairs.map { rep, _, width in String(repeating: " ", count: width - rep.count) + rep }
+        let paddedWeights = pairs.map { _, weight, width in String(repeating: " ", count: width - weight.count) + weight }
+        return (paddedReps.joined(separator: "/"), paddedWeights.joined(separator: "/"))
+    }
 }
 
 // MARK: - Logged workouts

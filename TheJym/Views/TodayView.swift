@@ -369,6 +369,31 @@ struct TodayView: View {
         }
     }
 
+    /// One exercise's preview line — name, its reps, and (once every set has
+    /// a suggested weight) a second line beneath the reps with the planned
+    /// weight for each set, column-aligned so each weight sits right under
+    /// its own set's rep count and "/".
+    @ViewBuilder
+    private func plannedExerciseRow(_ pe: PlannedExercise) -> some View {
+        HStack(alignment: .top) {
+            Text(pe.exerciseName)
+            Spacer()
+            if let aligned = pe.alignedRepsAndWeights {
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(aligned.reps)
+                    Text(aligned.weights)
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.system(.caption2, design: .monospaced))
+            } else {
+                Text(pe.setsSummaryText)
+                    .font(.system(.caption2, design: .monospaced))
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+
     @ViewBuilder
     private func featuredDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
         let isDone = isFeaturedDayDoneToday(day)
@@ -396,14 +421,7 @@ struct TodayView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
-                            HStack {
-                                Text(pe.exerciseName)
-                                Spacer()
-                                Text(pe.setsSummaryText)
-                                    .font(.system(.caption2, design: .monospaced))
-                            }
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            plannedExerciseRow(pe)
                         }
                     }
                 }
@@ -460,14 +478,7 @@ struct TodayView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
-                            HStack {
-                                Text(pe.exerciseName)
-                                Spacer()
-                                Text(pe.setsSummaryText)
-                                    .font(.system(.caption2, design: .monospaced))
-                            }
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            plannedExerciseRow(pe)
                         }
                     }
                     Button {
