@@ -638,8 +638,16 @@ final class PlannedExercise {
         let repStrs = targetReps.map(String.init)
         let weightStrs = suggestedWeights.map { isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
         let pairs = zip(repStrs, weightStrs).map { rep, weight in (rep, weight, max(rep.count, weight.count)) }
-        let paddedReps = pairs.map { rep, _, width in String(repeating: " ", count: width - rep.count) + rep }
-        let paddedWeights = pairs.map { _, weight, width in String(repeating: " ", count: width - weight.count) + weight }
+        // Centered, not right-aligned, so a 1-digit rep count reads centered
+        // under its 3-digit planned weight rather than flush against it.
+        func centered(_ s: String, in width: Int) -> String {
+            let total = width - s.count
+            let left = total / 2
+            let right = total - left
+            return String(repeating: " ", count: left) + s + String(repeating: " ", count: right)
+        }
+        let paddedReps = pairs.map { rep, _, width in centered(rep, in: width) }
+        let paddedWeights = pairs.map { _, weight, width in centered(weight, in: width) }
         return (paddedReps.joined(separator: "/"), paddedWeights.joined(separator: "/"))
     }
 }
