@@ -871,16 +871,29 @@ struct ExercisePageView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// The lightest weight actually usable for this exercise's equipment —
+    /// the empty bar for barbell/plate work, or the smallest dumbbell
+    /// actually owned — so a suggested warm-up set never asks for less than
+    /// what's physically on hand. 0 (no floor) when there's no equipment set.
+    private var equipmentMinWeight: Double {
+        guard let bar = exerciseDef?.equipment else { return 0 }
+        return bar.isDumbbell ? (bar.dumbbellWeights.min() ?? 0) : bar.weight
+    }
+
     /// Suggested warm-up ramp (40/60/80% of today's heaviest entered
     /// working weight, tapering reps down as the weight climbs) — based on
-    /// what's actually been typed in for today, not history.
+    /// what's actually been typed in for today, not history. Never suggests
+    /// less than `equipmentMinWeight` — you can't warm up below the empty
+    /// bar (or your lightest dumbbell) regardless of what the percentage
+    /// math works out to.
     private var warmupSets: [(weight: Double, reps: Int)] {
         guard let top = uniqueSetWeights.max(), top > 0 else { return [] }
         let scheme: [(pct: Double, reps: Int)] = [(0.4, 8), (0.6, 5), (0.8, 3)]
+        let floor = equipmentMinWeight
         return scheme.map { pct, reps in
             let raw = top * pct
             let rounded = (raw / 5).rounded() * 5
-            return (max(0, rounded), reps)
+            return (max(floor, rounded), reps)
         }
     }
 

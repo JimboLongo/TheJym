@@ -131,11 +131,14 @@ final class PaceEngineTests: XCTestCase {
         return ModelContext(container)
     }
 
-    /// A completed log of `exerciseName` at `weights` (one set each, all the
-    /// same rep count), `daysAgo` days back.
+    /// A completed log of `exerciseName` at `weights` (one set each, target
+    /// 8 reps), `daysAgo` days back. `hitTarget` controls whether each set's
+    /// actual reps meet (8, the default) or fall short of (7) that target —
+    /// the thing the `.lastLogged` streak now tracks, independent of weight.
     @MainActor
     @discardableResult
-    private func log(_ exerciseName: String, weights: [Double], daysAgo: Int, context: ModelContext) -> ExerciseLog {
+    private func log(_ exerciseName: String, weights: [Double], daysAgo: Int, context: ModelContext,
+                     hitTarget: Bool = true) -> ExerciseLog {
         let date = Calendar.current.date(byAdding: .day, value: -daysAgo, to: .now)!
         let session = WorkoutSession(date: date, dayLabel: "Day", cycleNumber: 1)
         context.insert(session)
@@ -143,25 +146,24 @@ final class PaceEngineTests: XCTestCase {
         let exerciseLog = ExerciseLog(exerciseName: exerciseName, targetReps: targetReps, order: 0)
         exerciseLog.session = session
         context.insert(exerciseLog)
+        let actualReps = hitTarget ? 8 : 7
         for (i, w) in weights.enumerated() {
-            let set = SetLog(index: i, weight: w, reps: 8)
+            let set = SetLog(index: i, weight: w, reps: actualReps)
             set.exerciseLog = exerciseLog
             context.insert(set)
         }
         return exerciseLog
     }
 
-    /// Reported scenario: the same weights logged twice in a row (the
-    /// oldest at these weights, then the most recent — "Previous Workout"),
-    /// with today's session (not yet saved, so absent from `allLogs`) about
-    /// to be the 3rd. The most recent log is only the 2nd consecutive
-    /// occurrence, so its streak — and label — should read "(2x)", not
-    /// "(3x)" (which would double-count today before it's even logged).
+    /// Reported behavior: the streak tracks consecutive sessions that hit
+    /// their target reps, not consecutive sessions at the same weight — two
+    /// sessions in a row that both hit target, even at different weights,
+    /// should still read "(2x)".
     @MainActor
-    func testLastLoggedStreakCountsConsecutiveSessionsAtTheSameWeights() {
+    func testLastLoggedStreakCountsConsecutiveSessionsThatHitTargetReps() {
         let context = makeContext()
-        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context)
-        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        log("Bench Press", weights: [130, 130, 130], daysAgo: 14, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
         let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
@@ -173,14 +175,14 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
     }
 
-    /// Same shape, but the session before "Previous Workout" was at
-    /// different weights — so "Previous Workout" is only the 1st time in a
-    /// row at 135s, and the label should read "(1x)".
+    /// Same shape, but the session before "Previous Workout" fell short of
+    /// its target reps (same weight throughout, so weight isn't what breaks
+    /// it) — so "Previous Workout" is only the 1st hit in a row, "(1x)".
     @MainActor
-    func testLastLoggedStreakResetsWhenThePriorSessionUsedDifferentWeights() {
+    func testLastLoggedStreakResetsWhenThePriorSessionMissedTargetReps() {
         let context = makeContext()
-        log("Bench Press", weights: [130, 130, 130], daysAgo: 14, context: context)
-        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: false)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
         let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
@@ -192,14 +194,14 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(lastLogged.label, "Previous Workout (1x)")
     }
 
-    /// Three sessions in a row at the same weights should read "(3x)" on
-    /// the most recent one.
+    /// Three sessions in a row that all hit target reps should read "(3x)"
+    /// on the most recent one.
     @MainActor
     func testLastLoggedStreakCountsThreeInARow() {
         let context = makeContext()
-        log("Bench Press", weights: [135, 135, 135], daysAgo: 21, context: context)
-        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context)
-        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 21, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
         let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
@@ -209,6 +211,24 @@ final class PaceEngineTests: XCTestCase {
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 3)
         XCTAssertEqual(lastLogged.label, "Previous Workout (3x)")
+    }
+
+    /// If "Previous Workout" itself missed target reps, the streak reads
+    /// "(0x)" — it starts over rather than just not counting that session.
+    @MainActor
+    func testLastLoggedStreakIsZeroWhenTheMostRecentSessionMissedTargetReps() {
+        let context = makeContext()
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: false)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
+            return XCTFail("Expected a .lastLogged comparison")
+        }
+        XCTAssertEqual(lastLogged.occurrenceCount, 0)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (0x)")
     }
 
     /// No prior log at all — no streak count should be shown.

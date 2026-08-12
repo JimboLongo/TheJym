@@ -33,7 +33,8 @@ struct ComparisonTarget: Identifiable {
     let weightLabels: [String]
     /// How many times this kind's own criterion has occurred in history —
     /// for `.lastLogged`, sessions in a row (ending at this one, going
-    /// backward through history) at this exact weights sequence; for
+    /// backward through history) that hit or beat their own target reps on
+    /// every set (0 if this session itself came up short); for
     /// `.bestAtTheseWeights`, total sessions ever logged at these weights;
     /// for `.bestForExercise`, total sessions ever logged with this rep/set
     /// structure. Powers the "(2x)", "(3x)", etc. suffix on the label.
@@ -75,7 +76,7 @@ enum PaceEngine {
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
-        let lastStreak = last.map { consecutiveWeightsStreak(endingAt: $0, in: byName) } ?? 1
+        let lastStreak = last.map { consecutiveTargetHitStreak(endingAt: $0, in: byName) } ?? 0
         let atWeights = currentWeights.isEmpty ? [] : byName.filter({ $0.weightsKey == weightsKey })
         let bestWeights = atWeights.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
         let atPlan = byName.filter({ $0.planKey == planKey })
@@ -88,16 +89,32 @@ enum PaceEngine {
         ]
     }
 
-    /// How many sessions in a row, counting backward in time from `log`
-    /// itself, share `log`'s exact weights sequence — 1 if the session
-    /// before it used different weights (or there was none). `logs` must
-    /// already be sorted most-recent-first and contain `log`.
-    private static func consecutiveWeightsStreak(endingAt log: ExerciseLog, in logs: [ExerciseLog]) -> Int {
-        guard let startIndex = logs.firstIndex(where: { $0 === log }) else { return 1 }
-        let key = log.weightsKey
+    /// Whether every set in this log hit or beat its own target rep count —
+    /// for a repTotal exercise, whether the total target was reached at all
+    /// (there's no per-set target to check).
+    private static func hitTargetReps(_ log: ExerciseLog) -> Bool {
+        switch log.goalType {
+        case .fixedSets:
+            let sets = log.sortedSets
+            guard !sets.isEmpty, sets.count == log.targetReps.count else { return false }
+            return zip(sets, log.targetReps).allSatisfy { $0.reps >= $1 }
+        case .repTotal:
+            return log.repTotalReached
+        }
+    }
+
+    /// How many sessions in a row, counting backward in time starting at
+    /// `log` itself, hit or beat their own target reps on every set — 0 if
+    /// `log` itself came up short (a miss resets the streak, it doesn't just
+    /// stop counting it). `logs` must already be sorted most-recent-first
+    /// and contain `log`.
+    private static func consecutiveTargetHitStreak(endingAt log: ExerciseLog, in logs: [ExerciseLog]) -> Int {
+        guard let startIndex = logs.firstIndex(where: { $0 === log }) else {
+            return hitTargetReps(log) ? 1 : 0
+        }
         var count = 0
         for entry in logs[startIndex...] {
-            guard entry.weightsKey == key else { break }
+            guard hitTargetReps(entry) else { break }
             count += 1
         }
         return count
@@ -179,7 +196,7 @@ enum PaceEngine {
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
-        let lastStreak = last.map { consecutiveWeightsStreak(endingAt: $0, in: byName) } ?? 1
+        let lastStreak = last.map { consecutiveTargetHitStreak(endingAt: $0, in: byName) } ?? 0
         let atWeights = currentWeightsKey.isEmpty ? [] : byName.filter { $0.weightsKey == currentWeightsKey }
         let bestAtWeights = bestRepTotalLog(among: atWeights)
         let atPlan = byName.filter { $0.planKey == planKey }
