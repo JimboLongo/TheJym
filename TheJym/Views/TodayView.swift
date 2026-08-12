@@ -379,10 +379,9 @@ struct TodayView: View {
             Text(pe.exerciseName)
             Spacer()
             if let aligned = pe.alignedRepsAndWeights {
-                VStack(alignment: .trailing, spacing: 1) {
+                VStack(alignment: .center, spacing: 1) {
                     Text(aligned.reps)
                     Text(aligned.weights)
-                        .foregroundStyle(.tertiary)
                 }
                 .font(.system(.caption2, design: .monospaced))
             } else {
@@ -392,6 +391,7 @@ struct TodayView: View {
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
