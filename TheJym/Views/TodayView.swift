@@ -397,7 +397,7 @@ struct TodayView: View {
     @ViewBuilder
     private func featuredDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
         let isDone = isFeaturedDayDoneToday(day)
-        HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 6) {
             Button {
                 tapFeaturedDay(day, isDone: isDone)
             } label: {
