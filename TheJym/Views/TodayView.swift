@@ -48,6 +48,11 @@ struct TodayView: View {
     @State private var newWeightText = ""
     @State private var selectedWeightDate = Formatters.nearestPastMonday()
     @FocusState private var weightFieldFocused: Bool
+    /// Bumped whenever this tab reappears (e.g. returning from a workout) —
+    /// forces the exercise preview to re-read the in-progress draft from
+    /// disk, since UserDefaults changes made mid-workout otherwise wouldn't
+    /// invalidate this view on their own.
+    @State private var draftRefreshTick = 0
 
     private var existingWeightEntryThisWeek: BodyWeightEntry? {
         bodyWeightsForQuickAdd.first { Calendar.current.isDate($0.date, inSameDayAs: selectedWeightDate) }
@@ -97,6 +102,7 @@ struct TodayView: View {
                 bodyWeightQuickAddSection
                 quickWorkoutsSection
             }
+            .onAppear { draftRefreshTick += 1 }
             .navigationTitle("Train")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -400,19 +406,38 @@ struct TodayView: View {
         }
     }
 
+    /// The currently-open, not-yet-finished workout draft for this exact
+    /// phase/day/cycle, if any — mirrors WorkoutLogView.draftStorageKey and
+    /// loadDraftFromDisk exactly, so a weight edited mid-workout shows up
+    /// here the moment this tab reappears, not just after the workout is
+    /// finished and actually logged.
+    private func inProgressDraft(phase: Phase, day: PhaseDay) -> [WorkoutLogView.ExerciseDraft]? {
+        let key = "workoutDraft_\(phase.number)_\(day.name)_\(phase.currentCycle)"
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode([WorkoutLogView.ExerciseDraft].self, from: data)
+    }
+
     /// The weights this exercise would actually start at if opened right
-    /// now — same resolution WorkoutLogView's draft setup uses (AI
-    /// suggestion or last time's actuals, deload-adjusted), not just the
-    /// plan's raw `suggestedWeights`, so this preview can never show
-    /// something different than the workout itself will.
-    private func resolvedWeights(for pe: PlannedExercise, phase: Phase) -> [Double] {
-        ProgressionEngine.startingWeights(for: pe, history: history(for: pe),
-                                          aiOn: settings?.aiAssistantEnabled == true,
-                                          aggressiveness: settings?.aiAggressiveness ?? .moderate,
-                                          roundingIncrement: roundingIncrement(for: pe.exerciseName),
-                                          customIncreaseStreak: customIncreaseStreak,
-                                          customIncreaseAmount: customIncreaseAmount,
-                                          isDeloadCycle: isDeloadCycle(phase))
+    /// now — an in-progress draft's own (possibly hand-edited) weights when
+    /// one exists and covers every set, otherwise the same resolution
+    /// WorkoutLogView's draft setup uses to seed a fresh one (AI suggestion
+    /// or last time's actuals, deload-adjusted). Either way, this preview
+    /// can never show something different than the workout itself will.
+    private func resolvedWeights(for pe: PlannedExercise, phase: Phase, day: PhaseDay) -> [Double] {
+        if let draft = inProgressDraft(phase: phase, day: day),
+           let match = draft.first(where: { $0.name == pe.exerciseName && $0.targetReps == pe.targetReps }) {
+            let liveWeights = match.sets.compactMap(\.weight)
+            if liveWeights.count == pe.targetReps.count {
+                return liveWeights
+            }
+        }
+        return ProgressionEngine.startingWeights(for: pe, history: history(for: pe),
+                                                  aiOn: settings?.aiAssistantEnabled == true,
+                                                  aggressiveness: settings?.aiAggressiveness ?? .moderate,
+                                                  roundingIncrement: roundingIncrement(for: pe.exerciseName),
+                                                  customIncreaseStreak: customIncreaseStreak,
+                                                  customIncreaseAmount: customIncreaseAmount,
+                                                  isDeloadCycle: isDeloadCycle(phase))
     }
 
     /// One exercise's preview line — name, its reps, and (once every set has
@@ -420,13 +445,13 @@ struct TodayView: View {
     /// planned weight for each set, column-aligned so each weight sits right
     /// under its own set's rep count and "/".
     @ViewBuilder
-    private func plannedExerciseRow(_ pe: PlannedExercise, phase: Phase) -> some View {
+    private func plannedExerciseRow(_ pe: PlannedExercise, phase: Phase, day: PhaseDay) -> some View {
         HStack(alignment: .top) {
             Text(pe.exerciseName)
             Spacer()
             if case .fixedSets = pe.goalType,
                let aligned = PlannedExercise.alignedRepsAndWeights(targetReps: pe.targetReps,
-                                                                    weights: resolvedWeights(for: pe, phase: phase),
+                                                                    weights: resolvedWeights(for: pe, phase: phase, day: day),
                                                                     isBodyweight: pe.isBodyweight) {
                 VStack(alignment: .center, spacing: 1) {
                     Text(aligned.reps)
@@ -470,7 +495,7 @@ struct TodayView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
-                            plannedExerciseRow(pe, phase: phase)
+                            plannedExerciseRow(pe, phase: phase, day: day)
                         }
                     }
                 }
@@ -527,7 +552,7 @@ struct TodayView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
-                            plannedExerciseRow(pe, phase: phase)
+                            plannedExerciseRow(pe, phase: phase, day: day)
                         }
                     }
                     Button {
