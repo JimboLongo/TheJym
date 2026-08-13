@@ -155,13 +155,11 @@ final class PaceEngineTests: XCTestCase {
         return exerciseLog
     }
 
-    /// The streak requires BOTH conditions on every session counted: it's
-    /// at today's live weights (matching `currentWeights`, not just
-    /// whatever weight history happens to show), and it hit target reps.
-    /// Two sessions in a row at the weight being entered today, both
-    /// hitting target, read "(2x)".
+    /// The streak describes the previous session's OWN weights, not today's
+    /// — two historical sessions in a row at the same weight, both hitting
+    /// target, read "(2x)" regardless of what's typed in for today.
     @MainActor
-    func testLastLoggedStreakCountsConsecutiveSessionsAtTodaysWeightsThatHitTargetReps() {
+    func testLastLoggedStreakCountsConsecutiveSessionsAtThePreviousSessionsOwnWeightsThatHitTargetReps() {
         let context = makeContext()
         log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
@@ -176,18 +174,13 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
     }
 
-    /// Reported bug: many consecutive hits at an OLD weight shouldn't
-    /// inflate the streak once today's weights have changed — "Previous
-    /// Workout" reads "(0x)" the moment today's weight doesn't match the
-    /// most recent session's, even though that session itself hit target
-    /// reps and even though there's a long hit-streak at the old weight.
-    /// This is also what keeps the streak from ever exceeding
-    /// "Best at Weights" (which is 0/no-data here too — first time at
-    /// today's weights).
+    /// Reported correction: the streak should NOT change when today's
+    /// weight field changes — it's still (2x) even though today's weight
+    /// (135) has never been done before (so "Best at Weights" reads 0/no
+    /// data). Previous can legitimately exceed Best at Weights this way.
     @MainActor
-    func testLastLoggedStreakIsZeroWhenTodaysWeightsDifferFromThePriorSession() {
+    func testLastLoggedStreakDoesNotChangeWhenTodaysWeightDiffersFromHistory() {
         let context = makeContext()
-        log("Bench Press", weights: [130, 130, 130], daysAgo: 21, context: context, hitTarget: true)
         log("Bench Press", weights: [130, 130, 130], daysAgo: 14, context: context, hitTarget: true)
         log("Bench Press", weights: [130, 130, 130], daysAgo: 7, context: context, hitTarget: true)
         let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
@@ -198,20 +191,18 @@ final class PaceEngineTests: XCTestCase {
               let bestAtWeights = comparisons.first(where: { $0.kind == .bestAtTheseWeights }) else {
             return XCTFail("Expected .lastLogged and .bestAtTheseWeights comparisons")
         }
-        XCTAssertEqual(lastLogged.occurrenceCount, 0)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (0x)")
+        XCTAssertEqual(lastLogged.occurrenceCount, 2)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
         XCTAssertFalse(bestAtWeights.hasData)
-        XCTAssertLessThanOrEqual(lastLogged.occurrenceCount, bestAtWeights.occurrenceCount)
+        XCTAssertGreaterThan(lastLogged.occurrenceCount, bestAtWeights.occurrenceCount)
     }
 
-    /// The streak's own invariant, checked directly: it can never exceed
-    /// "Best at Weights", since every session it counts is, by
-    /// construction, also one of the sessions "Best at Weights" totals.
+    /// Neither Previous Workout nor Best at Weights should ever exceed
+    /// All-Time Best, since both only ever count sessions that also share
+    /// this exact rep/set structure.
     @MainActor
-    func testLastLoggedStreakNeverExceedsBestAtWeightsCount() {
+    func testNeitherLastLoggedNorBestAtWeightsExceedsBestForExercise() {
         let context = makeContext()
-        // 3 hits at 135 (today's weight), then an older run at a different
-        // weight that would otherwise inflate a weight-agnostic streak.
         log("Bench Press", weights: [130, 130, 130], daysAgo: 28, context: context, hitTarget: true)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 21, context: context, hitTarget: true)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
@@ -228,7 +219,7 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(lastLogged.occurrenceCount, 3)
         XCTAssertEqual(bestAtWeights.occurrenceCount, 3)
         XCTAssertEqual(bestForExercise.occurrenceCount, 4)
-        XCTAssertLessThanOrEqual(lastLogged.occurrenceCount, bestAtWeights.occurrenceCount)
+        XCTAssertLessThanOrEqual(lastLogged.occurrenceCount, bestForExercise.occurrenceCount)
         XCTAssertLessThanOrEqual(bestAtWeights.occurrenceCount, bestForExercise.occurrenceCount)
     }
 

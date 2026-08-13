@@ -33,17 +33,20 @@ struct ComparisonTarget: Identifiable {
     let weightLabels: [String]
     /// How many times this kind's own criterion has occurred in history —
     /// for `.lastLogged`, sessions in a row (ending at this one, going
-    /// backward through history) at TODAY's live weights that also hit or
-    /// beat their own target reps on every set (0 if this session itself
-    /// doesn't qualify); for `.bestAtTheseWeights`, total sessions ever
-    /// logged at today's live weights; for `.bestForExercise`, total
-    /// sessions ever logged with this rep/set structure. By construction
-    /// `.lastLogged` <= `.bestAtTheseWeights` <= `.bestForExercise` — the
-    /// streak is a consecutive subset of the weights total, which is itself
-    /// a subset of the all-time total. Powers the "(2x)", "(3x)", etc.
-    /// suffix on the label, and updates live as the weights being entered
-    /// today change (both `.lastLogged` and `.bestAtTheseWeights` key off
-    /// them, not off history's own weights).
+    /// backward through history) at THAT SESSION's own weights that also
+    /// hit or beat their own target reps on every set (0 if this session
+    /// itself doesn't qualify) — this describes history, so it does NOT
+    /// move when today's weight field changes; for `.bestAtTheseWeights`,
+    /// total sessions ever logged at today's live weights — this ONE does
+    /// move live as today's weight field changes; for `.bestForExercise`,
+    /// total sessions ever logged with this rep/set structure, independent
+    /// of weight entirely. `.bestAtTheseWeights` and `.lastLogged` are each
+    /// bounded by `.bestForExercise` (both only ever count sessions that
+    /// also share this rep/set structure), but NOT by each other — moving
+    /// today's weight to one never done before drops `.bestAtTheseWeights`
+    /// to 0 while `.lastLogged` keeps reflecting whatever streak the actual
+    /// previous session was on at ITS weight. Powers the "(2x)", "(3x)",
+    /// etc. suffix on the label.
     let occurrenceCount: Int
     var hasData: Bool { date != nil }
 
@@ -82,7 +85,11 @@ enum PaceEngine {
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
-        let lastStreak = last.map { consecutiveHitStreak(endingAt: $0, in: byName, atWeightsKey: weightsKey) } ?? 0
+        // Previous Workout's own weights, not today's — this streak
+        // describes history, so it doesn't move just because today's
+        // weight field changes (unlike .bestAtTheseWeights below, which
+        // deliberately does).
+        let lastStreak = last.map { consecutiveHitStreak(endingAt: $0, in: byName, atWeightsKey: $0.weightsKey) } ?? 0
         let atWeights = currentWeights.isEmpty ? [] : byName.filter({ $0.weightsKey == weightsKey })
         let bestWeights = atWeights.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
         let atPlan = byName.filter({ $0.planKey == planKey })
@@ -110,14 +117,13 @@ enum PaceEngine {
     }
 
     /// How many sessions in a row, counting backward in time starting at
-    /// `log` itself, were BOTH at `atWeightsKey` (today's live weights, not
-    /// necessarily `log`'s own) AND hit or beat their own target reps on
-    /// every set — 0 if `log` itself doesn't qualify (a different weight or
-    /// a miss resets the streak, it doesn't just stop counting it). Bounded
-    /// by construction: every session counted here also counts toward
-    /// `.bestAtTheseWeights`'s total (same `atWeightsKey` match), so this
-    /// can never exceed that count. `logs` must already be sorted
-    /// most-recent-first and contain `log`.
+    /// `log` itself, were BOTH at `atWeightsKey` AND hit or beat their own
+    /// target reps on every set — 0 if `log` itself doesn't qualify (a
+    /// different weight or a miss resets the streak, it doesn't just stop
+    /// counting it). Callers decide what `atWeightsKey` means: `comparisons`
+    /// passes `log`'s own weightsKey (so the result describes history, not
+    /// today's weight field). `logs` must already be sorted most-recent-first
+    /// and contain `log`.
     private static func consecutiveHitStreak(endingAt log: ExerciseLog, in logs: [ExerciseLog], atWeightsKey: String) -> Int {
         guard let startIndex = logs.firstIndex(where: { $0 === log }) else {
             return (log.weightsKey == atWeightsKey && hitTargetReps(log)) ? 1 : 0
@@ -206,7 +212,8 @@ enum PaceEngine {
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
-        let lastStreak = last.map { consecutiveHitStreak(endingAt: $0, in: byName, atWeightsKey: currentWeightsKey) } ?? 0
+        // Previous Workout's own weights, not today's — see comparisons(for:...).
+        let lastStreak = last.map { consecutiveHitStreak(endingAt: $0, in: byName, atWeightsKey: $0.weightsKey) } ?? 0
         let atWeights = currentWeightsKey.isEmpty ? [] : byName.filter { $0.weightsKey == currentWeightsKey }
         let bestAtWeights = bestRepTotalLog(among: atWeights)
         let atPlan = byName.filter { $0.planKey == planKey }
