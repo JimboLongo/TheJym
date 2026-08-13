@@ -643,10 +643,13 @@ final class PlannedExercise {
         let weightStrs = weights.map { isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
         let pairs = zip(repStrs, weightStrs).map { rep, weight in (rep, weight, max(rep.count, weight.count)) }
         // Centered, not right-aligned, so a 1-digit rep count reads centered
-        // under its 3-digit planned weight rather than flush against it.
+        // under its 3-digit planned weight rather than flush against it. On
+        // an odd leftover, the extra space goes on the left — e.g. "8"
+        // against "35" becomes " 8", not "8 ", so the digit lands under
+        // the weight's own last digit instead of leaning toward its first.
         func centered(_ s: String, in width: Int) -> String {
             let total = width - s.count
-            let left = total / 2
+            let left = (total + 1) / 2
             let right = total - left
             return String(repeating: " ", count: left) + s + String(repeating: " ", count: right)
         }
