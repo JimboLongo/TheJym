@@ -26,6 +26,12 @@ struct TodayView: View {
     @Query(sort: \WorkoutSession.date) private var allSessionsForToday: [WorkoutSession]
     @Query(sort: \ActiveRecovery.date) private var activeRecoveriesForToday: [ActiveRecovery]
     @Query(sort: \BodyWeightEntry.date) private var bodyWeightsForQuickAdd: [BodyWeightEntry]
+    /// Used only to resolve each exercise's actual starting weight for the
+    /// Train tab's preview (same resolution WorkoutLogView uses to build its
+    /// draft), so the preview never shows a different weight than opening
+    /// the workout does.
+    @Query private var allExerciseLogsForPreview: [ExerciseLog]
+    @Query(sort: \ExerciseDef.name) private var exerciseDefsForPreview: [ExerciseDef]
 
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
@@ -49,6 +55,31 @@ struct TodayView: View {
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
+
+    /// This exercise's logs, same plan key, any phase — mirrors
+    /// WorkoutLogView.history(for:) exactly, since the preview needs to
+    /// resolve the same starting weight opening the workout would.
+    private func history(for pe: PlannedExercise) -> [ExerciseLog] {
+        allExerciseLogsForPreview
+            .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty
+                     && $0.session?.isDeload != true && $0.session?.isBonusSession != true }
+            .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
+    }
+    private func roundingIncrement(for exerciseName: String) -> Double {
+        guard let def = exerciseDefsForPreview.first(where: { $0.name == exerciseName }),
+              def.equipment?.isDumbbell == true
+        else { return 2.5 }
+        return settings?.dumbbellRoundingIncrement ?? 5
+    }
+    private func isDeloadCycle(_ phase: Phase) -> Bool {
+        settings?.deloadWeeksEnabled == true && phase.deloadCycle == phase.currentCycle
+    }
+    private var customIncreaseStreak: Int? {
+        settings?.customWeightIncreaseEnabled == true ? settings?.customWeightIncreaseStreak : nil
+    }
+    private var customIncreaseAmount: Double? {
+        settings?.customWeightIncreaseEnabled == true ? settings?.customWeightIncreaseAmount : nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -369,16 +400,34 @@ struct TodayView: View {
         }
     }
 
+    /// The weights this exercise would actually start at if opened right
+    /// now — same resolution WorkoutLogView's draft setup uses (AI
+    /// suggestion or last time's actuals, deload-adjusted), not just the
+    /// plan's raw `suggestedWeights`, so this preview can never show
+    /// something different than the workout itself will.
+    private func resolvedWeights(for pe: PlannedExercise, phase: Phase) -> [Double] {
+        ProgressionEngine.startingWeights(for: pe, history: history(for: pe),
+                                          aiOn: settings?.aiAssistantEnabled == true,
+                                          aggressiveness: settings?.aiAggressiveness ?? .moderate,
+                                          roundingIncrement: roundingIncrement(for: pe.exerciseName),
+                                          customIncreaseStreak: customIncreaseStreak,
+                                          customIncreaseAmount: customIncreaseAmount,
+                                          isDeloadCycle: isDeloadCycle(phase))
+    }
+
     /// One exercise's preview line — name, its reps, and (once every set has
-    /// a suggested weight) a second line beneath the reps with the planned
-    /// weight for each set, column-aligned so each weight sits right under
-    /// its own set's rep count and "/".
+    /// a resolved starting weight) a second line beneath the reps with the
+    /// planned weight for each set, column-aligned so each weight sits right
+    /// under its own set's rep count and "/".
     @ViewBuilder
-    private func plannedExerciseRow(_ pe: PlannedExercise) -> some View {
+    private func plannedExerciseRow(_ pe: PlannedExercise, phase: Phase) -> some View {
         HStack(alignment: .top) {
             Text(pe.exerciseName)
             Spacer()
-            if let aligned = pe.alignedRepsAndWeights {
+            if case .fixedSets = pe.goalType,
+               let aligned = PlannedExercise.alignedRepsAndWeights(targetReps: pe.targetReps,
+                                                                    weights: resolvedWeights(for: pe, phase: phase),
+                                                                    isBodyweight: pe.isBodyweight) {
                 VStack(alignment: .center, spacing: 1) {
                     Text(aligned.reps)
                     Text(aligned.weights)
@@ -421,7 +470,7 @@ struct TodayView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
-                            plannedExerciseRow(pe)
+                            plannedExerciseRow(pe, phase: phase)
                         }
                     }
                 }
@@ -478,7 +527,7 @@ struct TodayView: View {
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
-                            plannedExerciseRow(pe)
+                            plannedExerciseRow(pe, phase: phase)
                         }
                     }
                     Button {

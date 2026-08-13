@@ -198,6 +198,64 @@ enum ProgressionEngine {
         lastWeights.map { roundToPlate($0 * 0.6) }
     }
 
+    // MARK: - Starting weights (single source of truth for "what would this
+    // exercise actually start at right now" — shared by WorkoutLogView's
+    // draft setup and the Train tab's preview, so the preview never shows a
+    // different weight than opening the workout does)
+
+    /// The weights a fixedSets exercise would start at if logged right now:
+    /// the AI's next-cycle suggestion when the AI Assistant is on (falling
+    /// back to the plan's own `suggestedWeights` if it has no opinion yet —
+    /// e.g. no history), or last time's actual weights when it's off (same
+    /// fallback) — then halved for a deload cycle.
+    static func startingWeights(for pe: PlannedExercise,
+                                history: [ExerciseLog],
+                                aiOn: Bool,
+                                aggressiveness: AIAggressiveness,
+                                roundingIncrement: Double,
+                                customIncreaseStreak: Int? = nil,
+                                customIncreaseAmount: Double? = nil,
+                                isDeloadCycle: Bool = false) -> [Double] {
+        var weights = aiOn
+            ? (suggestNextWeights(targetReps: pe.targetReps, history: history,
+                                  aggressiveness: aggressiveness, roundingIncrement: roundingIncrement,
+                                  isBodyweight: pe.isBodyweight,
+                                  customIncreaseStreak: customIncreaseStreak,
+                                  customIncreaseAmount: customIncreaseAmount)
+               ?? pe.suggestedWeights)
+            : (history.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+               ?? pe.suggestedWeights)
+        if isDeloadCycle, !weights.isEmpty {
+            weights = deloadWeights(from: weights)
+        }
+        return weights
+    }
+
+    /// Same idea as `startingWeights`, for a repTotal exercise — a single
+    /// starting weight plus whatever rep total it'd actually start at (the
+    /// AI may bump the target itself instead of the weight).
+    static func startingRepTotal(for pe: PlannedExercise,
+                                 history: [ExerciseLog],
+                                 aiOn: Bool,
+                                 aggressiveness: AIAggressiveness,
+                                 roundingIncrement: Double,
+                                 isDeloadCycle: Bool = false) -> (weight: Double, target: Int) {
+        var effectiveTarget = pe.repTotalTarget
+        var startWeight = pe.suggestedWeights.first ?? 0
+        if aiOn, let suggestion = suggestRepTotalProgression(history: history, aggressiveness: aggressiveness,
+                                                              progressesReps: pe.repTotalProgressesReps,
+                                                              roundingIncrement: roundingIncrement) {
+            if let newTarget = suggestion.newTarget { effectiveTarget = newTarget }
+            if let newWeight = suggestion.newAddedWeight { startWeight = newWeight }
+        } else if !aiOn, let lastSet = history.last?.sortedSets.last {
+            startWeight = pe.isBodyweight ? (lastSet.addedWeight ?? 0) : lastSet.weight
+        }
+        if isDeloadCycle, startWeight > 0 {
+            startWeight = deloadWeights(from: [startWeight]).first ?? startWeight
+        }
+        return (startWeight, effectiveTarget)
+    }
+
     // MARK: - Rules-based phase planning (Gemini fallback)
 
     struct PlannedSlot {

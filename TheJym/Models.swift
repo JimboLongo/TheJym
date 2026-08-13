@@ -625,18 +625,22 @@ final class PlannedExercise {
         }
     }
 
-    /// Reps and planned weights as a matched pair of "/"-joined lines, each
-    /// pair padded to the same width so the "/"s land in the same column
-    /// when the two are stacked (reps on top, weights below) — e.g.
+    /// `targetReps` and `weights` as a matched pair of "/"-joined lines, each
+    /// pair padded to the same width and centered so the "/"s land in the
+    /// same column when the two are stacked (reps on top, weights below) —
+    /// e.g.
     ///     5/5/5/5/3/3
     ///   135/135/135/95/95/95
-    /// Nil for repTotal (no fixed per-set scheme to align against) or once
-    /// there isn't a suggested weight for every set yet.
-    var alignedRepsAndWeights: (reps: String, weights: String)? {
-        guard case .fixedSets = goalType, !targetReps.isEmpty,
-              suggestedWeights.count == targetReps.count else { return nil }
+    /// `weights` should be whatever this exercise would ACTUALLY start at
+    /// right now (see `ProgressionEngine.startingWeights`) — not
+    /// necessarily this plan's raw `suggestedWeights`, since AI progression
+    /// or last-time's actuals can supersede that once there's history. Nil
+    /// once `targetReps` is empty (repTotal has no fixed per-set scheme to
+    /// align against) or `weights` doesn't cover every set.
+    static func alignedRepsAndWeights(targetReps: [Int], weights: [Double], isBodyweight: Bool) -> (reps: String, weights: String)? {
+        guard !targetReps.isEmpty, weights.count == targetReps.count else { return nil }
         let repStrs = targetReps.map(String.init)
-        let weightStrs = suggestedWeights.map { isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
+        let weightStrs = weights.map { isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
         let pairs = zip(repStrs, weightStrs).map { rep, weight in (rep, weight, max(rep.count, weight.count)) }
         // Centered, not right-aligned, so a 1-digit rep count reads centered
         // under its 3-digit planned weight rather than flush against it.

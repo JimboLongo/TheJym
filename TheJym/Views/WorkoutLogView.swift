@@ -517,21 +517,11 @@ struct WorkoutLogView: View {
 
             switch pe.goalType {
             case .fixedSets:
-                // AI on: what the AI Assistant thinks is the right goal from history.
-                // AI off: exactly what was lifted last time. For a bodyweight
-                // exercise, every weight here is ADDED weight, not total load.
-                var weights = aiOn
-                    ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
-                                                            aggressiveness: agg, roundingIncrement: increment,
-                                                            isBodyweight: pe.isBodyweight,
-                                                            customIncreaseStreak: customIncreaseStreak,
-                                                            customIncreaseAmount: customIncreaseAmount)
-                       ?? pe.suggestedWeights)
-                    : (logs.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
-                       ?? pe.suggestedWeights)
-                if isDeloadCycle, !weights.isEmpty {
-                    weights = ProgressionEngine.deloadWeights(from: weights)
-                }
+                let weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
+                                                                 aggressiveness: agg, roundingIncrement: increment,
+                                                                 customIncreaseStreak: customIncreaseStreak,
+                                                                 customIncreaseAmount: customIncreaseAmount,
+                                                                 isDeloadCycle: isDeloadCycle)
                 let sets = pe.targetReps.enumerated().map { i, _ in
                     SetDraft(weightText: i < weights.count ? Formatters.trim(weights[i]) : "",
                              repsText: "")
@@ -542,25 +532,15 @@ struct WorkoutLogView: View {
                                             goalType: .fixedSets,
                                             isBodyweight: pe.isBodyweight))
 
-            case .repTotal(let target):
-                var effectiveTarget = target
-                var startWeight = pe.suggestedWeights.first ?? 0
-                if aiOn, let suggestion = ProgressionEngine.suggestRepTotalProgression(
-                    history: logs, aggressiveness: agg, progressesReps: pe.repTotalProgressesReps,
-                    roundingIncrement: increment) {
-                    if let newTarget = suggestion.newTarget { effectiveTarget = newTarget }
-                    if let newWeight = suggestion.newAddedWeight { startWeight = newWeight }
-                } else if !aiOn, let lastSet = logs.last?.sortedSets.last {
-                    startWeight = pe.isBodyweight ? (lastSet.addedWeight ?? 0) : lastSet.weight
-                }
-                if isDeloadCycle, startWeight > 0 {
-                    startWeight = ProgressionEngine.deloadWeights(from: [startWeight]).first ?? startWeight
-                }
-                let sets = [SetDraft(weightText: Formatters.trim(startWeight), repsText: "")]
+            case .repTotal:
+                let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: aiOn,
+                                                                   aggressiveness: agg, roundingIncrement: increment,
+                                                                   isDeloadCycle: isDeloadCycle)
+                let sets = [SetDraft(weightText: Formatters.trim(resolved.weight), repsText: "")]
                 drafts.append(ExerciseDraft(name: pe.exerciseName,
                                             targetReps: [],
                                             sets: sets,
-                                            goalType: .repTotal(target: effectiveTarget),
+                                            goalType: .repTotal(target: resolved.target),
                                             isBodyweight: pe.isBodyweight))
             }
         }
@@ -586,42 +566,23 @@ struct WorkoutLogView: View {
 
             switch drafts[idx].goalType {
             case .fixedSets:
-                var weights = aiOn
-                    ? (ProgressionEngine.suggestNextWeights(targetReps: pe.targetReps, history: logs,
-                                                            aggressiveness: agg, roundingIncrement: increment,
-                                                            isBodyweight: pe.isBodyweight,
-                                                            customIncreaseStreak: customIncreaseStreak,
-                                                            customIncreaseAmount: customIncreaseAmount)
-                       ?? pe.suggestedWeights)
-                    : (logs.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
-                       ?? pe.suggestedWeights)
-                if isDeloadCycle, !weights.isEmpty {
-                    weights = ProgressionEngine.deloadWeights(from: weights)
-                }
+                let weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
+                                                                 aggressiveness: agg, roundingIncrement: increment,
+                                                                 customIncreaseStreak: customIncreaseStreak,
+                                                                 customIncreaseAmount: customIncreaseAmount,
+                                                                 isDeloadCycle: isDeloadCycle)
                 for i in drafts[idx].sets.indices where i < weights.count {
                     drafts[idx].sets[i].weightText = Formatters.trim(weights[i])
                 }
 
             case .repTotal:
-                var startWeight = pe.suggestedWeights.first ?? 0
-                var effectiveTarget: Int? = nil
-                if aiOn, let suggestion = ProgressionEngine.suggestRepTotalProgression(
-                    history: logs, aggressiveness: agg, progressesReps: pe.repTotalProgressesReps,
-                    roundingIncrement: increment) {
-                    if let newTarget = suggestion.newTarget { effectiveTarget = newTarget }
-                    if let newWeight = suggestion.newAddedWeight { startWeight = newWeight }
-                } else if !aiOn, let lastSet = logs.last?.sortedSets.last {
-                    startWeight = pe.isBodyweight ? (lastSet.addedWeight ?? 0) : lastSet.weight
-                }
-                if isDeloadCycle, startWeight > 0 {
-                    startWeight = ProgressionEngine.deloadWeights(from: [startWeight]).first ?? startWeight
-                }
+                let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: aiOn,
+                                                                   aggressiveness: agg, roundingIncrement: increment,
+                                                                   isDeloadCycle: isDeloadCycle)
                 if !drafts[idx].sets.isEmpty {
-                    drafts[idx].sets[0].weightText = Formatters.trim(startWeight)
+                    drafts[idx].sets[0].weightText = Formatters.trim(resolved.weight)
                 }
-                if let effectiveTarget {
-                    drafts[idx].goalType = .repTotal(target: effectiveTarget)
-                }
+                drafts[idx].goalType = .repTotal(target: resolved.target)
             }
         }
     }
