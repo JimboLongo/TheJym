@@ -155,14 +155,15 @@ final class PaceEngineTests: XCTestCase {
         return exerciseLog
     }
 
-    /// Reported behavior: the streak tracks consecutive sessions that hit
-    /// their target reps, not consecutive sessions at the same weight — two
-    /// sessions in a row that both hit target, even at different weights,
-    /// should still read "(2x)".
+    /// The streak requires BOTH conditions on every session counted: it's
+    /// at today's live weights (matching `currentWeights`, not just
+    /// whatever weight history happens to show), and it hit target reps.
+    /// Two sessions in a row at the weight being entered today, both
+    /// hitting target, read "(2x)".
     @MainActor
-    func testLastLoggedStreakCountsConsecutiveSessionsThatHitTargetReps() {
+    func testLastLoggedStreakCountsConsecutiveSessionsAtTodaysWeightsThatHitTargetReps() {
         let context = makeContext()
-        log("Bench Press", weights: [130, 130, 130], daysAgo: 14, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
         let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
@@ -173,6 +174,62 @@ final class PaceEngineTests: XCTestCase {
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 2)
         XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
+    }
+
+    /// Reported bug: many consecutive hits at an OLD weight shouldn't
+    /// inflate the streak once today's weights have changed — "Previous
+    /// Workout" reads "(0x)" the moment today's weight doesn't match the
+    /// most recent session's, even though that session itself hit target
+    /// reps and even though there's a long hit-streak at the old weight.
+    /// This is also what keeps the streak from ever exceeding
+    /// "Best at Weights" (which is 0/no-data here too — first time at
+    /// today's weights).
+    @MainActor
+    func testLastLoggedStreakIsZeroWhenTodaysWeightsDifferFromThePriorSession() {
+        let context = makeContext()
+        log("Bench Press", weights: [130, 130, 130], daysAgo: 21, context: context, hitTarget: true)
+        log("Bench Press", weights: [130, 130, 130], daysAgo: 14, context: context, hitTarget: true)
+        log("Bench Press", weights: [130, 130, 130], daysAgo: 7, context: context, hitTarget: true)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }),
+              let bestAtWeights = comparisons.first(where: { $0.kind == .bestAtTheseWeights }) else {
+            return XCTFail("Expected .lastLogged and .bestAtTheseWeights comparisons")
+        }
+        XCTAssertEqual(lastLogged.occurrenceCount, 0)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (0x)")
+        XCTAssertFalse(bestAtWeights.hasData)
+        XCTAssertLessThanOrEqual(lastLogged.occurrenceCount, bestAtWeights.occurrenceCount)
+    }
+
+    /// The streak's own invariant, checked directly: it can never exceed
+    /// "Best at Weights", since every session it counts is, by
+    /// construction, also one of the sessions "Best at Weights" totals.
+    @MainActor
+    func testLastLoggedStreakNeverExceedsBestAtWeightsCount() {
+        let context = makeContext()
+        // 3 hits at 135 (today's weight), then an older run at a different
+        // weight that would otherwise inflate a weight-agnostic streak.
+        log("Bench Press", weights: [130, 130, 130], daysAgo: 28, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 21, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }),
+              let bestAtWeights = comparisons.first(where: { $0.kind == .bestAtTheseWeights }),
+              let bestForExercise = comparisons.first(where: { $0.kind == .bestForExercise }) else {
+            return XCTFail("Expected all three comparisons")
+        }
+        XCTAssertEqual(lastLogged.occurrenceCount, 3)
+        XCTAssertEqual(bestAtWeights.occurrenceCount, 3)
+        XCTAssertEqual(bestForExercise.occurrenceCount, 4)
+        XCTAssertLessThanOrEqual(lastLogged.occurrenceCount, bestAtWeights.occurrenceCount)
+        XCTAssertLessThanOrEqual(bestAtWeights.occurrenceCount, bestForExercise.occurrenceCount)
     }
 
     /// Same shape, but the session before "Previous Workout" fell short of
