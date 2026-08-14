@@ -524,14 +524,32 @@ final class Phase {
     /// is simply absent here).
     var cycleCompletionDates: [Int: Date] { cycleWalk.cycleCompletionDates }
 
-    /// This phase's rest-bank credit events: +2 the day the phase starts,
-    /// plus +2 the day each of its cycles completes — except the very last
+    /// The date of this phase's very first logged session — same "day
+    /// this phase actually started getting used" the cycle walk itself
+    /// scopes to (`day != nil && cycleNumber > 0`), which can differ from
+    /// `startDate` (a phase can be created ahead of when it's first
+    /// trained). Nil if nothing's been logged under it yet.
+    var firstLoggedDate: Date? {
+        sessions.filter { $0.day != nil && $0.cycleNumber > 0 }.map(\.date).min()
+    }
+
+    /// Rest slots in one pass of this phase's own template — what the
+    /// rest bank resets to (see `restBankResetEvents`).
+    var restDaysPerCycle: Double { Double(orderedDays.filter(\.isRest).count) }
+
+    /// This phase's rest-bank RESET events (not additive credits — the
+    /// bank is set to exactly this value, not topped up by it): resets to
+    /// `restDaysPerCycle` the day the phase's first session is logged, and
+    /// again the day each of its cycles completes — except the very last
     /// cycle, since there's nothing left to bank ahead for once the phase
     /// itself is over.
-    var restBankCreditEvents: [(date: Date, amount: Double)] {
-        var events: [(date: Date, amount: Double)] = [(startDate, 2.0)]
+    var restBankResetEvents: [(date: Date, resetTo: Double)] {
+        var events: [(date: Date, resetTo: Double)] = []
+        if let firstLoggedDate {
+            events.append((firstLoggedDate, restDaysPerCycle))
+        }
         for (cycle, date) in cycleCompletionDates where cycle < totalCycles {
-            events.append((date, 2.0))
+            events.append((date, restDaysPerCycle))
         }
         return events
     }

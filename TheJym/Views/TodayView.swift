@@ -904,9 +904,9 @@ struct PhaseStatsView: View {
     }
 
     /// Best rest-bank streak achieved during this phase's own timeframe,
-    /// using only this phase's own credit events (its start, its own
-    /// cycle-finish dates) — an inactive/completed phase is bounded at its
-    /// last logged session rather than walking all the way to today.
+    /// using only this phase's own reset events (its first logged day, its
+    /// own cycle-finish dates) — an inactive/completed phase is bounded at
+    /// its last logged session rather than walking all the way to today.
     private var bestStreak: Int {
         let cal = Calendar.current
         let activityDates = restActivities.filter { $0.date >= phase.startDate }.map(\.date)
@@ -916,7 +916,7 @@ struct PhaseStatsView: View {
         guard !(trainingDates + activityDates + plainRestDates).isEmpty else { return 0 }
         let end = phase.isActive ? Date() : ((trainingDates + activityDates + plainRestDates).max() ?? phase.startDate)
         return StatsEngine.computeRestBank(trainingDates: trainingDates, activityRestDates: activityDates,
-                                           plainRestDates: plainRestDates, creditEvents: phase.restBankCreditEvents,
+                                           plainRestDates: plainRestDates, resetEvents: phase.restBankResetEvents,
                                            now: end).maxStreak
     }
 
