@@ -364,22 +364,34 @@ enum StatsEngine {
     /// `Phase.restBankResetEvents`) and rest days, which spend from it: an
     /// activity-logged rest costs 0.5, a plain/unscheduled rest (or a day
     /// with nothing logged at all, while the ledger is open) costs 1.0.
-    /// Training is bank-neutral. A reset landing on an otherwise uncredited
-    /// day only applies if the ledger is already open going into it — a
-    /// bare reset event can't spontaneously open one on its own.
+    /// Training is bank-neutral.
+    ///
+    /// A day's own spend is always evaluated against whatever the bank
+    /// already was coming into it — a reset lands AFTER that, unconditionally
+    /// overwriting the result (not topping it up, and not re-deducting
+    /// today's spend from it again). That matters most on a cycle's last
+    /// day: e.g. bank 0.5, a plain rest (-1.0) goes negative, breaking the
+    /// streak (bank clamped to 0) — but since this is also the cycle's
+    /// finish, the bank still ends the day reset to `restDaysPerCycle`, not
+    /// 0. If instead that last day is an activity rest, it grows the streak
+    /// (or restarts it at 1, not 0, if the pre-reset spend broke it) since
+    /// activity days always count, and the bank still ends reset. A bare
+    /// reset landing on an otherwise uncredited day only applies if the
+    /// ledger is already open going into it — it can't spontaneously open
+    /// one on its own.
     ///
     /// The streak count itself only increases for a training day or an
     /// activity-logged rest — a plain/unscheduled rest "does nothing": it
     /// still spends from the bank (and can still break the streak if that
     /// spend goes negative), it just doesn't add to the count on its own.
     ///
-    /// The bank never goes negative: the moment a spend would take it below
-    /// 0, the streak breaks right there and the ledger closes — bank sits
-    /// at a clean 0, and no further uncredited or rest days do anything (no
-    /// more spending) until the next credited day starts a brand-new
-    /// streak, fresh at 0 rather than inheriting whatever debt was left.
-    /// Today is left pending — neither spent nor credited — if nothing's
-    /// logged yet.
+    /// Outside of a reset, the bank never goes negative: the moment a spend
+    /// would take it below 0, the streak breaks right there and the ledger
+    /// closes — bank sits at a clean 0, and no further uncredited or rest
+    /// days do anything (no more spending) until the next credited day
+    /// starts a brand-new streak, fresh at 0 rather than inheriting
+    /// whatever debt was left. Today is left pending — neither spent nor
+    /// credited — if nothing's logged yet.
     static func computeRestBank(trainingDates: [Date],
                                 activityRestDates: [Date],
                                 plainRestDates: [Date],
@@ -460,25 +472,50 @@ enum StatsEngine {
                     bank = 0
                     streakOpen = true
                 }
-                if let reset = resetByDay[day] { bank = reset }
+                // Evaluate today's own spend against the bank AS IT STOOD
+                // coming into today — a reset (if any) hasn't landed yet.
+                // This is what decides whether today breaks the streak that
+                // was already running.
                 if isActivityRest { bank -= 0.5 }
                 else if isPlainRest { bank -= 1.0 }
                 // isTraining alone: no change, purely neutral.
                 // Epsilon guards against floating-point residue spuriously
                 // tripping a break right at the edge.
-                if bank < -1e-9 {
-                    breakStreak(on: day)
-                } else if isTraining || isActivityRest {
+                let brokeToday = bank < -1e-9
+                if brokeToday { breakStreak(on: day) }
+
+                if let reset = resetByDay[day] {
+                    // A reset always lands, whether or not today just broke
+                    // the old streak — if it did, this reopens a brand-new
+                    // one on this SAME day rather than waiting for the next
+                    // one. Overwrites the bank outright; today's own spend
+                    // above isn't re-deducted from the reset value.
+                    if !streakOpen {
+                        currentStreakStart = day
+                        streakOpen = true
+                    }
+                    bank = reset
+                    if isTraining || isActivityRest {
+                        recordCredit(on: day)
+                    }
+                } else if !brokeToday, isTraining || isActivityRest {
                     recordCredit(on: day)
                 }
-                // else: a plain rest that stayed non-negative — the ledger
-                // (and the bank spend) still happened, but "does nothing"
-                // for the streak count itself.
+                // else: either a plain rest that stayed non-negative with no
+                // reset today (spends, but "does nothing" for the count), or
+                // today broke the streak and there's no reset to reopen it.
             } else if streakOpen {
-                if let reset = resetByDay[day] { bank = reset }
                 bank -= 1.0
-                if bank < -1e-9 {
-                    breakStreak(on: day)
+                let brokeToday = bank < -1e-9
+                if brokeToday { breakStreak(on: day) }
+                if let reset = resetByDay[day] {
+                    if !streakOpen {
+                        currentStreakStart = day
+                        streakOpen = true
+                    }
+                    bank = reset
+                    // An uncredited day never adds to the streak count,
+                    // reset or not.
                 }
             }
             // else: ledger already closed, an unlogged day has no effect

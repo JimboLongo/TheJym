@@ -87,6 +87,59 @@ final class RestBankEngineTests: XCTestCase {
         XCTAssertEqual(result.bankBalance, 1.0, accuracy: 1e-9)
     }
 
+    // MARK: - Reset on a cycle's last day: spend is judged against the OLD
+    // bank, then the reset unconditionally overwrites the result -- even
+    // reopening the streak same-day if that spend just broke it.
+
+    /// At 0.5, a plain rest as the cycle's last day: the spend (-1.0) goes
+    /// negative against the OLD bank, breaking the streak (restarts at 0,
+    /// since a plain rest never itself counts) -- but because this day also
+    /// completes the cycle, the bank still ends reset to 2.0, not 0.
+    func testLastDayPlainRestBreaksButBankStillResets() {
+        // day1: training, reset 1.5 -> bank 1.5. day2: plain rest (no reset)
+        // -> bank 0.5, streak still just day1's 1. day3: the cycle's last
+        // day, itself a plain rest, WITH its own reset to 2.0.
+        let resets: [(date: Date, resetTo: Double)] = [(day(1), 1.5), (day(3), 2.0)]
+        let result = StatsEngine.computeRestBank(trainingDates: [day(1)], activityRestDates: [],
+                                                  plainRestDates: [day(2), day(3)],
+                                                  resetEvents: resets, now: day(3))
+        XCTAssertEqual(result.currentStreak, 0, "day 3's plain rest broke it against the pre-reset 0.5, and never counts anyway")
+        XCTAssertEqual(result.bankBalance, 2.0, accuracy: 1e-9, "still resets despite the break")
+    }
+
+    /// At 0.5, a rest ACTIVITY as the cycle's last day: the spend (-0.5)
+    /// lands exactly at 0 against the OLD bank -- non-negative, so the
+    /// streak does NOT break, and actually grows by 1 (activity days always
+    /// count). The bank still ends reset to 2.0 on top of that.
+    func testLastDayActivityRestSurvivesAndGrowsStreakThenBankResets() {
+        // day1: training, reset 1.5 -> bank 1.5. day2: plain rest (no
+        // reset) -> bank 0.5, streak still 1. day3: the cycle's last day,
+        // an activity rest, WITH its own reset to 2.0.
+        let resets: [(date: Date, resetTo: Double)] = [(day(1), 1.5), (day(3), 2.0)]
+        let result = StatsEngine.computeRestBank(trainingDates: [day(1)], activityRestDates: [day(3)],
+                                                  plainRestDates: [day(2)],
+                                                  resetEvents: resets, now: day(3))
+        XCTAssertEqual(result.currentStreak, 2, "never broke -- day 1's training plus day 3's activity")
+        XCTAssertEqual(result.bankBalance, 2.0, accuracy: 1e-9)
+    }
+
+    /// At 0, a rest ACTIVITY as the cycle's last day: the spend (-0.5)
+    /// would take it negative against the OLD bank (clamped at 0, can't go
+    /// below), breaking the streak -- but since it's an activity day, it
+    /// STILL earns 1 toward the freshly-restarted streak (not 0), and the
+    /// bank still ends reset to 2.0.
+    func testLastDayActivityRestBreaksButStillEarnsOneThenBankResets() {
+        // day1: training, reset 1.0 -> bank 1.0. day2: plain rest (no
+        // reset) -> bank 0.0, streak still 1. day3: the cycle's last day,
+        // an activity rest, WITH its own reset to 2.0.
+        let resets: [(date: Date, resetTo: Double)] = [(day(1), 1.0), (day(3), 2.0)]
+        let result = StatsEngine.computeRestBank(trainingDates: [day(1)], activityRestDates: [day(3)],
+                                                  plainRestDates: [day(2)],
+                                                  resetEvents: resets, now: day(3))
+        XCTAssertEqual(result.currentStreak, 1, "broke against the pre-reset 0, but day 3's own activity still earns 1")
+        XCTAssertEqual(result.bankBalance, 2.0, accuracy: 1e-9)
+    }
+
     // MARK: - Exhausting the bank breaks the streak
 
     /// One more plain rest than the bank can cover breaks the streak right
