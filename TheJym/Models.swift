@@ -297,6 +297,12 @@ final class Phase {
         var completedCycles: Int
         var filledSlotIDs: Set<PersistentIdentifier>
         var perfectFlags: [Bool]
+        /// Cycle number -> the date its last remaining slot was first
+        /// filled, for every cycle this walk actually verified (i.e. not
+        /// one trusted via `legacyCompletedCycles`, which predates this
+        /// tracking and has no dates to offer). Powers the rest-bank's
+        /// cycle-finish credit.
+        var cycleCompletionDates: [Int: Date]
     }
 
     /// - Parameter freezeDate: if set, a cycle only counts as *complete* —
@@ -310,7 +316,8 @@ final class Phase {
     private func cycleWalk(freezeDate: Date? = nil) -> CycleWalkResult {
         let slots = orderedDays
         guard !slots.isEmpty else {
-            return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [], perfectFlags: [])
+            return CycleWalkResult(currentCycle: 1, completedCycles: 0, filledSlotIDs: [], perfectFlags: [],
+                                   cycleCompletionDates: [:])
         }
         let cal = Calendar.current
         let slotCount = slots.count
@@ -351,6 +358,7 @@ final class Phase {
         let filledSlotIDs = filledByCycle[currentCycle] ?? []
 
         var perfectFlags: [Bool] = []
+        var cycleCompletionDates: [Int: Date] = [:]
         for cycle in floor..<n {
             // "Perfect" needs every slot filled (guaranteed here, since only
             // complete cycles are considered) inside a calendar span no
@@ -362,10 +370,15 @@ final class Phase {
             let span = (cal.dateComponents([.day], from: cal.startOfDay(for: first),
                                            to: cal.startOfDay(for: last)).day ?? 0) + 1
             perfectFlags.append(span <= orderedDays.count + 1)
+            // The cycle becomes complete the moment its LAST still-open slot
+            // gets its first fill — that's the max of every slot's own
+            // earliest-fill date.
+            cycleCompletionDates[cycle] = last
         }
 
         return CycleWalkResult(currentCycle: currentCycle, completedCycles: completedCycles,
-                               filledSlotIDs: filledSlotIDs, perfectFlags: perfectFlags)
+                               filledSlotIDs: filledSlotIDs, perfectFlags: perfectFlags,
+                               cycleCompletionDates: cycleCompletionDates)
     }
 
     /// FROZEN, migration-only: replays the OLD date-ordered, slot-filling
@@ -505,11 +518,22 @@ final class Phase {
     /// eligible as any other.
     var perfectCycleFlags: [Bool] { cycleWalk.perfectFlags }
 
-    /// This phase's own rest-bank earn rate, derived from its split pattern
-    /// (e.g. Push/Pull/Legs/Rest -> 1 rest day / 3 training days -> ~0.33).
-    var restBankEarnRate: Double {
-        let rest = orderedDays.count - trainingDaysPerCycle
-        return StatsEngine.earnRate(restDays: rest, trainingDays: trainingDaysPerCycle)
+    /// Cycle number -> the date it became complete, for every cycle this
+    /// phase has actually finished so far (see `CycleWalkResult`'s own doc —
+    /// a cycle trusted via `legacyCompletedCycles` has no date to offer and
+    /// is simply absent here).
+    var cycleCompletionDates: [Int: Date] { cycleWalk.cycleCompletionDates }
+
+    /// This phase's rest-bank credit events: +2 the day the phase starts,
+    /// plus +2 the day each of its cycles completes — except the very last
+    /// cycle, since there's nothing left to bank ahead for once the phase
+    /// itself is over.
+    var restBankCreditEvents: [(date: Date, amount: Double)] {
+        var events: [(date: Date, amount: Double)] = [(startDate, 2.0)]
+        for (cycle, date) in cycleCompletionDates where cycle < totalCycles {
+            events.append((date, 2.0))
+        }
+        return events
     }
 }
 

@@ -885,6 +885,7 @@ struct RestDayLogView: View {
 struct PhaseStatsView: View {
     let phase: Phase
     @Query(sort: \ActiveRecovery.date) private var activeRecoveries: [ActiveRecovery]
+    @Query private var restActivities: [RestDayActivity]
 
     private struct TopSet: Identifiable {
         let id = UUID()
@@ -903,17 +904,20 @@ struct PhaseStatsView: View {
     }
 
     /// Best rest-bank streak achieved during this phase's own timeframe,
-    /// using the phase's own split-derived earn rate throughout — an
-    /// inactive/completed phase is bounded at its last logged session
-    /// rather than walking all the way to today.
+    /// using only this phase's own credit events (its start, its own
+    /// cycle-finish dates) — an inactive/completed phase is bounded at its
+    /// last logged session rather than walking all the way to today.
     private var bestStreak: Int {
-        let trainingDates = phaseSessions.map(\.date)
-        let restDates = activeRecoveries.filter { $0.date >= phase.startDate }.map(\.date)
-        guard !(trainingDates + restDates).isEmpty else { return 0 }
-        let end = phase.isActive ? Date() : ((trainingDates + restDates).max() ?? phase.startDate)
-        let ratePeriods = [StatsEngine.RatePeriod(start: phase.startDate, earnRate: phase.restBankEarnRate)]
-        return StatsEngine.computeRestBank(trainingCreditedDates: trainingDates, restCreditedDates: restDates,
-                                           ratePeriods: ratePeriods, now: end).maxStreak
+        let cal = Calendar.current
+        let activityDates = restActivities.filter { $0.date >= phase.startDate }.map(\.date)
+        let activitySet = Set(activityDates.map { cal.startOfDay(for: $0) })
+        let trainingDates = phaseSessions.map(\.date).filter { !activitySet.contains(cal.startOfDay(for: $0)) }
+        let plainRestDates = activeRecoveries.filter { $0.date >= phase.startDate }.map(\.date)
+        guard !(trainingDates + activityDates + plainRestDates).isEmpty else { return 0 }
+        let end = phase.isActive ? Date() : ((trainingDates + activityDates + plainRestDates).max() ?? phase.startDate)
+        return StatsEngine.computeRestBank(trainingDates: trainingDates, activityRestDates: activityDates,
+                                           plainRestDates: plainRestDates, creditEvents: phase.restBankCreditEvents,
+                                           now: end).maxStreak
     }
 
     /// One entry per exercise logged in this phase — its best session, by

@@ -20,7 +20,7 @@ struct TrainingStats {
     var maxStreakRange: MaxStreakDateRange?
     /// When the currently-open streak began — nil once currentStreak is 0.
     var currentStreakStartDate: Date?
-    var bankBalance: Double     // current rest-bank balance, 0...2
+    var bankBalance: Double     // current rest-bank balance, >= 0, uncapped above
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
 
@@ -139,12 +139,16 @@ enum StatsEngine {
 
         let daysSinceStart = max(1, (cal.dateComponents([.day], from: start, to: effectiveToday).day ?? 0) + 1)
 
-        let ratePeriods = buildRatePeriods(phases: allPhases,
-                                          trainingDaysPerWeekChanges: trainingDaysPerWeekChanges,
-                                          defaultTrainingDaysPerWeek: defaultTrainingDaysPerWeek)
-        let bank = computeRestBank(trainingCreditedDates: sessionDates,
-                                   restCreditedDates: activeRecoveryDates,
-                                   ratePeriods: ratePeriods, now: now)
+        // sessionDates includes rest-day-activity sessions too (an activity
+        // gets a real ExerciseLog same as training) — pull those back out so
+        // the bank engine sees them as activity-rest, not neutral training.
+        let activityRestSet = Set(restActivityDates.map { cal.startOfDay(for: $0) })
+        let trainingDates = sessionDates.filter { !activityRestSet.contains(cal.startOfDay(for: $0)) }
+        let creditEvents = allPhases.flatMap(\.restBankCreditEvents)
+        let bank = computeRestBank(trainingDates: trainingDates,
+                                   activityRestDates: restActivityDates,
+                                   plainRestDates: activeRecoveryDates,
+                                   creditEvents: creditEvents, now: now)
         let cyclePace = activePhase.map { cyclePaceDelta(for: $0, now: effectiveNow) }
         let adherence = activePhase.map { adherencePercent(for: $0, now: effectiveNow) }
 
@@ -293,9 +297,10 @@ enum StatsEngine {
     /// Fallback progress stat for when there's no active phase to judge
     /// cycles against a split pattern: counts a plain Mon-Sun calendar week
     /// as perfect once its logged-session count meets whatever training-
-    /// days-per-week setting was in effect that week (looked up the same
-    /// way buildRatePeriods resolves the rest-bank earn rate over time).
-    /// Bounded to [start, today] like the rest of consistency stats, and
+    /// days-per-week setting was in effect that week (own change history,
+    /// looked up the same "latest change at or before this date" way as
+    /// any other dated setting). Bounded to [start, today] like the rest of
+    /// consistency stats, and
     /// forces a Monday-first calendar regardless of the device's locale,
     /// since "Mon-Sun" is part of the definition, not just a display choice.
     private static func computePerfectWeekFallback(workoutDays: Set<Date>, start: Date, today: Date,
@@ -341,27 +346,7 @@ enum StatsEngine {
         return PerfectWeekFallback(lifetimeCount: lifetime, currentStreak: streak)
     }
 
-    // MARK: - Rest bank (replaces the old schedule-walking streak model)
-
-    /// A minimum floor so a 7-day-a-week trainer (or an all-training-day
-    /// split with no Rest day) isn't stuck earning ~0 and living on a
-    /// knife's edge where any missed day breaks the streak outright.
-    static let minEarnRate = 0.15
-    /// The bank never holds more than this many "days" of buffer.
-    static let bankCap = 2.0
-
-    static func earnRate(restDays: Int, trainingDays: Int) -> Double {
-        guard trainingDays > 0 else { return minEarnRate }
-        return max(minEarnRate, Double(restDays) / Double(trainingDays))
-    }
-
-    /// A window of time over which a constant earn rate applies. Periods are
-    /// meant to be sorted by `start` ascending; the rate in effect on a given
-    /// day is whichever period's `start` is the latest one at or before it.
-    struct RatePeriod {
-        let start: Date
-        let earnRate: Double
-    }
+    // MARK: - Rest bank (deposit-based: credited at phase start/cycle finish, spent by rest days)
 
     struct RestBankResult {
         var currentStreak: Int
@@ -372,75 +357,38 @@ enum StatsEngine {
         var currentStreakStartDate: Date?
     }
 
-    /// Builds the earn-rate timeline: an active Phase's split-derived rate
-    /// takes over from its start date forward (until a later Phase
-    /// supersedes it); everywhere else, the "Training days per week"
-    /// setting's rate applies, itself changing at whatever date it was
-    /// actually changed — never recomputing history retroactively.
-    static func buildRatePeriods(phases: [Phase],
-                                 trainingDaysPerWeekChanges: [(date: Date, value: Int)],
-                                 defaultTrainingDaysPerWeek: Int) -> [RatePeriod] {
-        let cal = Calendar.current
-        var events: [(date: Date, rate: Double)] = []
-
-        let sortedChanges = trainingDaysPerWeekChanges.sorted { $0.date < $1.date }
-        if sortedChanges.isEmpty {
-            events.append((date: .distantPast,
-                           rate: earnRate(restDays: 7 - defaultTrainingDaysPerWeek,
-                                         trainingDays: defaultTrainingDaysPerWeek)))
-        } else {
-            for change in sortedChanges {
-                events.append((date: change.date,
-                               rate: earnRate(restDays: 7 - change.value, trainingDays: change.value)))
-            }
-        }
-
-        for phase in phases.sorted(by: { $0.startDate < $1.startDate }) {
-            events.append((date: phase.startDate, rate: phase.restBankEarnRate))
-        }
-
-        return events
-            .sorted { $0.date < $1.date }
-            .map { RatePeriod(start: cal.startOfDay(for: $0.date), earnRate: $0.rate) }
-    }
-
-    /// Pure day-by-day walk of the rest-bank model. A streak begins on a
-    /// training day (or a rest day, if nothing's open yet) with the bank
-    /// reset to 1.0 (capped at `bankCap`); every other training day within
-    /// that same streak adds that day's earn rate — that's how rest days
-    /// get "earned" in the first place. Note that a rest-day *activity*
-    /// (a walk, cardio, mobility work — anything with real exercise data
-    /// behind it) is passed in via `trainingCreditedDates`, not
-    /// `restCreditedDates`: doing something active earns the bank same as
-    /// training, it doesn't spend it.
+    /// Pure day-by-day walk of the rest-bank model. Training itself is
+    /// bank-neutral — it just keeps the streak alive. The bank only ever
+    /// moves via `creditEvents` (+2 the day a phase starts, +2 the day each
+    /// of its cycles finishes except the last — see `Phase.restBankCreditEvents`)
+    /// and rest days, which spend from it: an activity-logged rest costs
+    /// 0.5, a plain/unscheduled rest (or a day with nothing logged at all,
+    /// while a streak is open) costs 1.0. A credit landing on an otherwise
+    /// uncredited day only applies if the streak is already open going into
+    /// it — a bare credit event can't spontaneously open one on its own.
     ///
-    /// A logged rest day (`restCreditedDates` — no activity, just an
-    /// explicit "I rested today" credit) *spends* a day from the bank same
-    /// as an unlogged day does, and can break the streak the exact same
-    /// way if that spend takes the bank negative — the only thing logging
-    /// it buys you is that it's still an intentional, accounted-for rest
-    /// instead of a silent miss; it's not free. The moment the bank drops
-    /// below 0, the streak ends right there and the ledger closes: further
-    /// uncredited or rest days do nothing (no more spending) until the
-    /// next credited day starts a brand-new streak, fresh at 1.0 rather
-    /// than inheriting whatever debt was left. Today is left pending —
-    /// neither earned nor spent — if nothing's logged yet.
-    static func computeRestBank(trainingCreditedDates: [Date],
-                                restCreditedDates: [Date],
-                                ratePeriods: [RatePeriod],
+    /// The bank never goes negative: the moment a spend would take it below
+    /// 0, the streak ends right there and the ledger closes — bank sits at a
+    /// clean 0, and no further uncredited or rest days do anything (no more
+    /// spending) until the next credited day starts a brand-new streak,
+    /// fresh at 0 rather than inheriting whatever debt was left. Today is
+    /// left pending — neither spent nor credited — if nothing's logged yet.
+    static func computeRestBank(trainingDates: [Date],
+                                activityRestDates: [Date],
+                                plainRestDates: [Date],
+                                creditEvents: [(date: Date, amount: Double)],
                                 now: Date = .now) -> RestBankResult {
         let cal = Calendar.current
-        let trainingCredited = Set(trainingCreditedDates.map { cal.startOfDay(for: $0) })
-        let restCredited = Set(restCreditedDates.map { cal.startOfDay(for: $0) })
-        let today = cal.startOfDay(for: now)
-        guard let firstDay = (trainingCredited.union(restCredited)).min() else {
-            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0, maxStreakRange: nil, currentStreakStartDate: nil)
+        let training = Set(trainingDates.map { cal.startOfDay(for: $0) })
+        let activityRest = Set(activityRestDates.map { cal.startOfDay(for: $0) })
+        let plainRest = Set(plainRestDates.map { cal.startOfDay(for: $0) })
+        var creditByDay: [Date: Double] = [:]
+        for event in creditEvents {
+            creditByDay[cal.startOfDay(for: event.date), default: 0] += event.amount
         }
-        let sortedPeriods = ratePeriods.sorted { $0.start < $1.start }
-
-        func rate(on day: Date) -> Double {
-            let covering = sortedPeriods.filter { $0.start <= day }.max { $0.start < $1.start }
-            return covering?.earnRate ?? (sortedPeriods.first?.earnRate ?? minEarnRate)
+        let today = cal.startOfDay(for: now)
+        guard let firstDay = (training.union(activityRest).union(plainRest)).min() else {
+            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0, maxStreakRange: nil, currentStreakStartDate: nil)
         }
 
         var bank = 0.0
@@ -492,44 +440,40 @@ enum StatsEngine {
         while day <= today, iterations < 20_000 {
             iterations += 1
             let isToday = day == today
-            let isTraining = trainingCredited.contains(day)
-            let isRest = restCredited.contains(day)
-            let isCredited = isTraining || isRest
+            let isTraining = training.contains(day)
+            let isActivityRest = activityRest.contains(day)
+            let isPlainRest = plainRest.contains(day)
+            let isCredited = isTraining || isActivityRest || isPlainRest
 
             if isToday && !isCredited { break }   // pending — stop without processing today
 
-            if isTraining {
-                if !streakOpen { currentStreakStart = day }
-                bank = streakOpen ? min(bankCap, bank + rate(on: day)) : 1.0
-                streakOpen = true
-                recordCredit(on: day)
-            } else if isRest {
+            if isCredited {
                 if !streakOpen {
-                    // Nothing banked yet to spend — a rest day can still
-                    // open a fresh streak the same way a training day can.
                     currentStreakStart = day
-                    bank = 1.0
+                    bank = 0
                     streakOpen = true
-                    recordCredit(on: day)
+                }
+                if isActivityRest { bank -= 0.5 }
+                else if isPlainRest { bank -= 1.0 }
+                // isTraining alone: no change, purely neutral.
+                bank += creditByDay[day] ?? 0
+                // Epsilon guards against floating-point residue spuriously
+                // tripping a break right at the edge.
+                if bank < -1e-9 {
+                    breakStreak(on: day)
                 } else {
-                    bank -= 1.0
-                    // Epsilon guards against floating-point residue (e.g. a
-                    // repeating-decimal earn rate landing at -1e-16 instead
-                    // of exactly 0) spuriously tripping a break right at
-                    // the edge.
-                    if bank < -1e-9 {
-                        breakStreak(on: day)
-                    } else {
-                        recordCredit(on: day)
-                    }
+                    recordCredit(on: day)
                 }
             } else if streakOpen {
                 bank -= 1.0
+                bank += creditByDay[day] ?? 0
                 if bank < -1e-9 {
                     breakStreak(on: day)
                 }
             }
-            // else: ledger already closed, an unlogged day has no effect.
+            // else: ledger already closed, an unlogged day has no effect
+            // (any credit landing here is simply lost — it can't spend
+            // itself into opening a fresh streak on its own).
 
             guard let next = cal.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
@@ -540,7 +484,7 @@ enum StatsEngine {
                               precedingBreakDate: maxStreakPrecedingBreakDate,
                               followingBreakDate: maxStreakFollowingBreakDate)
         }
-        return RestBankResult(currentStreak: streak, maxStreak: maxStreak, bankBalance: bank,
+        return RestBankResult(currentStreak: streak, maxStreak: maxStreak, bankBalance: max(0, bank),
                               maxStreakRange: maxStreakRange,
                               currentStreakStartDate: streakOpen ? currentStreakStart : nil)
     }
