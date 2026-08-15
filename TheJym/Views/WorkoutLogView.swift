@@ -898,6 +898,17 @@ struct ExercisePageView: View {
     /// sparse rather than labeling every point on the line, which at any
     /// real amount of history would just turn into an unreadable smear of
     /// overlapping numbers.
+    ///
+    /// Plotted by SESSION ORDER, not actual calendar date — a real date
+    /// axis would waste most of its width on any long dormant stretch
+    /// (an injury, an off-season) and could squash a burst of recent
+    /// sessions into a sliver at the edge. Every session gets equal
+    /// spacing regardless of the calendar gap before it, which both
+    /// collapses those dead stretches and guarantees the most recent
+    /// session always lands at the right edge — it's simply the last
+    /// point, whatever the timeline actually looked like. The axis itself
+    /// is hidden since raw session-order numbers aren't meaningful on
+    /// their own; the record markers' own value labels are the payoff.
     @ViewBuilder
     private func recordMarkedMetricPage(title: String, valueLabel: String, emptyMessage: String,
                                         points: [(date: Date, value: Double, isRecord: Bool)]) -> some View {
@@ -908,11 +919,11 @@ struct ExercisePageView: View {
                     .font(.caption2).foregroundStyle(.secondary)
             } else {
                 Chart {
-                    ForEach(points, id: \.date) { point in
-                        LineMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
+                    ForEach(Array(points.enumerated()), id: \.offset) { index, point in
+                        LineMark(x: .value("Session", index), y: .value(valueLabel, point.value))
                     }
-                    ForEach(points.filter(\.isRecord), id: \.date) { point in
-                        PointMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
+                    ForEach(Array(points.enumerated()).filter(\.element.isRecord), id: \.offset) { index, point in
+                        PointMark(x: .value("Session", index), y: .value(valueLabel, point.value))
                             .annotation(position: .top) {
                                 // Rounded for readability — the point's
                                 // actual (unrounded) value is still what's
@@ -922,6 +933,7 @@ struct ExercisePageView: View {
                             }
                     }
                 }
+                .chartXAxis(.hidden)
                 .chartYScale(domain: .automatic(includesZero: false))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
