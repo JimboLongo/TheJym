@@ -16,6 +16,7 @@ import SwiftUI
 import SwiftData
 import UIKit
 import Combine
+import Charts
 
 struct WorkoutLogView: View {
     @Environment(\.modelContext) private var context
@@ -832,6 +833,80 @@ struct ExercisePageView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// This exercise's full logged history, oldest first — same "any plan
+    /// key, just this exercise name" scope `previousLogs` already uses, so
+    /// the longitudinal charts below see every session regardless of how
+    /// the rep scheme or weights have changed over time.
+    private var exerciseHistory: [ExerciseLog] {
+        allLogs
+            .filter { $0.exerciseName == draft.name && !$0.sets.isEmpty }
+            .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
+    }
+
+    /// One point per session: total weight moved (Σ reps × weight across
+    /// every set that day).
+    private var totalWeightMovedOverTime: [(date: Date, value: Double)] {
+        exerciseHistory.compactMap { log in
+            guard let date = log.session?.date else { return nil }
+            return (date, log.totalWeightMoved)
+        }
+    }
+
+    /// One point per session: the single heaviest set's weight that day
+    /// (load, not volume — e.g. 225 for a 225x5, regardless of what the
+    /// other sets that day were).
+    private var maxWeightMovedOverTime: [(date: Date, value: Double)] {
+        exerciseHistory.compactMap { log in
+            guard let date = log.session?.date, let top = log.sortedSets.map(\.weight).max() else { return nil }
+            return (date, top)
+        }
+    }
+
+    /// One point per session: the best estimated 1-rep max that day (Epley:
+    /// weight × (1 + reps/30)), taken across all of that day's sets — the
+    /// single set implying the highest 1RM, not necessarily the heaviest
+    /// set outright (a lighter set done for more reps can imply a bigger 1RM).
+    private var estimatedOneRepMaxOverTime: [(date: Date, value: Double)] {
+        exerciseHistory.compactMap { log in
+            guard let date = log.session?.date else { return nil }
+            let best = log.sortedSets.map { $0.weight * (1 + Double($0.reps) / 30.0) }.max() ?? 0
+            guard best > 0 else { return nil }
+            return (date, best)
+        }
+    }
+
+    /// Shared layout for the 3 "over time" chart pages — a caption header
+    /// plus a line+point chart, or a placeholder until there's enough
+    /// history (a single point has nothing to draw a line between).
+    @ViewBuilder
+    private func metricOverTimePage(title: String, valueLabel: String, points: [(date: Date, value: Double)]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.bold()).foregroundStyle(.secondary)
+            if points.count < 2 {
+                Text("Log this exercise a few more times to see its \(valueLabel.lowercased()) trend over time.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Chart(points, id: \.date) { point in
+                    LineMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
+                    PointMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
+                }
+                .chartYScale(domain: .automatic(includesZero: false))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var totalWeightMovedPage: some View {
+        metricOverTimePage(title: "Total Weight Moved", valueLabel: "Total Weight", points: totalWeightMovedOverTime)
+    }
+    private var maxWeightMovedPage: some View {
+        metricOverTimePage(title: "Max Weight Moved", valueLabel: "Max Weight", points: maxWeightMovedOverTime)
+    }
+    private var oneRepMaxPage: some View {
+        metricOverTimePage(title: "Estimated 1-Rep Max", valueLabel: "Est. 1RM", points: estimatedOneRepMaxOverTime)
+    }
+
     /// The lightest weight actually usable for this exercise's equipment —
     /// the empty bar for barbell/plate work, or the smallest dumbbell
     /// actually owned — so a suggested warm-up set never asks for less than
@@ -1180,22 +1255,27 @@ struct ExercisePageView: View {
             // transition between any two rows below it.
             .padding(.top, -8)
 
-            // Pace panel — 4 real pages (Pace Calculator, Plate Calculator,
-            // Previous Workouts, Warm-Up Sets), each wrapped with an
-            // invisible clone of its opposite neighbor on either side (tags
-            // 0 and 5) so swiping past either end lands on a decoy that
-            // onChange below silently snaps to the real page right after —
-            // reads as wrapping around in both directions instead of
-            // dead-ending. Native page dots are off (they'd count all 6
-            // internal tags); paceDots below draws exactly 4, mapped from
+            // Pace panel — 7 real pages (Pace Calculator, Plate Calculator,
+            // Previous Workouts, Warm-Up Sets, Total Weight Moved, Max
+            // Weight Moved, Estimated 1-Rep Max — the last 3 charting that
+            // metric over this exercise's full history), each wrapped with
+            // an invisible clone of its opposite neighbor on either side
+            // (tags 0 and 8) so swiping past either end lands on a decoy
+            // that onChange below silently snaps to the real page right
+            // after — reads as wrapping around in both directions instead
+            // of dead-ending. Native page dots are off (they'd count all 9
+            // internal tags); paceDots below draws exactly 7, mapped from
             // whichever tag is actually showing.
             TabView(selection: $paceTabSelection) {
-                warmupPage.tag(0)          // decoy: swiping back past page 1 lands here
-                comparisonsPage.tag(1)     // Pace Calculator (real "page 0")
+                oneRepMaxPage.tag(0)        // decoy: swiping back past page 1 lands here
+                comparisonsPage.tag(1)      // Pace Calculator (real "page 0")
                 plateCalculatorPage.tag(2)
                 previousLogsPage.tag(3)
                 warmupPage.tag(4)
-                comparisonsPage.tag(5)     // decoy: swiping forward past page 4 lands here
+                totalWeightMovedPage.tag(5)
+                maxWeightMovedPage.tag(6)
+                oneRepMaxPage.tag(7)
+                comparisonsPage.tag(8)      // decoy: swiping forward past page 7 lands here
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(height: pacePanelHeight)
@@ -1206,8 +1286,8 @@ struct ExercisePageView: View {
                 paceDots
             }
             .onChange(of: paceTabSelection) { _, newValue in
-                guard newValue == 0 || newValue == 5 else { return }
-                let real = newValue == 0 ? 4 : 1
+                guard newValue == 0 || newValue == 8 else { return }
+                let real = newValue == 0 ? 7 : 1
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
@@ -1241,13 +1321,13 @@ struct ExercisePageView: View {
         }
     }
 
-    /// 4 dots standing in for the native page indicator (off, since it'd
-    /// count all 6 internal tags including the 2 wraparound decoys) — maps
-    /// whichever internal tag is showing back to one of the 4 real pages.
+    /// 7 dots standing in for the native page indicator (off, since it'd
+    /// count all 9 internal tags including the 2 wraparound decoys) — maps
+    /// whichever internal tag is showing back to one of the 7 real pages.
     private var paceDots: some View {
-        let realPage = ((paceTabSelection - 1) % 4 + 4) % 4
+        let realPage = ((paceTabSelection - 1) % 7 + 7) % 7
         return HStack(spacing: 6) {
-            ForEach(0..<4, id: \.self) { i in
+            ForEach(0..<7, id: \.self) { i in
                 Circle()
                     .fill(i == realPage ? Color.primary : Color.secondary.opacity(0.35))
                     .frame(width: 6, height: 6)
