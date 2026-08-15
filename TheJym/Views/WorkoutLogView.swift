@@ -866,11 +866,15 @@ struct ExercisePageView: View {
         valuesWithRecordFlags { $0.totalWeightMoved }
     }
 
-    /// Every session's single heaviest set that day (load, not volume —
-    /// e.g. 225 for a 225x5, regardless of what the other sets that day
-    /// were), flagged for whether it was a new record at the time.
+    /// Every session's single best set's total weight moved that day (reps
+    /// × weight for just that one set — e.g. 1125 for a 225x5 — not the
+    /// heaviest load alone and not summed across every set the way
+    /// `totalWeightMovedOverTime` is), flagged for whether it was a new
+    /// record at the time.
     private var maxWeightMovedOverTime: [(date: Date, value: Double, isRecord: Bool)] {
-        valuesWithRecordFlags { $0.sortedSets.map(\.weight).max() }
+        valuesWithRecordFlags { log in
+            log.sortedSets.map { $0.weight * Double($0.reps) }.max()
+        }
     }
 
     /// Every session's best calculated 1-rep max that day (Epley: weight ×
@@ -910,7 +914,10 @@ struct ExercisePageView: View {
                     ForEach(points.filter(\.isRecord), id: \.date) { point in
                         PointMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
                             .annotation(position: .top) {
-                                Text(Formatters.trim(point.value))
+                                // Rounded for readability — the point's
+                                // actual (unrounded) value is still what's
+                                // plotted, this is just the label text.
+                                Text(Formatters.trim((point.value / 5).rounded() * 5))
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                     }
