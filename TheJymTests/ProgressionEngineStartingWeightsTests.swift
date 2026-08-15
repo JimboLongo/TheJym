@@ -87,4 +87,29 @@ final class ProgressionEngineStartingWeightsTests: XCTestCase {
         XCTAssertEqual(resolved.weight, 50)
         XCTAssertEqual(resolved.target, 40)
     }
+
+    /// Custom auto weight-increase rule overrides repTotal's own default
+    /// setsTaken<=1 ? 5 : 2.5 bump outright, same as it does for a
+    /// fixedSets exercise via suggestNextWeights — the gap this fixed.
+    @MainActor
+    func testStartingRepTotalUsesCustomIncreaseAmountWhenProvided() {
+        let context = makeContext()
+        let date = Calendar.current.date(byAdding: .day, value: -7, to: .now)!
+        let session = WorkoutSession(date: date, dayLabel: "Day", cycleNumber: 1)
+        context.insert(session)
+        let log = ExerciseLog(exerciseName: "Farmer's Carry", targetReps: [], order: 0, goalType: .repTotal(target: 40))
+        log.session = session
+        context.insert(log)
+        let set = SetLog(index: 0, weight: 50, reps: 40)
+        set.exerciseLog = log
+        context.insert(set)
+        let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let pe = PlannedExercise(order: 0, exerciseName: "Farmer's Carry", targetReps: [],
+                                 suggestedWeights: [50], goalType: .repTotal(target: 40))
+        let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: true,
+                                                           aggressiveness: .moderate, roundingIncrement: 2.5,
+                                                           customIncreaseAmount: 10)
+        XCTAssertEqual(resolved.weight, 60, "50 + the custom 10 lb rule, not the default 2.5/5 bump")
+    }
 }

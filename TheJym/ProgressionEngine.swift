@@ -157,10 +157,16 @@ enum ProgressionEngine {
     /// conservative allows up to 3. Bumps either added weight (+2.5-5 lb,
     /// bigger jump if finished in just 1 set) or the rep total (+5),
     /// depending on the exercise's own toggle (default: weight).
+    /// `customIncreaseAmount`: when provided (Settings' custom auto
+    /// weight-increase rule, enabled), it replaces the aggressiveness-scaled
+    /// setsTaken<=1 ? 5 : 2.5 bump outright — same override `suggestNextWeights`
+    /// applies for a fixedSets exercise. Leave nil (the default) to keep
+    /// using the aggressiveness-scaled bump.
     static func suggestRepTotalProgression(history: [ExerciseLog],
                                            aggressiveness: AIAggressiveness,
                                            progressesReps: Bool,
-                                           roundingIncrement: Double = 2.5) -> RepTotalSuggestion? {
+                                           roundingIncrement: Double = 2.5,
+                                           customIncreaseAmount: Double? = nil) -> RepTotalSuggestion? {
         guard let latest = history.last, latest.repTotalReached else { return nil }
         let setsTaken = latest.sortedSets.count
         guard setsTaken <= requiredStreak(for: aggressiveness) else { return nil }
@@ -172,7 +178,7 @@ enum ProgressionEngine {
         let latestWeight = latest.isBodyweight
             ? (latest.sortedSets.last?.addedWeight ?? 0)
             : (latest.sortedSets.last?.weight ?? 0)
-        let bump: Double = setsTaken <= 1 ? 5 : 2.5
+        let bump: Double = customIncreaseAmount ?? (setsTaken <= 1 ? 5 : 2.5)
         let newWeight = roundToPlate(latestWeight + bump, smallest: roundingIncrement)
         return RepTotalSuggestion(newTarget: nil, newAddedWeight: newWeight)
     }
@@ -239,12 +245,14 @@ enum ProgressionEngine {
                                  aiOn: Bool,
                                  aggressiveness: AIAggressiveness,
                                  roundingIncrement: Double,
+                                 customIncreaseAmount: Double? = nil,
                                  isDeloadCycle: Bool = false) -> (weight: Double, target: Int) {
         var effectiveTarget = pe.repTotalTarget
         var startWeight = pe.suggestedWeights.first ?? 0
         if aiOn, let suggestion = suggestRepTotalProgression(history: history, aggressiveness: aggressiveness,
                                                               progressesReps: pe.repTotalProgressesReps,
-                                                              roundingIncrement: roundingIncrement) {
+                                                              roundingIncrement: roundingIncrement,
+                                                              customIncreaseAmount: customIncreaseAmount) {
             if let newTarget = suggestion.newTarget { effectiveTarget = newTarget }
             if let newWeight = suggestion.newAddedWeight { startWeight = newWeight }
         } else if !aiOn, let lastSet = history.last?.sortedSets.last {

@@ -35,6 +35,11 @@ struct WorkoutLogView: View {
     @State private var showRecapSheet = false
     @State private var recapEntries: [RecapEntry] = []
     @State private var recapChoices: [String: Bool] = [:]
+    /// Hand-adjustable per-set weights for each recap entry's suggested
+    /// jump/drop — seeded from `RecapEntry.suggestion`, then edited via the
+    /// recap's own +/- steppers. What `applyRecapChoices` actually writes
+    /// out, not necessarily the original AI suggestion verbatim.
+    @State private var recapWeights: [String: [Double]] = [:]
     @State private var currentPageID: String?
     @State private var showExerciseJumpList = false
     /// The calendar day this workout will be saved under — defaults to
@@ -161,6 +166,10 @@ struct WorkoutLogView: View {
         /// was actually lifted today (a jump if higher, a drop if lower).
         var suggestion: [Double]?
         var currentWeights: [Double]
+        /// This exercise's own weight step (2.5 for barbell/plate work, or
+        /// the dumbbell increment) — the +/- granularity for hand-adjusting
+        /// the suggested jump per set in the recap.
+        var increment: Double
     }
 
     /// One page in the paging ScrollView: either a single active exercise,
@@ -465,7 +474,7 @@ struct WorkoutLogView: View {
             saveDraftToDisk()
         }
         .sheet(isPresented: $showRecapSheet, onDismiss: { dismiss() }) {
-            WorkoutRecapView(entries: recapEntries, choices: $recapChoices) { applyRecapChoices() }
+            WorkoutRecapView(entries: recapEntries, choices: $recapChoices, weights: $recapWeights) { applyRecapChoices() }
         }
     }
 
@@ -536,6 +545,7 @@ struct WorkoutLogView: View {
             case .repTotal:
                 let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: aiOn,
                                                                    aggressiveness: agg, roundingIncrement: increment,
+                                                                   customIncreaseAmount: customIncreaseAmount,
                                                                    isDeloadCycle: isDeloadCycle)
                 let sets = [SetDraft(weightText: Formatters.trim(resolved.weight), repsText: "")]
                 drafts.append(ExerciseDraft(name: pe.exerciseName,
@@ -579,6 +589,7 @@ struct WorkoutLogView: View {
             case .repTotal:
                 let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: aiOn,
                                                                    aggressiveness: agg, roundingIncrement: increment,
+                                                                   customIncreaseAmount: customIncreaseAmount,
                                                                    isDeloadCycle: isDeloadCycle)
                 if !drafts[idx].sets.isEmpty {
                     drafts[idx].sets[0].weightText = Formatters.trim(resolved.weight)
@@ -686,7 +697,8 @@ struct WorkoutLogView: View {
                                           streak: streak,
                                           requiredStreak: ProgressionEngine.requiredStreak(for: agg),
                                           suggestion: (suggestion != currentWeights) ? suggestion : nil,
-                                          currentWeights: currentWeights))
+                                          currentWeights: currentWeights,
+                                          increment: increment))
 
             case .repTotal:
                 // repTotal progression is applied automatically (no interactive
@@ -694,7 +706,8 @@ struct WorkoutLogView: View {
                 // onto the plan for next cycle.
                 if let pe, let suggestion = ProgressionEngine.suggestRepTotalProgression(
                     history: combinedHistory, aggressiveness: agg,
-                    progressesReps: pe.repTotalProgressesReps, roundingIncrement: increment) {
+                    progressesReps: pe.repTotalProgressesReps, roundingIncrement: increment,
+                    customIncreaseAmount: customIncreaseAmount) {
                     if let newTarget = suggestion.newTarget {
                         pe.goalType = .repTotal(target: newTarget)
                     }
@@ -712,6 +725,9 @@ struct WorkoutLogView: View {
             // Default to accepting the suggested jump/drop — matches the
             // app's existing "AI suggestion applied unless overridden" pattern.
             recapChoices = Dictionary(uniqueKeysWithValues: entries.map { ($0.exerciseName, true) })
+            recapWeights = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
+                entry.suggestion.map { (entry.exerciseName, $0) }
+            })
             showRecapSheet = true
         } else {
             dismiss()
@@ -720,9 +736,10 @@ struct WorkoutLogView: View {
 
     private func applyRecapChoices() {
         for entry in recapEntries {
-            guard let suggestion = entry.suggestion, recapChoices[entry.exerciseName] == true,
+            guard entry.suggestion != nil, recapChoices[entry.exerciseName] == true,
+                  let weights = recapWeights[entry.exerciseName],
                   let pe = plannedExercises(for: day).first(where: { $0.exerciseName == entry.exerciseName }) else { continue }
-            pe.suggestedWeights = suggestion
+            pe.suggestedWeights = weights
         }
         try? context.save()
     }
@@ -2440,6 +2457,10 @@ struct WorkoutRecapView: View {
     @Environment(\.dismiss) private var dismiss
     let entries: [WorkoutLogView.RecapEntry]
     @Binding var choices: [String: Bool]
+    /// Hand-adjustable per-set weights, keyed by exercise name — seeded
+    /// from each entry's `suggestion` before this sheet appears, edited
+    /// here via the +/- stepper on each set.
+    @Binding var weights: [String: [Double]]
     var onDone: () -> Void
 
     var body: some View {
@@ -2458,17 +2479,34 @@ struct WorkoutRecapView: View {
 
                         if let suggestion = entry.suggestion {
                             let isJump = (suggestion.first ?? 0) > (entry.currentWeights.first ?? 0)
-                            Picker("", selection: Binding(
-                                get: { choices[entry.exerciseName] ?? true },
-                                set: { choices[entry.exerciseName] = $0 })) {
-                                Text(isJump
-                                     ? "Jump to \(suggestion.map { Formatters.trim($0) }.joined(separator: "/"))"
-                                     : "Drop to \(suggestion.map { Formatters.trim($0) }.joined(separator: "/"))")
-                                    .tag(true)
+                            let accepted = choices[entry.exerciseName] ?? true
+                            Toggle(isJump ? "Apply the suggested jump" : "Apply the suggested drop", isOn: Binding(
+                                get: { accepted },
+                                set: { choices[entry.exerciseName] = $0 }))
+
+                            if accepted {
+                                let setWeights = weights[entry.exerciseName] ?? suggestion
+                                ForEach(setWeights.indices, id: \.self) { i in
+                                    HStack {
+                                        Text("Set \(i + 1)")
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text("\(Formatters.trim(entry.currentWeights[safe: i] ?? 0)) → \(Formatters.trim(setWeights[i]))")
+                                        Stepper("", value: Binding(
+                                            get: { weights[entry.exerciseName]?[safe: i] ?? suggestion[i] },
+                                            set: { newValue in
+                                                var arr = weights[entry.exerciseName] ?? suggestion
+                                                arr[i] = newValue
+                                                weights[entry.exerciseName] = arr
+                                            }), step: entry.increment)
+                                        .labelsHidden()
+                                        .fixedSize()
+                                    }
+                                }
+                            } else {
                                 Text("Stay at \(entry.currentWeights.map { Formatters.trim($0) }.joined(separator: "/"))")
-                                    .tag(false)
+                                    .foregroundStyle(.secondary)
                             }
-                            .pickerStyle(.segmented)
                         }
                     }
                 }
