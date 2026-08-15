@@ -179,12 +179,12 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    if let url = exportCSVURL {
+                    if let url = exportXLSXURL {
                         ShareLink(item: url) {
-                            Label("Export History to CSV…", systemImage: "square.and.arrow.up")
+                            Label("Export to Excel…", systemImage: "square.and.arrow.up")
                         }
                     } else {
-                        Label("Export History to CSV…", systemImage: "square.and.arrow.up")
+                        Label("Export to Excel…", systemImage: "square.and.arrow.up")
                             .foregroundStyle(.secondary)
                     }
                     Button("Delete All History", role: .destructive) {
@@ -192,7 +192,7 @@ struct SettingsView: View {
                     }
                     .disabled(sessions.isEmpty)
                 } footer: {
-                    Text("Export saves every logged workout as a .csv file (same format the importer expects, so it doubles as a backup). Delete All History permanently deletes every logged workout — Phases, exercises, and equipment are untouched.")
+                    Text("Export saves a 3-tab .xlsx workbook: History (every logged workout plus weigh-ins), Exercises (your Exercises tab library — equipment, saved sets, notes), and Equipment (bars, dumbbells, bands, and plates owned). Delete All History permanently deletes every logged workout — Phases, exercises, and equipment are untouched.")
                 }
 
                 if let s = settingsList.first {
@@ -293,36 +293,82 @@ struct SettingsView: View {
         try? context.save()
     }
 
-    /// Every logged workout as a CSV file (Date, Exercise, Sets, Weights,
-    /// Reps — same columns ImportEngine reads), written to a temp file so it
-    /// can be handed to ShareLink. Regenerated each time this is read;
-    /// cheap enough at personal-history scale.
-    private var exportCSVURL: URL? {
-        guard !sessions.isEmpty else { return nil }
-        var lines = ["Date,Exercise,Sets,Weights,Reps"]
-        for session in sessions.sorted(by: { $0.date < $1.date }) {
-            let dateStr = Formatters.exportDate.string(from: session.date)
-            for log in session.exerciseLogs.sorted(by: { $0.order < $1.order }) {
-                let sortedSets = log.sortedSets
-                guard !sortedSets.isEmpty else { continue }
-                let sets = log.setsSummaryText
-                let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
-                let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
-                lines.append([dateStr, log.exerciseName, sets, weights, reps].map(csvField).joined(separator: ","))
-            }
-        }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("TheJym-History.csv")
+    /// Everything exportable, as a 3-tab .xlsx workbook, written to a temp
+    /// file so it can be handed to ShareLink. Regenerated each time this is
+    /// read; cheap enough at personal-history scale.
+    ///
+    /// - "History": every logged workout (Date, Exercise, Sets, Weights,
+    ///   Reps — same columns ImportEngine reads for a workout row) plus
+    ///   every body-weight entry, interleaved chronologically as
+    ///   "Body Weight" pseudo-exercise rows.
+    /// - "Exercises": the Exercises tab library — name, tagged equipment,
+    ///   bodyweight flag, saved sets (rep schemes + rep-total targets),
+    ///   and notes.
+    /// - "Equipment": every Bar (barbells, dumbbell sets, bands — bands are
+    ///   just a Bar with isDumbbell = true) and the plate sizes owned.
+    private var exportXLSXURL: URL? {
+        guard !sessions.isEmpty || !exerciseDefs.isEmpty || !bars.isEmpty else { return nil }
+        let workbook = XLSXWriter.makeWorkbook(sheets: [
+            ("History", historySheetRows),
+            ("Exercises", exercisesSheetRows),
+            ("Equipment", equipmentSheetRows),
+        ])
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("TheJym-Export.xlsx")
         do {
-            try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            try workbook.write(to: url, options: .atomic)
             return url
         } catch {
             return nil
         }
     }
 
-    private func csvField(_ s: String) -> String {
-        guard s.contains(",") || s.contains("\"") || s.contains("\n") else { return s }
-        return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    private var historySheetRows: [[XLSXCell]] {
+        var rows: [[XLSXCell]] = [[.string("Date"), .string("Exercise"), .string("Sets"), .string("Weights"), .string("Reps")]]
+        var dated: [(date: Date, row: [XLSXCell])] = []
+        for session in sessions {
+            let dateStr = Formatters.exportDate.string(from: session.date)
+            for log in session.exerciseLogs.sorted(by: { $0.order < $1.order }) {
+                let sortedSets = log.sortedSets
+                guard !sortedSets.isEmpty else { continue }
+                let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
+                let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
+                dated.append((session.date, [.string(dateStr), .string(log.exerciseName),
+                                             .string(log.setsSummaryText), .string(weights), .string(reps)]))
+            }
+        }
+        for entry in bodyWeights {
+            let dateStr = Formatters.exportDate.string(from: entry.date)
+            dated.append((entry.date, [.string(dateStr), .string("Body Weight"), .blank,
+                                       .number(entry.weight), .blank]))
+        }
+        rows.append(contentsOf: dated.sorted { $0.date < $1.date }.map(\.row))
+        return rows
+    }
+
+    private var exercisesSheetRows: [[XLSXCell]] {
+        var rows: [[XLSXCell]] = [[.string("Exercise"), .string("Equipment"), .string("Bodyweight"), .string("Sets"), .string("Notes")]]
+        for def in exerciseDefs.sorted(by: { $0.name < $1.name }) {
+            let sets = (def.repSchemes.map { $0.map(String.init).joined(separator: "/") }
+                        + def.repTotalTargets.map { "\($0) total" }).joined(separator: "; ")
+            rows.append([.string(def.name), .string(def.equipment?.name ?? ""),
+                        .string(def.isBodyweight ? "Yes" : "No"), .string(sets), .string(def.notes)])
+        }
+        return rows
+    }
+
+    private var equipmentSheetRows: [[XLSXCell]] {
+        var rows: [[XLSXCell]] = [[.string("Name"), .string("Type"), .string("Weight"), .string("Sides"), .string("Dumbbell/Band Weights")]]
+        for bar in bars.sorted(by: { $0.name < $1.name }) {
+            rows.append([.string(bar.name), .string(bar.isDumbbell ? "Dumbbell/Band" : "Barbell"),
+                        bar.isDumbbell ? .blank : .number(bar.weight),
+                        bar.isDumbbell ? .blank : .int(bar.loadableSides),
+                        .string(bar.dumbbellWeights.map { Formatters.trim($0) }.joined(separator: ", "))])
+        }
+        if let plates = settingsList.first?.availablePlateSizes, !plates.isEmpty {
+            rows.append([.blank])
+            rows.append([.string("Plates Owned"), .string(plates.map { Formatters.trim($0) }.joined(separator: ", "))])
+        }
+        return rows
     }
 }
 
