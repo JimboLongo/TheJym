@@ -852,41 +852,43 @@ struct ExercisePageView: View {
         }
     }
 
-    /// Only a PR (personal record) day gets a point — walks history in
-    /// order and keeps a running max, adding a point only when a session's
-    /// best value actually exceeds every prior one, so the chart reads as
-    /// a record-progression (a step up each time), not a noisy per-session
-    /// plot. `sessionBest` returns nil for a session with nothing
-    /// qualifying that day (e.g. no single-rep set logged).
-    private func newRecordsOverTime(sessionBest: (ExerciseLog) -> Double?) -> [(date: Date, value: Double)] {
+    /// Every session's value, oldest first, each flagged with whether it
+    /// was a new all-time high as of that point (walks history in order,
+    /// tracking a running max). `sessionValue` returns nil for a session
+    /// with nothing qualifying that day (e.g. no single-rep set logged),
+    /// which is simply skipped — it doesn't reset the running max.
+    private func valuesWithRecordFlags(sessionValue: (ExerciseLog) -> Double?) -> [(date: Date, value: Double, isRecord: Bool)] {
         var runningMax = -Double.infinity
-        var points: [(date: Date, value: Double)] = []
+        var points: [(date: Date, value: Double, isRecord: Bool)] = []
         for log in exerciseHistory {
-            guard let date = log.session?.date, let best = sessionBest(log), best > runningMax else { continue }
-            runningMax = best
-            points.append((date, best))
+            guard let date = log.session?.date, let value = sessionValue(log) else { continue }
+            let isRecord = value > runningMax
+            if isRecord { runningMax = value }
+            points.append((date, value, isRecord))
         }
         return points
     }
 
-    /// PR days only, by the single heaviest set's weight that session
-    /// (load, not volume — e.g. 225 for a 225x5, regardless of what the
-    /// other sets that day were).
-    private var maxWeightMovedOverTime: [(date: Date, value: Double)] {
-        newRecordsOverTime { $0.sortedSets.map(\.weight).max() }
+    /// Every session's single heaviest set that day (load, not volume —
+    /// e.g. 225 for a 225x5, regardless of what the other sets that day
+    /// were), flagged for whether it was a new record at the time.
+    private var maxWeightMovedOverTime: [(date: Date, value: Double, isRecord: Bool)] {
+        valuesWithRecordFlags { $0.sortedSets.map(\.weight).max() }
     }
 
-    /// PR days only, by the actual weight used for a real single-rep set
-    /// that session (reps == 1 exactly) — not an estimate extrapolated
-    /// from higher-rep sets. A session with no single-rep set that day
-    /// contributes nothing.
-    private var oneRepMaxOverTime: [(date: Date, value: Double)] {
-        newRecordsOverTime { log in
-            log.sortedSets.filter { $0.reps == 1 }.map(\.weight).max()
+    /// Every session's best calculated 1-rep max that day (Epley: weight ×
+    /// (1 + reps/30)), taken across all of that day's sets — the single set
+    /// implying the highest 1RM, not necessarily the heaviest set outright
+    /// (a lighter set done for more reps can imply a bigger 1RM) — flagged
+    /// for whether it was a new record at the time.
+    private var oneRepMaxOverTime: [(date: Date, value: Double, isRecord: Bool)] {
+        valuesWithRecordFlags { log in
+            let best = log.sortedSets.map { $0.weight * (1 + Double($0.reps) / 30.0) }.max() ?? 0
+            return best > 0 ? best : nil
         }
     }
 
-    /// Shared layout for the 3 "over time" chart pages — a caption header
+    /// Shared layout for the "over time" chart pages — a caption header
     /// plus a line+point chart, or a placeholder until there's enough
     /// history (a single point has nothing to draw a line between).
     @ViewBuilder
@@ -908,20 +910,47 @@ struct ExercisePageView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// Like `metricOverTimePage`, but the line runs through every session
+    /// (so it reads as this metric's actual day-to-day history) while only
+    /// the sessions that set a new record at the time get a visible marker.
+    @ViewBuilder
+    private func recordMarkedMetricPage(title: String, valueLabel: String, emptyMessage: String,
+                                        points: [(date: Date, value: Double, isRecord: Bool)]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.bold()).foregroundStyle(.secondary)
+            if points.count < 2 {
+                Text(emptyMessage)
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Chart {
+                    ForEach(points, id: \.date) { point in
+                        LineMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
+                    }
+                    ForEach(points.filter(\.isRecord), id: \.date) { point in
+                        PointMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
+                    }
+                }
+                .chartYScale(domain: .automatic(includesZero: false))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
     private var totalWeightMovedPage: some View {
         metricOverTimePage(title: "Total Weight Moved", valueLabel: "Total Weight",
                            emptyMessage: "Log this exercise a few more times to see its total-weight-moved trend over time.",
                            points: totalWeightMovedOverTime)
     }
     private var maxWeightMovedPage: some View {
-        metricOverTimePage(title: "Max Weight Moved", valueLabel: "Max Weight",
-                           emptyMessage: "Log a couple of new max-weight sets to start tracking your record over time.",
-                           points: maxWeightMovedOverTime)
+        recordMarkedMetricPage(title: "Max Weight Moved", valueLabel: "Max Weight",
+                               emptyMessage: "Log this exercise a few more times to see its max-weight trend over time.",
+                               points: maxWeightMovedOverTime)
     }
     private var oneRepMaxPage: some View {
-        metricOverTimePage(title: "1-Rep Max", valueLabel: "1RM",
-                           emptyMessage: "Log a couple of single-rep sets to start tracking your 1-rep max over time.",
-                           points: oneRepMaxOverTime)
+        recordMarkedMetricPage(title: "1-Rep Max", valueLabel: "1RM",
+                               emptyMessage: "Log this exercise a few more times to see its 1-rep max trend over time.",
+                               points: oneRepMaxOverTime)
     }
 
     /// The lightest weight actually usable for this exercise's equipment —
