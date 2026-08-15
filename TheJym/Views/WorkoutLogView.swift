@@ -843,15 +843,6 @@ struct ExercisePageView: View {
             .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
     }
 
-    /// One point per session: total weight moved (Σ reps × weight across
-    /// every set that day).
-    private var totalWeightMovedOverTime: [(date: Date, value: Double)] {
-        exerciseHistory.compactMap { log in
-            guard let date = log.session?.date else { return nil }
-            return (date, log.totalWeightMoved)
-        }
-    }
-
     /// Every session's value, oldest first, each flagged with whether it
     /// was a new all-time high as of that point (walks history in order,
     /// tracking a running max). `sessionValue` returns nil for a session
@@ -867,6 +858,12 @@ struct ExercisePageView: View {
             points.append((date, value, isRecord))
         }
         return points
+    }
+
+    /// Every session's total weight moved (Σ reps × weight across every
+    /// set that day), flagged for whether it was a new record at the time.
+    private var totalWeightMovedOverTime: [(date: Date, value: Double, isRecord: Bool)] {
+        valuesWithRecordFlags { $0.totalWeightMoved }
     }
 
     /// Every session's single heaviest set that day (load, not volume —
@@ -889,30 +886,14 @@ struct ExercisePageView: View {
     }
 
     /// Shared layout for the "over time" chart pages — a caption header
-    /// plus a line+point chart, or a placeholder until there's enough
-    /// history (a single point has nothing to draw a line between).
-    @ViewBuilder
-    private func metricOverTimePage(title: String, valueLabel: String, emptyMessage: String, points: [(date: Date, value: Double)]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption.bold()).foregroundStyle(.secondary)
-            if points.count < 2 {
-                Text(emptyMessage)
-                    .font(.caption2).foregroundStyle(.secondary)
-            } else {
-                Chart(points, id: \.date) { point in
-                    LineMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
-                    PointMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
-                }
-                .chartYScale(domain: .automatic(includesZero: false))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    /// Like `metricOverTimePage`, but the line runs through every session
-    /// (so it reads as this metric's actual day-to-day history) while only
-    /// the sessions that set a new record at the time get a visible marker.
+    /// plus a chart, or a placeholder until there's enough history (a
+    /// single point has nothing to draw a line between). The line runs
+    /// through every session (so it still reads as the metric's actual
+    /// day-to-day history), but only the sessions that set a new record at
+    /// the time get a visible marker AND its value labeled — deliberately
+    /// sparse rather than labeling every point on the line, which at any
+    /// real amount of history would just turn into an unreadable smear of
+    /// overlapping numbers.
     @ViewBuilder
     private func recordMarkedMetricPage(title: String, valueLabel: String, emptyMessage: String,
                                         points: [(date: Date, value: Double, isRecord: Bool)]) -> some View {
@@ -928,6 +909,10 @@ struct ExercisePageView: View {
                     }
                     ForEach(points.filter(\.isRecord), id: \.date) { point in
                         PointMark(x: .value("Date", point.date), y: .value(valueLabel, point.value))
+                            .annotation(position: .top) {
+                                Text(Formatters.trim(point.value))
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
                     }
                 }
                 .chartYScale(domain: .automatic(includesZero: false))
@@ -938,9 +923,9 @@ struct ExercisePageView: View {
     }
 
     private var totalWeightMovedPage: some View {
-        metricOverTimePage(title: "Total Weight Moved", valueLabel: "Total Weight",
-                           emptyMessage: "Log this exercise a few more times to see its total-weight-moved trend over time.",
-                           points: totalWeightMovedOverTime)
+        recordMarkedMetricPage(title: "Total Weight Moved", valueLabel: "Total Weight",
+                               emptyMessage: "Log this exercise a few more times to see its total-weight-moved trend over time.",
+                               points: totalWeightMovedOverTime)
     }
     private var maxWeightMovedPage: some View {
         recordMarkedMetricPage(title: "Max Weight Moved", valueLabel: "Max Weight",
