@@ -1127,11 +1127,18 @@ struct ExercisePageView: View {
                     Label("New Equipment…", systemImage: "plus")
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Text(def.equipment?.name ?? "None")
-                    Image(systemName: "chevron.up.chevron.down")
+                VStack(alignment: .trailing, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(def.equipment?.name ?? "None")
+                        Image(systemName: "chevron.up.chevron.down")
+                    }
+                    .font(.subheadline.bold())
+                    if let weight = def.equipment?.weight, weight > 0 {
+                        Text("\(Formatters.trim(weight)) lbs")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .font(.caption2.bold())
             }
         }
     }
