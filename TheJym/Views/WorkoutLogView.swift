@@ -1713,7 +1713,10 @@ struct ExercisePageView: View {
     /// since the last time it collapsed. Waits 4 seconds before collapsing so
     /// the last entry doesn't vanish out from under you — and bails if
     /// anything's changed (re-opened, un-logged, or superseded) by the time
-    /// it fires.
+    /// it fires. Called from every weight/reps picker on every value change,
+    /// so the 4 seconds are measured from the LAST edit, not from whenever
+    /// the exercise first became complete — editing a weight or rep again
+    /// (even after it was already "done") restarts the countdown.
     private func checkAutoCollapse() {
         checkMedalPopup()
         guard draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
@@ -1872,6 +1875,7 @@ struct ExercisePageView: View {
                         draft.sets[index].weightText = Formatters.trim(newValue)
                         let delta = newValue - old
                         if delta != 0 { cascadeDelta(delta, from: index) }
+                        checkAutoCollapse()
                     })) {
                     ForEach(addedWeightValues, id: \.self) { v in
                         Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
@@ -1898,6 +1902,7 @@ struct ExercisePageView: View {
                         draft.sets[index].weightText = Formatters.trim(newValue)
                         let delta = newValue - old
                         if delta != 0 { cascadeDelta(delta, from: index) }
+                        checkAutoCollapse()
                     })) {
                     ForEach(weightValues, id: \.self) { v in
                         Text(Formatters.trim(v)).font(.subheadline.weight(.medium)).tag(v)
