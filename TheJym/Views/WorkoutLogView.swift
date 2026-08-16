@@ -821,6 +821,17 @@ struct ExercisePageView: View {
     /// total beat one of the three comparisons — drives the celebration
     /// overlay, sized to whichever one it was.
     @State private var celebrationTier: CelebrationBurst.Tier?
+    /// Non-nil briefly, 2 seconds after every set is logged, if today's live
+    /// total ranks top-3 for this exercise's plan — drives the big medal
+    /// popup. Separate from `celebrationTier` (and its own 4-second
+    /// auto-collapse timer): this can pop while the exercise is still open,
+    /// as soon as it's complete.
+    @State private var medalPopupRank: Int?
+    /// Guards `checkMedalPopup`'s delayed check the same way
+    /// `collapseGeneration` guards auto-collapse — bumped on every call so a
+    /// stale delayed task from an earlier state doesn't fire after
+    /// something's changed.
+    @State private var medalPopupGeneration = 0
 
     /// Up to the 3 most recently logged workouts of this exercise (already
     /// saved — the one in progress right now isn't in allLogs yet), most
@@ -1274,6 +1285,27 @@ struct ExercisePageView: View {
         return PaceEngine.repTotalComparisons(for: draft.name, target: target,
                                               currentWeightsKey: weightsKey, allLogs: allLogs)
     }
+    /// Same format `ExerciseLog.planKey`/`PlannedExercise.planKey` use —
+    /// this exercise's plan key, computed from the in-progress draft (which
+    /// isn't a saved ExerciseLog yet).
+    private var draftPlanKey: String {
+        switch draft.goalType {
+        case .fixedSets:
+            return "\(draft.name)|\(draft.targetReps.map(String.init).joined(separator: "/"))"
+        case .repTotal(let target):
+            return "\(draft.name)|\(target) total"
+        }
+    }
+    /// Where today's live total would rank (1/2/3, nil below that) among
+    /// this exercise's plan history if logged right now — drives the big
+    /// medal popup once the exercise is complete. See
+    /// `PaceEngine.medalRank(forNewTotal:...)`.
+    private var liveMedalRank: Int? {
+        let total = draft.loggedTotal(bodyweight: currentBodyweight)
+        guard total > 0 else { return nil }
+        return PaceEngine.medalRank(forNewTotal: total, exerciseName: draft.name,
+                                    planKey: draftPlanKey, allLogs: allLogs)
+    }
     /// The +/- step for this exercise's weight fields: the smallest plate
     /// you own for barbell/plate work, or the finest dumbbell increment
     /// (attachments considered) for a dumbbell exercise.
@@ -1406,6 +1438,12 @@ struct ExercisePageView: View {
         .overlay {
             if let tier = celebrationTier {
                 CelebrationBurst(tier: tier)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay {
+            if let rank = medalPopupRank, let emoji = medalEmoji(rank) {
+                MedalPopup(emoji: emoji)
                     .allowsHitTesting(false)
             }
         }
@@ -1670,6 +1708,7 @@ struct ExercisePageView: View {
     /// anything's changed (re-opened, un-logged, or superseded) by the time
     /// it fires.
     private func checkAutoCollapse() {
+        checkMedalPopup()
         guard draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
         collapseGeneration += 1
         let generation = collapseGeneration
@@ -1678,6 +1717,26 @@ struct ExercisePageView: View {
             guard generation == collapseGeneration,
                   draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
             withAnimation { collapseAndCelebrate() }
+        }
+    }
+
+    /// 2 seconds after every set is logged, if the exercise is complete and
+    /// today's live total ranks top-3 for this plan, briefly pops the
+    /// matching medal emoji — independent of `autoCollapseEnabled` (fires
+    /// even if the exercise was manually kept open) and of the 4-second
+    /// auto-collapse celebration.
+    private func checkMedalPopup() {
+        guard isReadyToAutoCollapse else { return }
+        medalPopupGeneration += 1
+        let generation = medalPopupGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard generation == medalPopupGeneration, isReadyToAutoCollapse,
+                  let rank = liveMedalRank else { return }
+            withAnimation { medalPopupRank = rank }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
+                withAnimation { medalPopupRank = nil }
+            }
         }
     }
 
@@ -2215,6 +2274,34 @@ struct CelebrationBurst: View {
     private func offset(for index: Int) -> CGSize {
         let angle = (Double(index) / Double(tier.particleCount)) * 2 * .pi
         return CGSize(width: cos(angle) * tier.radius, height: sin(angle) * tier.radius)
+    }
+}
+
+/// A single medal emoji that pops in big, settles, then fades — shown 2
+/// seconds after an exercise becomes complete if today's live total ranks
+/// top-3 for its plan. See `ExercisePageView.checkMedalPopup`.
+struct MedalPopup: View {
+    let emoji: String
+    @State private var scale: CGFloat = 0.3
+    @State private var opacity: Double = 0
+
+    var body: some View {
+        Text(emoji)
+            .font(.system(size: 90))
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .onAppear {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
+                    scale = 1.15
+                    opacity = 1
+                }
+                withAnimation(.easeOut(duration: 0.2).delay(0.35)) {
+                    scale = 1.0
+                }
+                withAnimation(.easeIn(duration: 0.35).delay(0.95)) {
+                    opacity = 0
+                }
+            }
     }
 }
 

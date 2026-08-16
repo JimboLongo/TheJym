@@ -129,6 +129,17 @@ enum PaceEngine {
         return medalRank(for: log.totalWeightMoved, among: topTotals)
     }
 
+    /// Where `total` would rank (1/2/3, nil below that) among `planKey`'s
+    /// history if it were logged right now — for the in-progress session's
+    /// own live total, which isn't a saved ExerciseLog yet so can't use
+    /// `medalRank(for:allLogs:)` directly. Same tie-sharing rule: if it
+    /// matches an existing historical total exactly, it shares that tier.
+    static func medalRank(forNewTotal total: Double, exerciseName: String, planKey: String, allLogs: [ExerciseLog]) -> Int? {
+        let planLogs = allLogs.filter { $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty }
+        let topTotals = Array(Set(planLogs.map(\.totalWeightMoved) + [total])).sorted(by: >)
+        return medalRank(for: total, among: topTotals)
+    }
+
     /// Which medal tier (1 = gold, 2 = silver, 3 = bronze) `total` earns
     /// among `topTotals` — the plan's distinct totals sorted highest-first.
     /// Nil once ranked below 3rd, or if `total` isn't among them at all.

@@ -394,4 +394,30 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(PaceEngine.medalRank(for: bronze, allLogs: allLogs), 3)
         XCTAssertNil(PaceEngine.medalRank(for: none, allLogs: allLogs))
     }
+
+    /// `PaceEngine.medalRank(forNewTotal:...)` — what the in-progress
+    /// session's own live medal popup uses, since it isn't a saved
+    /// ExerciseLog yet to look up with `medalRank(for:allLogs:)`.
+    @MainActor
+    func testMedalRankForNewTotalRanksAgainstExistingHistory() {
+        let context = makeContext()
+        log("Bench Press", weights: [150, 150, 150], daysAgo: 28, context: context) // 3600
+        log("Bench Press", weights: [145, 145, 145], daysAgo: 21, context: context) // 3480
+        log("Bench Press", weights: [140, 140, 140], daysAgo: 14, context: context) // 3360
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+        let planKey = "Bench Press|8/8/8"
+
+        // Beats the existing best outright -> gold.
+        XCTAssertEqual(PaceEngine.medalRank(forNewTotal: 4000, exerciseName: "Bench Press",
+                                            planKey: planKey, allLogs: allLogs), 1)
+        // Ties the existing best -> also gold.
+        XCTAssertEqual(PaceEngine.medalRank(forNewTotal: 3600, exerciseName: "Bench Press",
+                                            planKey: planKey, allLogs: allLogs), 1)
+        // Lands between 2nd and 3rd -> silver (pushes the old 2nd to 3rd).
+        XCTAssertEqual(PaceEngine.medalRank(forNewTotal: 3500, exerciseName: "Bench Press",
+                                            planKey: planKey, allLogs: allLogs), 2)
+        // Below every existing total -> unranked.
+        XCTAssertNil(PaceEngine.medalRank(forNewTotal: 100, exerciseName: "Bench Press",
+                                          planKey: planKey, allLogs: allLogs))
+    }
 }
