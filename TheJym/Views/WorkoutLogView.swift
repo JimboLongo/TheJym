@@ -1135,7 +1135,7 @@ struct ExercisePageView: View {
                     .font(.subheadline.bold())
                     if let weight = def.equipment?.weight, weight > 0 {
                         Text("\(Formatters.trim(weight)) lbs")
-                            .font(.caption2)
+                            .font(.subheadline.bold())
                             .foregroundStyle(.secondary)
                     }
                 }
