@@ -30,6 +30,10 @@ struct WorkoutLogView: View {
     /// deload math and next-cycle weight suggestions just don't apply then.
     let phase: Phase?
     let day: PhaseDay
+    /// Flipped to .stats once the workout is actually finished and saved —
+    /// see MainTab's own doc for why this is threaded down as a binding
+    /// rather than reached some other way.
+    @Binding var selectedTab: MainTab
 
     @State private var drafts: [ExerciseDraft] = []
     @State private var showRecapSheet = false
@@ -473,7 +477,7 @@ struct WorkoutLogView: View {
             lastInteraction = Date()
             saveDraftToDisk()
         }
-        .sheet(isPresented: $showRecapSheet, onDismiss: { dismiss() }) {
+        .sheet(isPresented: $showRecapSheet, onDismiss: { selectedTab = .stats; dismiss() }) {
             WorkoutRecapView(entries: recapEntries, choices: $recapChoices, weights: $recapWeights) { applyRecapChoices() }
         }
     }
@@ -730,6 +734,7 @@ struct WorkoutLogView: View {
             })
             showRecapSheet = true
         } else {
+            selectedTab = .stats
             dismiss()
         }
     }

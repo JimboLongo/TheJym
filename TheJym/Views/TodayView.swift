@@ -12,6 +12,9 @@ import SwiftData
 
 struct TodayView: View {
     @Binding var overflowTab: OverflowTab?
+    /// Passed down to WorkoutLogView so finishing a workout can jump to the
+    /// Stats tab — see MainTab's own doc.
+    @Binding var selectedTab: MainTab
 
     @Environment(\.modelContext) private var context
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
@@ -128,12 +131,12 @@ struct TodayView: View {
                     if day.isRest {
                         RestDayLogView(phase: phase, day: day)
                     } else {
-                        WorkoutLogView(phase: phase, day: day)
+                        WorkoutLogView(phase: phase, day: day, selectedTab: $selectedTab)
                     }
                 }
             }
             .navigationDestination(item: $startingQuickWorkout) { day in
-                WorkoutLogView(phase: nil, day: day)
+                WorkoutLogView(phase: nil, day: day, selectedTab: $selectedTab)
             }
             .navigationDestination(item: $statsPhase) { phase in
                 PhaseStatsView(phase: phase)

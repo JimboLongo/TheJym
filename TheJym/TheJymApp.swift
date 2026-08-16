@@ -47,6 +47,16 @@ enum OverflowTab: Int, Identifiable {
     }
 }
 
+/// The 5 tabs with a permanent slot in the bottom bar — as opposed to
+/// `OverflowTab`, reached through the hamburger menu instead. Given its own
+/// binding (rather than leaving `TabView`'s selection implicit) so a deeply
+/// nested view — e.g. finishing a workout from `WorkoutLogView`, several
+/// navigation pushes deep under the Train tab — can jump to another tab
+/// programmatically.
+enum MainTab: Hashable {
+    case train, stats, history, exercises, weight
+}
+
 /// Hamburger button added to every main tab's toolbar, giving access to the
 /// three overflow tabs (Phases, Equipment, Settings) from anywhere in the app.
 struct OverflowMenuButton: View {
@@ -72,19 +82,25 @@ struct ContentView: View {
     @Query private var phases: [Phase]
 
     @State private var overflowTab: OverflowTab?
+    @State private var selectedTab: MainTab = .train
 
     var body: some View {
-        TabView {
-            TodayView(overflowTab: $overflowTab)
+        TabView(selection: $selectedTab) {
+            TodayView(overflowTab: $overflowTab, selectedTab: $selectedTab)
                 .tabItem { Label("Train", systemImage: "dumbbell.fill") }
+                .tag(MainTab.train)
             StatsView(overflowTab: $overflowTab)
                 .tabItem { Label("Stats", systemImage: "chart.bar.fill") }
+                .tag(MainTab.stats)
             HistoryView(overflowTab: $overflowTab)
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(MainTab.history)
             ExercisesView(overflowTab: $overflowTab)
                 .tabItem { Label("Exercises", systemImage: "figure.strengthtraining.traditional") }
+                .tag(MainTab.exercises)
             BodyWeightView(overflowTab: $overflowTab)
                 .tabItem { Label("Weight", systemImage: "scalemass.fill") }
+                .tag(MainTab.weight)
         }
         .sheet(item: $overflowTab) { tab in
             switch tab {
