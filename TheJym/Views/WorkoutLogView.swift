@@ -817,21 +817,22 @@ struct ExercisePageView: View {
     /// Shown when a set number is tapped — every past log of this exercise,
     /// History-tab styled.
     @State private var showFullHistory = false
-    /// Non-nil briefly right after this exercise collapses, if today's
+    /// Non-nil briefly, 2 seconds after every set is logged, if today's
     /// total beat one of the three comparisons — drives the celebration
-    /// overlay, sized to whichever one it was.
+    /// burst, sized to whichever one it was. Shown together with (and
+    /// centered on) `medalPopupRank`, on the same timing — see
+    /// `checkCelebrationEffects`.
     @State private var celebrationTier: CelebrationBurst.Tier?
     /// Non-nil briefly, 2 seconds after every set is logged, if today's live
     /// total ranks top-3 for this exercise's plan — drives the big medal
-    /// popup. Separate from `celebrationTier` (and its own 4-second
-    /// auto-collapse timer): this can pop while the exercise is still open,
-    /// as soon as it's complete.
+    /// popup. Independent of the 4-second auto-collapse timer itself: this
+    /// can pop while the exercise is still open, as soon as it's complete.
     @State private var medalPopupRank: Int?
-    /// Guards `checkMedalPopup`'s delayed check the same way
+    /// Guards `checkCelebrationEffects`'s delayed check the same way
     /// `collapseGeneration` guards auto-collapse — bumped on every call so a
     /// stale delayed task from an earlier state doesn't fire after
     /// something's changed.
-    @State private var medalPopupGeneration = 0
+    @State private var celebrationGeneration = 0
 
     /// Up to the 3 most recently logged workouts of this exercise (already
     /// saved — the one in progress right now isn't in allLogs yet), most
@@ -1494,7 +1495,8 @@ struct ExercisePageView: View {
                 Spacer()
                 if draft.isExpanded {
                     Button {
-                        withAnimation { collapseAndCelebrate() }
+                        checkCelebrationEffects()
+                        withAnimation { collapse() }
                     } label: {
                         Image(systemName: "checkmark.circle")
                     }
@@ -1718,7 +1720,7 @@ struct ExercisePageView: View {
     /// the exercise first became complete — editing a weight or rep again
     /// (even after it was already "done") restarts the countdown.
     private func checkAutoCollapse() {
-        checkMedalPopup()
+        checkCelebrationEffects()
         guard draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
         collapseGeneration += 1
         let generation = collapseGeneration
@@ -1726,44 +1728,48 @@ struct ExercisePageView: View {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard generation == collapseGeneration,
                   draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
-            withAnimation { collapseAndCelebrate() }
+            withAnimation { collapse() }
         }
     }
 
-    /// 2 seconds after every set is logged, if the exercise is complete and
-    /// today's live total ranks top-3 for this plan, briefly pops the
-    /// matching medal emoji — independent of `autoCollapseEnabled` (fires
-    /// even if the exercise was manually kept open) and of the 4-second
-    /// auto-collapse celebration.
-    private func checkMedalPopup() {
+    /// 2 seconds after every set is logged, if the exercise is complete,
+    /// briefly shows the medal popup (today's live total ranks top-3 for
+    /// this plan) and the celebration burst (today's total beat one of the
+    /// three comparisons — All-Time Best is the biggest, Best at Weights is
+    /// medium, just beating Previous Workout is the smallest) together, on
+    /// the same timing, centered on each other — independent of
+    /// `autoCollapseEnabled` (fires even if the exercise was manually kept
+    /// open) and of the 4-second auto-collapse itself.
+    private func checkCelebrationEffects() {
         guard isReadyToAutoCollapse else { return }
-        medalPopupGeneration += 1
-        let generation = medalPopupGeneration
+        celebrationGeneration += 1
+        let generation = celebrationGeneration
         Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard generation == medalPopupGeneration, isReadyToAutoCollapse,
-                  let rank = liveMedalRank else { return }
-            withAnimation { medalPopupRank = rank }
+            guard generation == celebrationGeneration, isReadyToAutoCollapse else { return }
+            let rank = liveMedalRank
+            let tier = bestBeatenTier()
+            guard rank != nil || tier != nil else { return }
+            withAnimation {
+                medalPopupRank = rank
+                celebrationTier = tier
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
-                withAnimation { medalPopupRank = nil }
+                withAnimation {
+                    medalPopupRank = nil
+                    celebrationTier = nil
+                }
             }
         }
     }
 
-    /// Collapses the exercise to its summary and, if today's total beat one
-    /// of the three comparisons, briefly shows a celebration scaled to the
-    /// best one beaten — All-Time Best is the biggest, Best at Weights is
-    /// medium, and just beating the Previous Workout is the smallest.
-    private func collapseAndCelebrate() {
-        celebrationTier = bestBeatenTier()
+    /// Collapses the exercise to its summary and jumps to the next still-open
+    /// one. The medal/celebration popups (see `checkCelebrationEffects`) have
+    /// already fired 2 seconds earlier and finished well before this runs.
+    private func collapse() {
         let target = nextOpenPageID()
         draft.isExpanded = false
         currentPageID = target
-        if celebrationTier != nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
-                withAnimation { celebrationTier = nil }
-            }
-        }
     }
 
     /// The next still-open (not yet completed) exercise to jump to once
@@ -2222,11 +2228,14 @@ struct CelebrationBurst: View {
             case .allTimeBest: return 36
             }
         }
+        // Radii are large enough to clear a 135pt medal emoji (see
+        // MedalPopup) so the burst visibly surrounds it rather than
+        // overlapping its glyph.
         var radius: Double {
             switch self {
-            case .previousWorkout: return 34
-            case .bestAtWeights: return 58
-            case .allTimeBest: return 90
+            case .previousWorkout: return 85
+            case .bestAtWeights: return 105
+            case .allTimeBest: return 130
             }
         }
         var duration: Double {
@@ -2291,7 +2300,7 @@ struct CelebrationBurst: View {
 
 /// A single medal emoji that pops in big, settles, then fades — shown 2
 /// seconds after an exercise becomes complete if today's live total ranks
-/// top-3 for its plan. See `ExercisePageView.checkMedalPopup`.
+/// top-3 for its plan. See `ExercisePageView.checkCelebrationEffects`.
 struct MedalPopup: View {
     let emoji: String
     @State private var scale: CGFloat = 0.3
@@ -2299,7 +2308,7 @@ struct MedalPopup: View {
 
     var body: some View {
         Text(emoji)
-            .font(.system(size: 90))
+            .font(.system(size: 135))
             .scaleEffect(scale)
             .opacity(opacity)
             .onAppear {
