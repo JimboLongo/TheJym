@@ -118,6 +118,17 @@ enum PaceEngine {
         ]
     }
 
+    /// Which medal tier (1/2/3, nil if unranked) `log`'s own total weight
+    /// moved earns among every other log sharing its plan (same exercise
+    /// name + rep scheme) — the same ranking `comparisons` uses for its
+    /// three targets, exposed here so a plain list of logs (e.g. the
+    /// Previous Workouts page) can tag each entry directly.
+    static func medalRank(for log: ExerciseLog, allLogs: [ExerciseLog]) -> Int? {
+        let planLogs = allLogs.filter { $0.exerciseName == log.exerciseName && $0.planKey == log.planKey && !$0.sets.isEmpty }
+        let topTotals = Array(Set(planLogs.map(\.totalWeightMoved))).sorted(by: >)
+        return medalRank(for: log.totalWeightMoved, among: topTotals)
+    }
+
     /// Which medal tier (1 = gold, 2 = silver, 3 = bronze) `total` earns
     /// among `topTotals` — the plan's distinct totals sorted highest-first.
     /// Nil once ranked below 3rd, or if `total` isn't among them at all.

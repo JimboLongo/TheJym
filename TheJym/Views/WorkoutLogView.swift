@@ -18,26 +18,25 @@ import UIKit
 import Combine
 import Charts
 
-/// The gold used for the "PR" tag next to a pace-panel label.
-private let prGoldColor = Color(red: 1.0, green: 0.84, blue: 0.0)
+/// The medal emoji for a given rank (1 = gold, 2 = silver, 3 = bronze),
+/// nil if unranked. See `PaceEngine.medalRank`.
+func medalEmoji(_ rank: Int?) -> String? {
+    switch rank {
+    case 1: return "🥇"
+    case 2: return "🥈"
+    case 3: return "🥉"
+    default: return nil
+    }
+}
 
-/// Combines a target's base label with a separately-styled medal tag —
-/// smaller italic gold "PR" for rank 1 (a tie for the plan's highest total
-/// ever moved), a silver medal emoji for rank 2, a bronze one for rank 3.
+/// Combines a target's base label with a trailing medal emoji, if ranked.
 private func labelText(_ base: String, medalRank: Int?, baseFont: Font, baseColor: Color? = nil) -> Text {
     var text = Text(base).font(baseFont)
     if let baseColor {
         text = text.foregroundStyle(baseColor)
     }
-    switch medalRank {
-    case 1:
-        text = text + Text(" PR").font(.caption2).italic().foregroundStyle(prGoldColor)
-    case 2:
-        text = text + Text(" 🥈")
-    case 3:
-        text = text + Text(" 🥉")
-    default:
-        break
+    if let emoji = medalEmoji(medalRank) {
+        text = text + Text(" \(emoji)")
     }
     return text
 }
@@ -869,7 +868,12 @@ struct ExercisePageView: View {
             ForEach(previousLogs, id: \.persistentModelID) { log in
                 VStack(alignment: .leading, spacing: 2) {
                     if let date = log.session?.date {
-                        Text(Formatters.date.string(from: date)).font(.caption2.bold())
+                        HStack(spacing: 4) {
+                            Text(Formatters.date.string(from: date)).font(.caption2.bold())
+                            if let emoji = medalEmoji(PaceEngine.medalRank(for: log, allLogs: allLogs)) {
+                                Text(emoji).font(.caption2)
+                            }
+                        }
                     }
                     SetsGrid(weightLabels: PaceEngine.weightLabels(for: log),
                             repLabels: log.sortedSets.map { String($0.reps) })

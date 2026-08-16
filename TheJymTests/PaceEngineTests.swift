@@ -376,4 +376,22 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(bestAtWeights(140).medalRank, 3)
         XCTAssertNil(bestAtWeights(135).medalRank)
     }
+
+    /// `PaceEngine.medalRank(for:allLogs:)` — the per-log lookup the
+    /// Previous Workouts page uses — should agree with the ranking
+    /// `comparisons` computes for its own targets.
+    @MainActor
+    func testMedalRankForLogMatchesComparisonsRanking() {
+        let context = makeContext()
+        let gold = log("Bench Press", weights: [150, 150, 150], daysAgo: 28, context: context)
+        let silver = log("Bench Press", weights: [145, 145, 145], daysAgo: 21, context: context)
+        let bronze = log("Bench Press", weights: [140, 140, 140], daysAgo: 14, context: context)
+        let none = log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        XCTAssertEqual(PaceEngine.medalRank(for: gold, allLogs: allLogs), 1)
+        XCTAssertEqual(PaceEngine.medalRank(for: silver, allLogs: allLogs), 2)
+        XCTAssertEqual(PaceEngine.medalRank(for: bronze, allLogs: allLogs), 3)
+        XCTAssertNil(PaceEngine.medalRank(for: none, allLogs: allLogs))
+    }
 }
