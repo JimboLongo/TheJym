@@ -1754,7 +1754,7 @@ struct ExercisePageView: View {
                 medalPopupRank = rank
                 celebrationTier = tier
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.95) {
                 withAnimation {
                     medalPopupRank = nil
                     celebrationTier = nil
@@ -2240,9 +2240,9 @@ struct CelebrationBurst: View {
         }
         var duration: Double {
             switch self {
-            case .previousWorkout: return 0.45
-            case .bestAtWeights: return 0.65
-            case .allTimeBest: return 0.9
+            case .previousWorkout: return 0.675
+            case .bestAtWeights: return 0.975
+            case .allTimeBest: return 1.35
             }
         }
         var label: String? {
@@ -2312,14 +2312,14 @@ struct MedalPopup: View {
             .scaleEffect(scale)
             .opacity(opacity)
             .onAppear {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.55)) {
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.55)) {
                     scale = 1.15
                     opacity = 1
                 }
-                withAnimation(.easeOut(duration: 0.2).delay(0.35)) {
+                withAnimation(.easeOut(duration: 0.3).delay(0.525)) {
                     scale = 1.0
                 }
-                withAnimation(.easeIn(duration: 0.35).delay(0.95)) {
+                withAnimation(.easeIn(duration: 0.525).delay(1.425)) {
                     opacity = 0
                 }
             }
