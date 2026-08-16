@@ -48,13 +48,20 @@ struct ComparisonTarget: Identifiable {
     /// previous session was on at ITS weight. Powers the "(2x)", "(3x)",
     /// etc. suffix on the label.
     let occurrenceCount: Int
+    /// Whether this log's totalWeightMoved ties or beats the highest total
+    /// ever moved for this exercise's plan (same name + target rep scheme)
+    /// — see `comparisons`'s `planBestTotal`. `.bestForExercise` is always
+    /// true here by construction (it IS that plan's best log), but
+    /// `.lastLogged`/`.bestAtTheseWeights` only when they happen to be it too.
+    let isPR: Bool
     var hasData: Bool { date != nil }
 
-    /// The kind's display name, with a "(Nx)" occurrence-count suffix
-    /// appended once there's actually a log to count.
+    /// The kind's display name, with a "(Nx)" occurrence-count suffix (and
+    /// a "(PR)" tag, if this is the plan's all-time-best total) appended
+    /// once there's actually a log to count.
     var label: String {
         guard hasData else { return kind.rawValue }
-        return "\(kind.rawValue) (\(occurrenceCount)x)"
+        return "\(kind.rawValue) (\(occurrenceCount)x)" + (isPR ? " (PR)" : "")
     }
 }
 
@@ -94,11 +101,16 @@ enum PaceEngine {
         let bestWeights = atWeights.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
         let atPlan = byName.filter({ $0.planKey == planKey })
         let bestPlan = atPlan.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
+        // The single yardstick all 3 "(PR)" checks below compare against —
+        // this plan's own highest total ever moved. .bestForExercise IS
+        // that log, so it always ties it; the other two only when they
+        // happen to be it too.
+        let planBestTotal = bestPlan?.totalWeightMoved
 
         return [
-            target(.lastLogged, from: last, occurrenceCount: lastStreak),
-            target(.bestAtTheseWeights, from: bestWeights, occurrenceCount: atWeights.count),
-            target(.bestForExercise, from: bestPlan, occurrenceCount: atPlan.count),
+            target(.lastLogged, from: last, occurrenceCount: lastStreak, planBestTotal: planBestTotal),
+            target(.bestAtTheseWeights, from: bestWeights, occurrenceCount: atWeights.count, planBestTotal: planBestTotal),
+            target(.bestForExercise, from: bestPlan, occurrenceCount: atPlan.count, planBestTotal: planBestTotal),
         ]
     }
 
@@ -136,11 +148,13 @@ enum PaceEngine {
         return count
     }
 
-    private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, occurrenceCount: Int = 1) -> ComparisonTarget {
+    private static func target(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, occurrenceCount: Int = 1,
+                               planBestTotal: Double? = nil) -> ComparisonTarget {
         guard let log else {
-            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], weights: [], reps: [], weightLabels: [], occurrenceCount: 1)
+            return ComparisonTarget(kind: kind, date: nil, totalWeightMoved: 0, setWeightsMoved: [], weights: [], reps: [], weightLabels: [], occurrenceCount: 1, isPR: false)
         }
         let sortedSets = log.sortedSets
+        let isPR = planBestTotal.map { log.totalWeightMoved >= $0 } ?? false
         return ComparisonTarget(kind: kind,
                                 date: log.session?.date ?? .distantPast,
                                 totalWeightMoved: log.totalWeightMoved,
@@ -148,7 +162,8 @@ enum PaceEngine {
                                 weights: sortedSets.map(\.weight),
                                 reps: sortedSets.map(\.reps),
                                 weightLabels: weightLabels(for: log),
-                                occurrenceCount: occurrenceCount)
+                                occurrenceCount: occurrenceCount,
+                                isPR: isPR)
     }
 
     /// "135/135/135 lbs" for a normal log, or "BW+25/BW+25/BW+25 (172 BW)
@@ -189,12 +204,19 @@ enum PaceEngine {
         let weightLabels: [String]
         /// See `ComparisonTarget.occurrenceCount`.
         let occurrenceCount: Int
+        /// See `ComparisonTarget.isPR` — note that for repTotal,
+        /// `.bestForExercise` picks its log by fewest sets to reach the
+        /// target (efficiency), NOT highest total weight moved, so unlike
+        /// the fixedSets version this ISN'T guaranteed to always be true
+        /// there — only when the most efficient session also happened to
+        /// move the most total weight.
+        let isPR: Bool
         var hasData: Bool { date != nil }
 
         /// See `ComparisonTarget.label`.
         var label: String {
             guard hasData else { return kind.rawValue }
-            return "\(kind.rawValue) (\(occurrenceCount)x)"
+            return "\(kind.rawValue) (\(occurrenceCount)x)" + (isPR ? " (PR)" : "")
         }
     }
 
@@ -218,11 +240,12 @@ enum PaceEngine {
         let bestAtWeights = bestRepTotalLog(among: atWeights)
         let atPlan = byName.filter { $0.planKey == planKey }
         let bestOverall = bestRepTotalLog(among: atPlan)
+        let planBestTotal = atPlan.map(\.totalWeightMoved).max()
 
         return [
-            repTotalTarget(.lastLogged, from: last, occurrenceCount: lastStreak),
-            repTotalTarget(.bestAtTheseWeights, from: bestAtWeights, occurrenceCount: atWeights.count),
-            repTotalTarget(.bestForExercise, from: bestOverall, occurrenceCount: atPlan.count),
+            repTotalTarget(.lastLogged, from: last, occurrenceCount: lastStreak, planBestTotal: planBestTotal),
+            repTotalTarget(.bestAtTheseWeights, from: bestAtWeights, occurrenceCount: atWeights.count, planBestTotal: planBestTotal),
+            repTotalTarget(.bestForExercise, from: bestOverall, occurrenceCount: atPlan.count, planBestTotal: planBestTotal),
         ]
     }
 
@@ -236,19 +259,22 @@ enum PaceEngine {
         return logs.max(by: { $0.totalWeightMoved < $1.totalWeightMoved })
     }
 
-    private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, occurrenceCount: Int = 1) -> RepTotalComparisonTarget {
+    private static func repTotalTarget(_ kind: ComparisonTarget.Kind, from log: ExerciseLog?, occurrenceCount: Int = 1,
+                                       planBestTotal: Double? = nil) -> RepTotalComparisonTarget {
         guard let log else {
             return RepTotalComparisonTarget(kind: kind, date: nil, setsToComplete: nil,
-                                            totalWeightMoved: 0, reps: [], weightLabels: [], occurrenceCount: 1)
+                                            totalWeightMoved: 0, reps: [], weightLabels: [], occurrenceCount: 1, isPR: false)
         }
         let sortedSets = log.sortedSets
+        let isPR = planBestTotal.map { log.totalWeightMoved >= $0 } ?? false
         return RepTotalComparisonTarget(kind: kind,
                                         date: log.session?.date ?? .distantPast,
                                         setsToComplete: log.repTotalReached ? sortedSets.count : nil,
                                         totalWeightMoved: log.totalWeightMoved,
                                         reps: sortedSets.map(\.reps),
                                         weightLabels: weightLabels(for: log),
-                                        occurrenceCount: occurrenceCount)
+                                        occurrenceCount: occurrenceCount,
+                                        isPR: isPR)
     }
 
     /// "Finish in N more sets for a PR" — how many sets of room are left

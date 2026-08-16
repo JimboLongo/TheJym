@@ -18,7 +18,7 @@ final class PaceEngineTests: XCTestCase {
     private let target = ComparisonTarget(
         kind: .lastLogged, date: .now, totalWeightMoved: 1000,
         setWeightsMoved: [200, 200, 200, 200, 200], weights: [20, 20, 20, 20, 20],
-        reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"], occurrenceCount: 1)
+        reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"], occurrenceCount: 1, isPR: false)
 
     func testMilestoneAtSetIndexWithinTargetsOwnSetCount() {
         // Through set 3: cumulative 600, share 0.6 of 1000 -> 0.6 * 1001 = 600.6
@@ -67,7 +67,7 @@ final class PaceEngineTests: XCTestCase {
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
             weights: [145, 145, 145, 155, 155, 155],
             reps: [6, 7, 7, 5, 5, 5],
-            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1)
+            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1, isPR: false)
         guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3395,
                                                        setsLoggedSoFar: 4, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
@@ -87,7 +87,7 @@ final class PaceEngineTests: XCTestCase {
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
             weights: [145, 145, 145, 155, 155, 155],
             reps: [6, 7, 7, 5, 5, 5],
-            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1)
+            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1, isPR: false)
         guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3860,
                                                        setsLoggedSoFar: 5, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
@@ -102,7 +102,7 @@ final class PaceEngineTests: XCTestCase {
 
     func testEvenPaceCellNilWithoutTargetData() {
         let empty = ComparisonTarget(kind: .lastLogged, date: nil, totalWeightMoved: 0,
-                                     setWeightsMoved: [], weights: [], reps: [], weightLabels: [], occurrenceCount: 1)
+                                     setWeightsMoved: [], weights: [], reps: [], weightLabels: [], occurrenceCount: 1, isPR: false)
         XCTAssertNil(PaceEngine.evenPaceCellValue(target: empty, loggedSoFar: 0,
                                                    setsLoggedSoFar: 0, totalSetsToday: 3))
     }
@@ -112,7 +112,7 @@ final class PaceEngineTests: XCTestCase {
     func testEvenPaceCellWithASingleSetTarget() {
         let oneSet = ComparisonTarget(
             kind: .lastLogged, date: .now, totalWeightMoved: 200, setWeightsMoved: [200],
-            weights: [40], reps: [5], weightLabels: ["40"], occurrenceCount: 1)
+            weights: [40], reps: [5], weightLabels: ["40"], occurrenceCount: 1, isPR: false)
         guard let cell = PaceEngine.evenPaceCellValue(target: oneSet, loggedSoFar: 0,
                                                        setsLoggedSoFar: 0, totalSetsToday: 1) else {
             return XCTFail("Expected a cell value")
@@ -171,7 +171,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected a .lastLogged comparison")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 2)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x) (PR)")
     }
 
     /// Reported correction: the streak should NOT change when today's
@@ -192,7 +192,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected .lastLogged and .bestAtTheseWeights comparisons")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 2)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x) (PR)")
         XCTAssertFalse(bestAtWeights.hasData)
         XCTAssertGreaterThan(lastLogged.occurrenceCount, bestAtWeights.occurrenceCount)
     }
@@ -239,7 +239,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected a .lastLogged comparison")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 1)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (1x)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (1x) (PR)")
     }
 
     /// Three sessions in a row that all hit target reps should read "(3x)"
@@ -258,7 +258,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected a .lastLogged comparison")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 3)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (3x)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (3x) (PR)")
     }
 
     /// If "Previous Workout" itself missed target reps, the streak reads
@@ -308,6 +308,7 @@ final class PaceEngineTests: XCTestCase {
         }
         XCTAssertEqual(bestAtWeights.occurrenceCount, 3)
         XCTAssertEqual(bestAtWeights.label, "Best at Weights (3x)")
+        XCTAssertFalse(bestAtWeights.isPR, "the 140 lb session moved more total weight for this plan than any 135 lb one did")
     }
 
     /// "All-Time Best" should count every historical session with this same
@@ -327,6 +328,29 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected a .bestForExercise comparison")
         }
         XCTAssertEqual(bestForExercise.occurrenceCount, 4)
-        XCTAssertEqual(bestForExercise.label, "All-Time Best (4x)")
+        XCTAssertTrue(bestForExercise.isPR, "All-Time Best IS the plan's highest-total log by construction")
+        XCTAssertEqual(bestForExercise.label, "All-Time Best (4x) (PR)")
+    }
+
+    /// Direct regression guard for the reported invariant: whenever
+    /// .bestForExercise has data at all, it's always tagged (PR) — it's
+    /// defined as the plan's own highest-total log, so this holds no
+    /// matter what the history actually looks like.
+    @MainActor
+    func testBestForExerciseIsAlwaysTaggedPRWheneverItHasData() {
+        let context = makeContext()
+        log("Bench Press", weights: [95, 95, 95], daysAgo: 60, context: context)
+        log("Bench Press", weights: [225, 225, 225], daysAgo: 30, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let bestForExercise = comparisons.first(where: { $0.kind == .bestForExercise }) else {
+            return XCTFail("Expected a .bestForExercise comparison")
+        }
+        XCTAssertTrue(bestForExercise.hasData)
+        XCTAssertTrue(bestForExercise.isPR)
+        XCTAssertTrue(bestForExercise.label.hasSuffix("(PR)"))
     }
 }
