@@ -56,12 +56,12 @@ struct ComparisonTarget: Identifiable {
     let isPR: Bool
     var hasData: Bool { date != nil }
 
-    /// The kind's display name, with a "(Nx)" occurrence-count suffix (and
-    /// a "(PR)" tag, if this is the plan's all-time-best total) appended
-    /// once there's actually a log to count.
+    /// The kind's display name, with a "(Nx)" occurrence-count suffix
+    /// appended once there's actually a log to count. See `isPR` for the
+    /// separately-styled "PR" tag rendered alongside this in the view layer.
     var label: String {
         guard hasData else { return kind.rawValue }
-        return "\(kind.rawValue) (\(occurrenceCount)x)" + (isPR ? " (PR)" : "")
+        return "\(kind.rawValue) (\(occurrenceCount)x)"
     }
 }
 
@@ -216,7 +216,7 @@ enum PaceEngine {
         /// See `ComparisonTarget.label`.
         var label: String {
             guard hasData else { return kind.rawValue }
-            return "\(kind.rawValue) (\(occurrenceCount)x)" + (isPR ? " (PR)" : "")
+            return "\(kind.rawValue) (\(occurrenceCount)x)"
         }
     }
 

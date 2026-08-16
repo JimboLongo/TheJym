@@ -171,7 +171,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected a .lastLogged comparison")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 2)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (2x) (PR)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
     }
 
     /// Reported correction: the streak should NOT change when today's
@@ -192,7 +192,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected .lastLogged and .bestAtTheseWeights comparisons")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 2)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (2x) (PR)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
         XCTAssertFalse(bestAtWeights.hasData)
         XCTAssertGreaterThan(lastLogged.occurrenceCount, bestAtWeights.occurrenceCount)
     }
@@ -239,7 +239,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected a .lastLogged comparison")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 1)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (1x) (PR)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (1x)")
     }
 
     /// Three sessions in a row that all hit target reps should read "(3x)"
@@ -258,7 +258,7 @@ final class PaceEngineTests: XCTestCase {
             return XCTFail("Expected a .lastLogged comparison")
         }
         XCTAssertEqual(lastLogged.occurrenceCount, 3)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (3x) (PR)")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (3x)")
     }
 
     /// If "Previous Workout" itself missed target reps, the streak reads
@@ -329,7 +329,7 @@ final class PaceEngineTests: XCTestCase {
         }
         XCTAssertEqual(bestForExercise.occurrenceCount, 4)
         XCTAssertTrue(bestForExercise.isPR, "All-Time Best IS the plan's highest-total log by construction")
-        XCTAssertEqual(bestForExercise.label, "All-Time Best (4x) (PR)")
+        XCTAssertEqual(bestForExercise.label, "All-Time Best (4x)")
     }
 
     /// Direct regression guard for the reported invariant: whenever
@@ -351,6 +351,5 @@ final class PaceEngineTests: XCTestCase {
         }
         XCTAssertTrue(bestForExercise.hasData)
         XCTAssertTrue(bestForExercise.isPR)
-        XCTAssertTrue(bestForExercise.label.hasSuffix("(PR)"))
     }
 }

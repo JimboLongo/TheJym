@@ -13,6 +13,22 @@
 //
 
 import SwiftUI
+
+/// The gold used for the "PR" tag next to a pace-panel label.
+private let prGoldColor = Color(red: 1.0, green: 0.84, blue: 0.0)
+
+/// Combines a target's base label with a separately-styled "PR" tag when
+/// `target.isPR` — smaller, italic, gold, no parentheses.
+private func labelText(_ base: String, isPR: Bool, baseFont: Font, baseColor: Color? = nil) -> Text {
+    var text = Text(base).font(baseFont)
+    if let baseColor {
+        text = text.foregroundStyle(baseColor)
+    }
+    if isPR {
+        text = text + Text(" PR").font(.caption2).italic().foregroundStyle(prGoldColor)
+    }
+    return text
+}
 import SwiftData
 import UIKit
 import Combine
@@ -2265,7 +2281,7 @@ struct RepTotalPaceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(target.label).font(.caption.bold())
+                labelText(target.label, isPR: target.isPR, baseFont: .caption.bold())
                 Spacer()
                 if let date = target.date {
                     Text(Formatters.date.string(from: date))
@@ -2390,7 +2406,7 @@ struct PaceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(target.label).font(.caption.bold())
+                labelText(target.label, isPR: target.isPR, baseFont: .caption.bold())
                 Spacer()
                 if let date = target.date {
                     Text(Formatters.date.string(from: date))
@@ -2698,7 +2714,8 @@ struct CompletedSummaryPageView: View {
             case .fixedSets:
                 ForEach(comparisons(for: draft)) { c in
                     let result = fixedSetsResult(c, draft: draft)
-                    (Text("\(c.label): ").foregroundStyle(.secondary)
+                    (labelText(c.label, isPR: c.isPR, baseFont: .caption2, baseColor: .secondary)
+                     + Text(": ").foregroundStyle(.secondary)
                      + Text(result.text).foregroundStyle(result.color))
                         .font(.caption2)
                 }
@@ -2706,7 +2723,8 @@ struct CompletedSummaryPageView: View {
                 ForEach(repTotalComparisons(for: draft, target: target)) { c in
                     let result = repTotalResult(c, setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
                                                 loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
-                    (Text("\(c.label): ").foregroundStyle(.secondary)
+                    (labelText(c.label, isPR: c.isPR, baseFont: .caption2, baseColor: .secondary)
+                     + Text(": ").foregroundStyle(.secondary)
                      + Text(result.text).foregroundStyle(result.color))
                         .font(.caption2)
                 }
