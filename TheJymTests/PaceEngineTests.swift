@@ -18,7 +18,7 @@ final class PaceEngineTests: XCTestCase {
     private let target = ComparisonTarget(
         kind: .lastLogged, date: .now, totalWeightMoved: 1000,
         setWeightsMoved: [200, 200, 200, 200, 200], weights: [20, 20, 20, 20, 20],
-        reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"], occurrenceCount: 1, isPR: false)
+        reps: [10, 10, 10, 10, 10], weightLabels: ["20", "20", "20", "20", "20"], occurrenceCount: 1, medalRank: nil)
 
     func testMilestoneAtSetIndexWithinTargetsOwnSetCount() {
         // Through set 3: cumulative 600, share 0.6 of 1000 -> 0.6 * 1001 = 600.6
@@ -67,7 +67,7 @@ final class PaceEngineTests: XCTestCase {
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
             weights: [145, 145, 145, 155, 155, 155],
             reps: [6, 7, 7, 5, 5, 5],
-            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1, isPR: false)
+            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1, medalRank: nil)
         guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3395,
                                                        setsLoggedSoFar: 4, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
@@ -87,7 +87,7 @@ final class PaceEngineTests: XCTestCase {
             setWeightsMoved: [870, 1015, 1015, 775, 775, 775],
             weights: [145, 145, 145, 155, 155, 155],
             reps: [6, 7, 7, 5, 5, 5],
-            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1, isPR: false)
+            weightLabels: ["145", "145", "145", "155", "155", "155"], occurrenceCount: 1, medalRank: nil)
         guard let cell = PaceEngine.evenPaceCellValue(target: safetySquats, loggedSoFar: 3860,
                                                        setsLoggedSoFar: 5, totalSetsToday: 6) else {
             return XCTFail("Expected a cell value")
@@ -102,7 +102,7 @@ final class PaceEngineTests: XCTestCase {
 
     func testEvenPaceCellNilWithoutTargetData() {
         let empty = ComparisonTarget(kind: .lastLogged, date: nil, totalWeightMoved: 0,
-                                     setWeightsMoved: [], weights: [], reps: [], weightLabels: [], occurrenceCount: 1, isPR: false)
+                                     setWeightsMoved: [], weights: [], reps: [], weightLabels: [], occurrenceCount: 1, medalRank: nil)
         XCTAssertNil(PaceEngine.evenPaceCellValue(target: empty, loggedSoFar: 0,
                                                    setsLoggedSoFar: 0, totalSetsToday: 3))
     }
@@ -112,7 +112,7 @@ final class PaceEngineTests: XCTestCase {
     func testEvenPaceCellWithASingleSetTarget() {
         let oneSet = ComparisonTarget(
             kind: .lastLogged, date: .now, totalWeightMoved: 200, setWeightsMoved: [200],
-            weights: [40], reps: [5], weightLabels: ["40"], occurrenceCount: 1, isPR: false)
+            weights: [40], reps: [5], weightLabels: ["40"], occurrenceCount: 1, medalRank: nil)
         guard let cell = PaceEngine.evenPaceCellValue(target: oneSet, loggedSoFar: 0,
                                                        setsLoggedSoFar: 0, totalSetsToday: 1) else {
             return XCTFail("Expected a cell value")
@@ -351,5 +351,29 @@ final class PaceEngineTests: XCTestCase {
         }
         XCTAssertTrue(bestForExercise.hasData)
         XCTAssertTrue(bestForExercise.isPR)
+    }
+
+    /// Ranks the plan's distinct totals: 1st = gold (isPR), 2nd = silver,
+    /// 3rd = bronze, anything below that gets no medal at all.
+    @MainActor
+    func testSecondAndThirdHighestTotalsEarnSilverAndBronze() {
+        let context = makeContext()
+        log("Bench Press", weights: [150, 150, 150], daysAgo: 28, context: context)
+        log("Bench Press", weights: [145, 145, 145], daysAgo: 21, context: context)
+        log("Bench Press", weights: [140, 140, 140], daysAgo: 14, context: context)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        func bestAtWeights(_ w: Double) -> ComparisonTarget {
+            let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                      currentWeights: [w, w, w], allLogs: allLogs)
+            return comparisons.first(where: { $0.kind == .bestAtTheseWeights })!
+        }
+
+        XCTAssertEqual(bestAtWeights(150).medalRank, 1)
+        XCTAssertTrue(bestAtWeights(150).isPR)
+        XCTAssertEqual(bestAtWeights(145).medalRank, 2)
+        XCTAssertEqual(bestAtWeights(140).medalRank, 3)
+        XCTAssertNil(bestAtWeights(135).medalRank)
     }
 }
