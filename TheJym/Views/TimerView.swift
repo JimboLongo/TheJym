@@ -263,23 +263,29 @@ struct TimerListView: View {
     }
 }
 
-/// Add/edit sheet for one timer in the working set — minutes + seconds +
-/// repeat count, plus an optional name.
+/// Add/edit sheet for one timer in the working set — a single M:SS wheel
+/// for its duration, a repeat count, and an optional name.
 private struct TimerPresetEditSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
-    @State private var minutes: Int
-    @State private var seconds: Int
+    @State private var seconds: Double
     @State private var repeatCount: Int
     private let existingID: UUID
     private let isNew: Bool
     let onSave: (TimerPresetDraft) -> Void
 
+    /// 5-second steps from 0:05 up to 60:00 — one wheel's worth of duration
+    /// options, instead of separate minutes/seconds controls.
+    private static let durationOptions: [Double] = stride(from: 5.0, through: 3600.0, by: 5.0).map { $0 }
+
+    private static func nearestDuration(_ target: Double) -> Double {
+        durationOptions.min(by: { abs($0 - target) < abs($1 - target) }) ?? durationOptions[0]
+    }
+
     init(draft: TimerPresetDraft?, onSave: @escaping (TimerPresetDraft) -> Void) {
         let d = draft ?? TimerPresetDraft()
         _name = State(initialValue: d.name)
-        _minutes = State(initialValue: Int(d.seconds) / 60)
-        _seconds = State(initialValue: Int(d.seconds) % 60)
+        _seconds = State(initialValue: Self.nearestDuration(d.seconds))
         _repeatCount = State(initialValue: d.repeatCount)
         existingID = d.id
         isNew = draft == nil
@@ -290,8 +296,12 @@ private struct TimerPresetEditSheet: View {
         NavigationStack {
             Form {
                 TextField("Name (e.g. Sprint, Rest)", text: $name)
-                Stepper("Minutes: \(minutes)", value: $minutes, in: 0...59)
-                Stepper("Seconds: \(seconds)", value: $seconds, in: 0...59)
+                Picker("Duration", selection: $seconds) {
+                    ForEach(Self.durationOptions, id: \.self) { value in
+                        Text(Formatters.duration(value)).tag(value)
+                    }
+                }
+                .pickerStyle(.wheel)
                 Stepper("Repeat: \(repeatCount)×", value: $repeatCount, in: 1...50)
             }
             .navigationTitle(isNew ? "Add Timer" : "Edit Timer")
@@ -302,12 +312,10 @@ private struct TimerPresetEditSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        let total = Double(minutes * 60 + seconds)
                         onSave(TimerPresetDraft(id: existingID, name: name.trimmingCharacters(in: .whitespaces),
-                                                seconds: total, repeatCount: repeatCount))
+                                                seconds: seconds, repeatCount: repeatCount))
                         dismiss()
                     }
-                    .disabled(minutes == 0 && seconds == 0)
                 }
             }
         }
