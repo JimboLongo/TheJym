@@ -52,8 +52,13 @@ struct StatsView: View {
                             },
                             allPhases: phases,
                             activePhase: activePhase,
+                            restActivities: restActivities,
                             trainingDaysPerWeekChanges: tdpwChanges.map { (date: $0.date, value: $0.trainingDaysPerWeek) },
                             defaultTrainingDaysPerWeek: settings?.trainingDaysPerWeek ?? 3)
+    }
+
+    private func milesLabel(_ miles: Double) -> String {
+        "\(Formatters.trim(miles)) mi"
     }
 
     var body: some View {
@@ -93,6 +98,7 @@ struct StatsView: View {
                     statRow("Rest days banked", String(format: "%.1f", stats.bankBalance))
                     statRow("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100))
                     statRow("Days per week", String(format: "%.2f", stats.daysPerWeek))
+                    statRow("Miles walked", milesLabel(stats.milesSinceStart))
                 }
 
                 if activePhase != nil {
@@ -111,6 +117,9 @@ struct StatsView: View {
                         }
                         statRow("Lifetime perfect cycles", "\(stats.perfectCycleLifetimeCount ?? 0)")
                         statRow("Current perfect-cycle streak", "\(stats.perfectCycleCurrentStreak ?? 0)")
+                        if let miles = stats.milesThisPhase {
+                            statRow("Miles walked", milesLabel(miles))
+                        }
                     }
                 } else if let fallback = stats.perfectWeekFallback {
                     // No active phase to judge cycles against — a simpler,
@@ -124,11 +133,14 @@ struct StatsView: View {
                 Section("Year / Month to Date") {
                     statRow("YTD workouts", "\(stats.ytdWorkoutDays) (PY: \(stats.priorYearYtdWorkoutDays))")
                     statRow("MTD workouts", "\(stats.mtdWorkoutDays) (PY: \(stats.priorYearMtdWorkoutDays))")
+                    statRow("YTD miles", "\(milesLabel(stats.ytdMiles)) (PY: \(milesLabel(stats.priorYearYtdMiles)))")
+                    statRow("MTD miles", "\(milesLabel(stats.mtdMiles)) (PY: \(milesLabel(stats.priorYearMtdMiles)))")
                 }
 
                 Section("Milestones") {
                     statRow("Perfect weeks", "\(stats.perfectWeeks)")
                     statRow("Perfect months", "\(stats.perfectMonths)")
+                    statRow("All-time miles", milesLabel(stats.allTimeMiles))
                     if let label = stats.bestMonthLabel {
                         statRow("Best month all-time", "\(label) (\(stats.bestMonthWorkouts))")
                     } else {

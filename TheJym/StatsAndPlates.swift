@@ -48,6 +48,17 @@ struct TrainingStats {
     var activePhaseCycleProgress: ActivePhaseCycleProgress?
     // Shown instead of the three fields above when there's no active phase.
     var perfectWeekFallback: PerfectWeekFallback?
+
+    // Miles walked — summed from RestDayActivity.distance entries whose
+    // distanceUnit is literally "mi" (a non-mile unit like "km" isn't
+    // converted, just excluded from these totals).
+    var milesSinceStart: Double     // within [Training Start Date, today]
+    var milesThisPhase: Double?     // within [active phase's start, today] — nil with no active phase
+    var ytdMiles: Double
+    var priorYearYtdMiles: Double
+    var mtdMiles: Double
+    var priorYearMtdMiles: Double
+    var allTimeMiles: Double        // unbounded — every "mi" entry in history
 }
 
 /// The actual calendar range a streak covered, plus its boundary days —
@@ -114,6 +125,7 @@ enum StatsEngine {
                         phaseSchedules: [PhaseSchedule] = [],
                         allPhases: [Phase] = [],
                         activePhase: Phase? = nil,
+                        restActivities: [RestDayActivity] = [],
                         trainingDaysPerWeekChanges: [(date: Date, value: Int)] = [],
                         defaultTrainingDaysPerWeek: Int = 3,
                         now: Date = .now) -> TrainingStats {
@@ -208,6 +220,24 @@ enum StatsEngine {
         let priorYearYtdWorkoutDays = dayCount(from: priorYearStart, through: priorYearToday)
         let priorYearMtdWorkoutDays = dayCount(from: priorYearMonthStart, through: priorYearToday)
 
+        // Miles walked — only entries whose distanceUnit is literally "mi";
+        // an imported/logged non-mile unit (e.g. "km") isn't converted, just
+        // excluded from these totals.
+        let milesEntries: [(day: Date, miles: Double)] = restActivities.compactMap { activity in
+            guard let distance = activity.distance, activity.distanceUnit.lowercased() == "mi" else { return nil }
+            return (cal.startOfDay(for: activity.date), distance)
+        }
+        func milesSum(from windowStart: Date, through windowEnd: Date) -> Double {
+            milesEntries.filter { $0.day >= windowStart && $0.day <= windowEnd }.map(\.miles).reduce(0, +)
+        }
+        let milesSinceStart = milesSum(from: start, through: today)
+        let milesThisPhase = activePhase.map { milesSum(from: cal.startOfDay(for: $0.startDate), through: today) }
+        let ytdMiles = milesSum(from: yearStart, through: today)
+        let mtdMiles = milesSum(from: monthStart, through: today)
+        let priorYearYtdMiles = milesSum(from: priorYearStart, through: priorYearToday)
+        let priorYearMtdMiles = milesSum(from: priorYearMonthStart, through: priorYearToday)
+        let allTimeMiles = milesEntries.map(\.miles).reduce(0, +)
+
         // Perfect weeks/months: walk day-by-day again, bucketing
         // scheduled-vs-logged training days by week and by month. Bounded to
         // [start, today] since "scheduled" is only meaningful within the
@@ -291,7 +321,14 @@ enum StatsEngine {
                              perfectCycleLifetimeCount: perfectCycleLifetimeCount,
                              perfectCycleCurrentStreak: perfectCycleCurrentStreak,
                              activePhaseCycleProgress: activePhaseCycleProgress,
-                             perfectWeekFallback: perfectWeekFallback)
+                             perfectWeekFallback: perfectWeekFallback,
+                             milesSinceStart: milesSinceStart,
+                             milesThisPhase: milesThisPhase,
+                             ytdMiles: ytdMiles,
+                             priorYearYtdMiles: priorYearYtdMiles,
+                             mtdMiles: mtdMiles,
+                             priorYearMtdMiles: priorYearMtdMiles,
+                             allTimeMiles: allTimeMiles)
     }
 
     /// Fallback progress stat for when there's no active phase to judge
