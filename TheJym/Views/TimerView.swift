@@ -133,12 +133,25 @@ struct TimerTemplateDetailView: View {
             Section {
                 TextField("Name", text: $template.name)
                     .onChange(of: template.name) { _, _ in try? context.save() }
-                LabeledContent("Timers") { Text("\(template.presets.count)") }
-                LabeledContent("Total Time") { Text(Formatters.duration(template.totalSeconds)) }
+                LabeledContent("Summary") {
+                    Text("\(template.presets.count) timer\(template.presets.count == 1 ? "" : "s") · \(Formatters.duration(template.totalSeconds))")
+                }
                 Toggle("Continuous", isOn: $template.continuous)
                     .onChange(of: template.continuous) { _, _ in try? context.save() }
-            } footer: {
-                Text("Continuous runs straight through every timer and repeat without stopping. Off, it pauses after each one until you tap Start Next. Either way, the alarm still sounds even if you leave this screen.")
+            }
+
+            Section {
+                if isThisTemplateRunning {
+                    runningSection
+                } else {
+                    Button {
+                        startRun()
+                    } label: {
+                        Label("Start", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(template.presets.isEmpty)
+                }
             }
 
             Section("Timers") {
@@ -167,20 +180,6 @@ struct TimerTemplateDetailView: View {
                     showingAddSheet = true
                 } label: {
                     Label("Add Timer", systemImage: "plus")
-                }
-            }
-
-            Section {
-                if isThisTemplateRunning {
-                    runningSection
-                } else {
-                    Button {
-                        startRun()
-                    } label: {
-                        Label("Start", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .disabled(template.presets.isEmpty)
                 }
             }
         }
