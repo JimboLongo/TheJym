@@ -129,7 +129,7 @@ struct TodayView: View {
             .navigationDestination(item: $quickJumpDay) { day in
                 if let phase = activePhase {
                     if day.isRest {
-                        RestDayLogView(phase: phase, day: day)
+                        RestDayLogView(phase: phase, day: day, selectedTab: $selectedTab)
                     } else {
                         WorkoutLogView(phase: phase, day: day, selectedTab: $selectedTab)
                     }
@@ -610,9 +610,15 @@ struct RestDayLogView: View {
 
     let phase: Phase
     let day: PhaseDay
+    @Binding var selectedTab: MainTab
 
     struct SetDraft: Identifiable { let id = UUID(); var weightText = ""; var repsText = "" }
     struct ExDraft: Identifiable { let id = UUID(); var name = ""; var sets: [SetDraft] = [SetDraft()] }
+
+    /// True while typing a brand-new activity name — otherwise the Cardio /
+    /// Activity row is a dropdown of every previously-logged activity name
+    /// (see knownActivityNames), with "Add New…" switching into this mode.
+    @State private var isAddingNewActivity = false
 
     /// Defaults to today; the DatePicker lets you back-date a missed Rest
     /// day, same as AddHistoricalWorkoutView does for a missed workout.
@@ -701,16 +707,40 @@ struct RestDayLogView: View {
             }
 
             Section("Cardio / Activity") {
-                HStack {
-                    TextField("e.g. Walk, Bike Ride, Yoga", text: $activityName)
-                        .focused($focusedField, equals: .activityName)
-                    if !knownActivityNames.isEmpty {
-                        Menu {
-                            ForEach(knownActivityNames, id: \.self) { name in
-                                Button(name) { activityName = name }
+                if knownActivityNames.isEmpty || isAddingNewActivity {
+                    HStack {
+                        TextField("e.g. Walk, Bike Ride, Yoga", text: $activityName)
+                            .focused($focusedField, equals: .activityName)
+                        if !knownActivityNames.isEmpty {
+                            Button {
+                                isAddingNewActivity = false
+                                activityName = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
                             }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                } else {
+                    Menu {
+                        ForEach(knownActivityNames, id: \.self) { name in
+                            Button(name) { activityName = name }
+                        }
+                        Divider()
+                        Button {
+                            activityName = ""
+                            isAddingNewActivity = true
+                            focusedField = .activityName
                         } label: {
-                            Image(systemName: "chevron.down.circle.fill")
+                            Label("Add New…", systemImage: "plus")
+                        }
+                    } label: {
+                        HStack {
+                            Text(activityName.isEmpty ? "Select an activity" : activityName)
+                                .foregroundStyle(activityName.isEmpty ? .secondary : .primary)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -800,6 +830,7 @@ struct RestDayLogView: View {
         session.phase = phase
         context.insert(session)
         try? context.save()
+        selectedTab = .stats
         dismiss()
     }
 
@@ -847,6 +878,7 @@ struct RestDayLogView: View {
         try? context.save()
         activityName = ""
         distanceText = ""
+        selectedTab = .stats
         dismiss()
     }
 
