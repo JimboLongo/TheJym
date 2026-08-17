@@ -821,25 +821,28 @@ struct RestDayLogView: View {
         // end up double-counted.
         unlogPlainRestDay()
         let distance = Double(distanceText)
-        context.insert(RestDayActivity(date: selectedDate, name: trimmed, distance: distance, distanceUnit: distanceUnit))
+        let restActivity = RestDayActivity(date: selectedDate, name: trimmed, distance: distance, distanceUnit: distanceUnit)
+        context.insert(restActivity)
 
-        // Also show up in History — folds the distance into the exercise
-        // name since ExerciseLog/SetLog don't have a distance field of
-        // their own. Same "no Phase" pattern as ad hoc exercises: this
-        // shouldn't shift where the training cycle thinks you are.
-        let displayName = distance.map { "\(trimmed) (\(Formatters.trim($0)) \(distanceUnit))" } ?? trimmed
+        // Also show up in History — the distance lives in the one SetLog's
+        // `weight` (linked via ExerciseLog.restDayActivity), editable there
+        // and kept in sync with `restActivity.distance`, instead of folded
+        // unreachably into the exercise name. Same "no Phase" pattern as ad
+        // hoc exercises: this shouldn't shift where the training cycle
+        // thinks you are.
         WorkoutSession.removeBackfilledRestPlaceholder(on: selectedDate, context: context)
         let session = WorkoutSession(date: selectedDate, day: day, dayLabel: day.name, cycleNumber: phase.currentCycle)
         session.phase = phase
         context.insert(session)
-        let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
+        let log = ExerciseLog(exerciseName: trimmed, targetReps: [], order: 0)
         log.session = session
+        log.restDayActivity = restActivity
         context.insert(log)
-        let set = SetLog(index: 0, weight: 0, reps: 1)
+        let set = SetLog(index: 0, weight: distance ?? 0, reps: 1)
         set.exerciseLog = log
         context.insert(set)
         var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
-        ExerciseDef.ensureAnyVariantExists(name: displayName, knownDefs: &knownDefs, context: context)
+        ExerciseDef.ensureAnyVariantExists(name: trimmed, knownDefs: &knownDefs, context: context)
 
         try? context.save()
         activityName = ""

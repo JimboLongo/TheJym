@@ -837,6 +837,11 @@ final class ExerciseLog {
     var isBodyweight: Bool = false
     var goalKindRaw: Int = 0       // 0 = fixedSets, 1 = repTotal
     var repTotalTarget: Int = 0    // meaningful only when goalKindRaw == 1
+    /// Set only for a rest-day activity's History mirror (see
+    /// RestDayActivity) — when non-nil, this log's one SetLog's `weight`
+    /// holds that activity's distance (not a lifted weight), and edits in
+    /// History write through to keep both in sync.
+    var restDayActivity: RestDayActivity?
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
     var sets: [SetLog] = []

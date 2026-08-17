@@ -240,7 +240,32 @@ struct HistoryView: View {
         .textCase(nil)
     }
 
+    @ViewBuilder
     private func exerciseRow(_ log: ExerciseLog) -> some View {
+        if let activity = log.restDayActivity {
+            restActivityRow(log, activity)
+        } else {
+            normalExerciseRow(log)
+        }
+    }
+
+    /// A rest-day activity's distance (e.g. "3.1 mi") — no weight/reps grid,
+    /// since the one SetLog it carries just mirrors that distance for
+    /// editing (see SetEditRow), not an actual lift.
+    private func restActivityRow(_ log: ExerciseLog, _ activity: RestDayActivity) -> some View {
+        HStack {
+            Text(log.exerciseName).font(.subheadline.weight(.semibold))
+            Spacer()
+            if let distance = activity.distance {
+                Text("\(Formatters.trim(distance)) \(activity.distanceUnit)")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func normalExerciseRow(_ log: ExerciseLog) -> some View {
         let showGoal = !log.targetReps.isEmpty
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -603,14 +628,16 @@ struct SessionDetailView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(log.sortedSets, id: \.persistentModelID) { set in
-                        SetEditRow(set: set, isBodyweight: log.isBodyweight)
+                        SetEditRow(set: set, isBodyweight: log.isBodyweight, restDayActivity: log.restDayActivity)
                     }
                     .onDelete { idx in
                         let sorted = log.sortedSets
                         for i in idx { context.delete(sorted[i]) }
                         try? context.save()
                     }
-                    Button("Add Set") { addSet(to: log) }
+                    if log.restDayActivity == nil {
+                        Button("Add Set") { addSet(to: log) }
+                    }
                 } header: {
                     HStack {
                         Text(log.exerciseName)
@@ -672,11 +699,26 @@ struct SessionDetailView: View {
 private struct SetEditRow: View {
     @Bindable var set: SetLog
     let isBodyweight: Bool
+    /// Non-nil for a rest-day activity's set — `set.weight` holds its
+    /// distance rather than a lifted weight, and edits write through to
+    /// keep this record's own `distance` in sync (see StatsEngine's
+    /// miles-walked totals, which read from here, not from SetLog). Reps is
+    /// a meaningless placeholder (always 1) for these, so it's hidden.
+    var restDayActivity: RestDayActivity? = nil
 
     var body: some View {
         HStack {
             Text("Set \(set.index + 1)").foregroundStyle(.secondary).frame(width: 56, alignment: .leading)
-            if isBodyweight {
+            if let restDayActivity {
+                TextField("Distance", value: Binding(
+                    get: { set.weight },
+                    set: { new in
+                        set.weight = new
+                        restDayActivity.distance = new
+                    }), format: .number)
+                    .keyboardType(.decimalPad)
+                Text(restDayActivity.distanceUnit).foregroundStyle(.secondary)
+            } else if isBodyweight {
                 // Edits added weight only — bodyweightAtLog stays frozen at
                 // whatever it resolved to when this set was originally
                 // logged, and the effective weight is re-derived from it.
@@ -691,9 +733,11 @@ private struct SetEditRow: View {
                 TextField("Weight", value: $set.weight, format: .number)
                     .keyboardType(.decimalPad)
             }
-            Text("×")
-            TextField("Reps", value: $set.reps, format: .number)
-                .keyboardType(.numberPad)
+            if restDayActivity == nil {
+                Text("×")
+                TextField("Reps", value: $set.reps, format: .number)
+                    .keyboardType(.numberPad)
+            }
         }
     }
 }

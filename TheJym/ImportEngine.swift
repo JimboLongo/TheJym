@@ -816,12 +816,12 @@ enum ImportEngine {
                 await Task.yield()
             }
             guard case .restActivity(let distance, let unit) = entry.kind else { continue }
-            context.insert(RestDayActivity(date: entry.date, name: entry.exerciseName,
-                                           distance: distance, distanceUnit: unit))
+            let restActivity = RestDayActivity(date: entry.date, name: entry.exerciseName,
+                                               distance: distance, distanceUnit: unit)
+            context.insert(restActivity)
 
             let (matchedRestPhase, matchedDay) = matchPhaseDay(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
             let cycle = resolvedCycle(date: entry.date, phaseNumber: entry.phaseNumber, dayLabel: entry.dayLabel)
-            let displayName = distance.map { "\(entry.exerciseName) (\(Formatters.trim($0)) \(unit))" } ?? entry.exerciseName
             // A logged rest-day activity overrides a gap-filled no-activity
             // Rest Day placeholder for this same date.
             WorkoutSession.removeBackfilledRestPlaceholder(on: entry.date, context: context)
@@ -832,10 +832,14 @@ enum ImportEngine {
             session.phase = restRowQualifiesForForcedPhase ? matchedRestPhase : nil
             context.insert(session)
             sessionsCreated += 1
-            let log = ExerciseLog(exerciseName: displayName, targetReps: [], order: 0)
+            // The distance lives in the SetLog's `weight` (linked via
+            // ExerciseLog.restDayActivity), editable in History and kept in
+            // sync with restActivity.distance — see TodayView.logActivity().
+            let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: [], order: 0)
             log.session = session
+            log.restDayActivity = restActivity
             context.insert(log)
-            let set = SetLog(index: 0, weight: 0, reps: 1)
+            let set = SetLog(index: 0, weight: distance ?? 0, reps: 1)
             set.exerciseLog = log
             context.insert(set)
             setsImported += 1
