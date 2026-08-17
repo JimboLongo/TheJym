@@ -17,7 +17,8 @@ struct TheJymApp: App {
             Phase.self, PhaseDay.self, PlannedExercise.self,
             WorkoutSession.self, ExerciseLog.self, SetLog.self,
             BodyWeightEntry.self, RestDayActivity.self,
-            ActiveRecovery.self, TrainingDaysPerWeekChange.self
+            ActiveRecovery.self, TrainingDaysPerWeekChange.self,
+            TimerTemplate.self, TimerPreset.self
         ])
     }
 }
@@ -27,13 +28,14 @@ struct TheJymApp: App {
 /// Presented as a sheet, so each keeps its own NavigationStack/toolbar as-is,
 /// just with a "Done" button added to close it.
 enum OverflowTab: Int, Identifiable {
-    case phases, equipment, settings
+    case phases, equipment, timer, settings
     var id: Int { rawValue }
 
     var title: String {
         switch self {
         case .phases: return "Phases"
         case .equipment: return "Equipment"
+        case .timer: return "Timer"
         case .settings: return "Settings"
         }
     }
@@ -42,6 +44,7 @@ enum OverflowTab: Int, Identifiable {
         switch self {
         case .phases: return "calendar"
         case .equipment: return "circle.circle"
+        case .timer: return "timer"
         case .settings: return "gearshape.fill"
         }
     }
@@ -58,13 +61,13 @@ enum MainTab: Hashable {
 }
 
 /// Hamburger button added to every main tab's toolbar, giving access to the
-/// three overflow tabs (Phases, Equipment, Settings) from anywhere in the app.
+/// overflow tabs (Phases, Equipment, Timer, Settings) from anywhere in the app.
 struct OverflowMenuButton: View {
     @Binding var overflowTab: OverflowTab?
 
     var body: some View {
         Menu {
-            ForEach([OverflowTab.phases, .equipment, .settings]) { tab in
+            ForEach([OverflowTab.phases, .equipment, .timer, .settings]) { tab in
                 Button(tab.title, systemImage: tab.icon) { overflowTab = tab }
             }
         } label: {
@@ -106,6 +109,7 @@ struct ContentView: View {
             switch tab {
             case .phases: PhasesView()
             case .equipment: EquipmentView()
+            case .timer: TimerListView()
             case .settings: SettingsView()
             }
         }

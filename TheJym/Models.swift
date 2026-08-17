@@ -1044,6 +1044,54 @@ final class BodyWeightEntry {
     }
 }
 
+// MARK: - Timers
+
+/// A saved, reusable set of timers (e.g. "HIIT Sprints") — recalled from the
+/// Timer section instead of rebuilding it from scratch each time.
+@Model
+final class TimerTemplate {
+    var name: String
+    var order: Int
+    /// Remembered per-template so re-starting it later doesn't require
+    /// re-toggling — see TimerEngine's Continuous mode.
+    var continuous: Bool = false
+
+    @Relationship(deleteRule: .cascade, inverse: \TimerPreset.template)
+    var presets: [TimerPreset] = []
+
+    init(name: String, order: Int, continuous: Bool = false) {
+        self.name = name
+        self.order = order
+        self.continuous = continuous
+    }
+
+    var orderedPresets: [TimerPreset] { presets.sorted { $0.order < $1.order } }
+
+    /// Sum of seconds × repeatCount across every timer in this template —
+    /// the full run's total duration.
+    var totalSeconds: Double {
+        presets.reduce(0) { $0 + $1.seconds * Double(max(1, $1.repeatCount)) }
+    }
+}
+
+/// One timer within a TimerTemplate — a duration repeated `repeatCount`
+/// times before the template moves on to its next timer.
+@Model
+final class TimerPreset {
+    var template: TimerTemplate?
+    var name: String
+    var seconds: Double
+    var repeatCount: Int
+    var order: Int
+
+    init(name: String, seconds: Double, repeatCount: Int = 1, order: Int) {
+        self.name = name
+        self.seconds = seconds
+        self.repeatCount = max(1, repeatCount)
+        self.order = order
+    }
+}
+
 // MARK: - Small shared helpers
 
 enum Formatters {
@@ -1078,6 +1126,13 @@ enum Formatters {
         let today = cal.startOfDay(for: date)
         let offset = (weekday - 2 + 7) % 7
         return cal.date(byAdding: .day, value: -offset, to: today) ?? today
+    }
+    /// "1:05" under an hour, "1:02:03" once it reaches one — Timer section's
+    /// duration/countdown display.
+    static func duration(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
     /// Full weekday name alone, e.g. "Sunday" — first line of the workout
     /// log's two-line date button.
