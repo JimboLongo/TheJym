@@ -224,11 +224,14 @@ final class TimerEngine: NSObject, ObservableObject {
 
     // MARK: Notifications — the actual "heard even off-screen" alarm
 
+    /// Sound-only — no `.alert`, so a timer's completion is heard (a chime)
+    /// without ever popping up a visible banner, on the lock screen or
+    /// anywhere else.
     private func requestAuthorizationIfNeeded() async {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .notDetermined else { return }
-        _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        _ = try? await center.requestAuthorization(options: [.sound])
     }
 
     private func cancelPendingNotifications(count: Int) {
@@ -245,16 +248,13 @@ final class TimerEngine: NSObject, ObservableObject {
         }
     }
 
+    /// No title/body shown anywhere (see requestAuthorizationIfNeeded's
+    /// sound-only scope and the delegate below) — just a chime, standing in
+    /// for the popup banner this used to show.
     private func scheduleSingle(_ segment: TimerSegment, index: Int, fireDate: Date) {
         let interval = max(0.1, fireDate.timeIntervalSinceNow)
         let content = UNMutableNotificationContent()
-        let isLast = index == segments.count - 1
-        let repSuffix = segment.repCount > 1 ? " — rep \(segment.repIndex)/\(segment.repCount)" : ""
-        content.title = isLast ? "Timers Complete!" : "\(segment.presetName) Done"
-        content.body = isLast
-            ? "\(segment.presetName)\(repSuffix) — all timers finished."
-            : "\(segment.presetName)\(repSuffix) done."
-        content.sound = .default
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(rawValue: "chime.caf"))
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
         let request = UNNotificationRequest(identifier: "timerSegment-\(index)", content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request)
@@ -262,13 +262,12 @@ final class TimerEngine: NSObject, ObservableObject {
 }
 
 extension TimerEngine: UNUserNotificationCenterDelegate {
-    /// Without this, a notification's sound/banner is silently suppressed
-    /// whenever the app itself is in the foreground — which is exactly when
-    /// a timer alarm is most likely to fire (the user's mid-workout, app
-    /// open on some other tab). Opts every notification into showing/
-    /// sounding regardless of foreground/background state.
+    /// Sound only, no banner — a timer's alarm is a chime, not a popup, even
+    /// while the app itself is in the foreground (where a notification's
+    /// presentation would otherwise be silently suppressed entirely without
+    /// this delegate opting back in).
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        [.sound]
     }
 }
