@@ -2,164 +2,223 @@
 //  TimerView.swift
 //  TheJym
 //
-//  A working set of timers (each with a duration + repeat count) you can
-//  start, run straight through or one at a time (Continuous), and save as a
-//  named template to reload later. The actual countdown/alarm lives in
-//  TimerEngine (app-wide, not tied to this view) so it keeps going — and its
-//  alarms keep firing — no matter which tab you switch to.
+//  Timer templates — each a named set of timers (a duration + repeat count
+//  apiece) you can edit, then run straight through or one at a time
+//  (Continuous). The actual countdown/alarm lives in TimerEngine (app-wide,
+//  not tied to any one view) so it keeps going — and its alarms keep firing
+//  — no matter which tab you switch to.
 //
 
 import SwiftUI
 import SwiftData
 
-/// One timer in the working set being edited — a plain Codable value (not a
-/// SwiftData model) so it can be freely drafted/reordered/persisted to
-/// UserDefaults without touching the store until explicitly saved as a
-/// template.
-struct TimerPresetDraft: Identifiable, Codable, Equatable {
-    var id = UUID()
-    var name: String = ""
-    var seconds: Double = 30
-    var repeatCount: Int = 1
-}
-
-struct TimerListView: View {
+/// Entry point from the hamburger menu — every saved template, tap one to
+/// open it for editing/running, or add a new one. A run already in progress
+/// (however it was started) surfaces here too, so it's never stranded
+/// off-screen just because you navigated away from its template.
+struct TimerTemplatesListView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query(sort: \TimerTemplate.order) private var templates: [TimerTemplate]
     @ObservedObject private var engine = TimerEngine.shared
 
-    @State private var drafts: [TimerPresetDraft] = []
-    @State private var continuous = false
-    @State private var workingSetName = "Timers"
-    @State private var editingDraft: TimerPresetDraft?
-    @State private var showingAddSheet = false
-    @State private var showingLoadSheet = false
-    @State private var showingSaveAlert = false
-    @State private var saveNameText = ""
+    @State private var newTemplate: TimerTemplate?
 
-    private var totalSeconds: Double {
-        drafts.reduce(0) { $0 + $1.seconds * Double(max(1, $1.repeatCount)) }
+    private var activeTemplate: TimerTemplate? {
+        guard engine.isActive else { return nil }
+        return templates.first { $0.name == engine.templateName }
     }
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    LabeledContent("Timers") { Text("\(drafts.count)") }
-                    LabeledContent("Total Time") { Text(Formatters.duration(totalSeconds)) }
-                    Toggle("Continuous", isOn: $continuous)
-                        .onChange(of: continuous) { _, _ in saveWorkingSet() }
-                } footer: {
-                    Text("Continuous runs straight through every timer and repeat without stopping. Off, it pauses after each one until you tap Start Next. Either way, the alarm still sounds even if you leave this screen.")
+                if let activeTemplate {
+                    Section {
+                        NavigationLink {
+                            TimerTemplateDetailView(template: activeTemplate)
+                        } label: {
+                            runningSummaryRow
+                        }
+                    }
                 }
 
-                Section("Timers") {
-                    ForEach(drafts) { draft in
-                        Button {
-                            editingDraft = draft
+                Section {
+                    ForEach(templates) { template in
+                        NavigationLink {
+                            TimerTemplateDetailView(template: template)
                         } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(draft.name.isEmpty ? "Timer" : draft.name)
-                                    Text(draft.repeatCount > 1
-                                         ? "\(Formatters.duration(draft.seconds)) × \(draft.repeatCount)"
-                                         : Formatters.duration(draft.seconds))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                            }
+                            templateRow(template)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.primary)
                     }
-                    .onDelete { idx in
-                        drafts.remove(atOffsets: idx)
-                        saveWorkingSet()
-                    }
-                    .onMove { from, to in
-                        drafts.move(fromOffsets: from, toOffset: to)
-                        saveWorkingSet()
-                    }
+                    .onDelete(perform: deleteTemplates)
                     Button {
-                        showingAddSheet = true
+                        addTemplate()
                     } label: {
-                        Label("Add Timer", systemImage: "plus")
+                        Label("New Template", systemImage: "plus")
                     }
-                }
-
-                Section {
-                    if engine.isActive {
-                        runningSection
-                    } else {
-                        Button {
-                            startRun()
-                        } label: {
-                            Label("Start", systemImage: "play.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .disabled(drafts.isEmpty)
-                    }
+                } header: {
+                    Text("Templates")
                 }
             }
-            .navigationTitle(workingSetName)
+            .navigationTitle("Timers")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            showingLoadSheet = true
-                        } label: {
-                            Label("Load Template…", systemImage: "tray.and.arrow.down")
-                        }
-                        .disabled(templates.isEmpty)
-                        Button {
-                            saveNameText = workingSetName == "Timers" ? "" : workingSetName
-                            showingSaveAlert = true
-                        } label: {
-                            Label("Save as Template…", systemImage: "tray.and.arrow.up")
-                        }
-                        .disabled(drafts.isEmpty)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    EditButton()
-                }
             }
-            .onAppear(perform: loadWorkingSet)
-            .sheet(item: $editingDraft) { draft in
-                TimerPresetEditSheet(draft: draft) { updated in
-                    if let idx = drafts.firstIndex(where: { $0.id == updated.id }) {
-                        drafts[idx] = updated
-                    }
-                    saveWorkingSet()
-                }
-            }
-            .sheet(isPresented: $showingAddSheet) {
-                TimerPresetEditSheet(draft: nil) { new in
-                    drafts.append(new)
-                    saveWorkingSet()
-                }
-            }
-            .sheet(isPresented: $showingLoadSheet) {
-                TemplatePickerSheet(templates: templates, onLoad: { template in
-                    loadTemplate(template)
-                    showingLoadSheet = false
-                }, onDelete: { template in
-                    context.delete(template)
-                    try? context.save()
-                })
-            }
-            .alert("Save as Template", isPresented: $showingSaveAlert) {
-                TextField("Name", text: $saveNameText)
-                Button("Save") { saveAsTemplate() }
-                Button("Cancel", role: .cancel) { }
+            .navigationDestination(item: $newTemplate) { template in
+                TimerTemplateDetailView(template: template)
             }
         }
+    }
+
+    private func templateRow(_ template: TimerTemplate) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(template.name)
+                Text("\(template.presets.count) timer\(template.presets.count == 1 ? "" : "s") · \(Formatters.duration(template.totalSeconds))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if engine.isActive, engine.templateName == template.name {
+                Image(systemName: "timer").foregroundStyle(.green)
+            }
+        }
+    }
+
+    private var runningSummaryRow: some View {
+        HStack {
+            Image(systemName: "timer").foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(engine.templateName ?? "Running").font(.subheadline.bold())
+                if let seg = engine.currentSegment {
+                    Text("\(seg.presetName) · \(Formatters.duration(engine.remainingSeconds))")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if engine.isFinished {
+                    Text("Complete").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func addTemplate() {
+        let template = TimerTemplate(name: "New Template", order: templates.count)
+        context.insert(template)
+        try? context.save()
+        newTemplate = template
+    }
+
+    private func deleteTemplates(_ idx: IndexSet) {
+        for i in idx { context.delete(templates[i]) }
+        try? context.save()
+    }
+}
+
+/// One template's own timers — edit its name, its timers (add/edit/delete/
+/// reorder), Continuous, and start/monitor its run.
+struct TimerTemplateDetailView: View {
+    @Environment(\.modelContext) private var context
+    @Bindable var template: TimerTemplate
+    @ObservedObject private var engine = TimerEngine.shared
+    @State private var editingPreset: TimerPreset?
+    @State private var showingAddSheet = false
+
+    private var isThisTemplateRunning: Bool {
+        engine.isActive && engine.templateName == template.name
+    }
+
+    var body: some View {
+        List {
+            Section {
+                TextField("Name", text: $template.name)
+                    .onChange(of: template.name) { _, _ in try? context.save() }
+                LabeledContent("Timers") { Text("\(template.presets.count)") }
+                LabeledContent("Total Time") { Text(Formatters.duration(template.totalSeconds)) }
+                Toggle("Continuous", isOn: $template.continuous)
+                    .onChange(of: template.continuous) { _, _ in try? context.save() }
+            } footer: {
+                Text("Continuous runs straight through every timer and repeat without stopping. Off, it pauses after each one until you tap Start Next. Either way, the alarm still sounds even if you leave this screen.")
+            }
+
+            Section("Timers") {
+                ForEach(Array(template.orderedPresets.enumerated()), id: \.element.persistentModelID) { index, preset in
+                    Button {
+                        editingPreset = preset
+                    } label: {
+                        HStack {
+                            Text("\(index + 1).")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20, alignment: .leading)
+                            Text(preset.name)
+                            Spacer()
+                            Text(preset.repeatCount > 1
+                                 ? "\(Formatters.duration(preset.seconds)) × \(preset.repeatCount)"
+                                 : Formatters.duration(preset.seconds))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                }
+                .onDelete(perform: deletePresets)
+                .onMove(perform: movePresets)
+                Button {
+                    showingAddSheet = true
+                } label: {
+                    Label("Add Timer", systemImage: "plus")
+                }
+            }
+
+            Section {
+                if isThisTemplateRunning {
+                    runningSection
+                } else {
+                    Button {
+                        startRun()
+                    } label: {
+                        Label("Start", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(template.presets.isEmpty)
+                }
+            }
+        }
+        .navigationTitle(template.name.isEmpty ? "Timer" : template.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { EditButton() }
+        .sheet(item: $editingPreset) { preset in
+            TimerPresetEditSheet(draft: TimerPresetDraft(name: preset.name, seconds: preset.seconds,
+                                                          repeatCount: preset.repeatCount)) { updated in
+                preset.name = updated.name.isEmpty ? "Timer" : updated.name
+                preset.seconds = updated.seconds
+                preset.repeatCount = updated.repeatCount
+                try? context.save()
+            }
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            TimerPresetEditSheet(draft: nil) { draft in
+                let preset = TimerPreset(name: draft.name.isEmpty ? "Timer" : draft.name,
+                                         seconds: draft.seconds, repeatCount: draft.repeatCount,
+                                         order: template.presets.count)
+                preset.template = template
+                context.insert(preset)
+                try? context.save()
+            }
+        }
+    }
+
+    private func deletePresets(_ idx: IndexSet) {
+        let ordered = template.orderedPresets
+        for i in idx { context.delete(ordered[i]) }
+        try? context.save()
+    }
+
+    private func movePresets(from: IndexSet, to: Int) {
+        var ordered = template.orderedPresets
+        ordered.move(fromOffsets: from, toOffset: to)
+        for (i, preset) in ordered.enumerated() { preset.order = i }
+        try? context.save()
     }
 
     @ViewBuilder
@@ -197,82 +256,30 @@ struct TimerListView: View {
     }
 
     private func startRun() {
-        engine.start(templateName: workingSetName,
-                     presets: drafts.map { (name: $0.name.isEmpty ? "Timer" : $0.name, seconds: $0.seconds, repeatCount: $0.repeatCount) },
-                     continuous: continuous)
-    }
-
-    private func loadTemplate(_ template: TimerTemplate) {
-        drafts = template.orderedPresets.map {
-            TimerPresetDraft(name: $0.name, seconds: $0.seconds, repeatCount: $0.repeatCount)
-        }
-        continuous = template.continuous
-        workingSetName = template.name
-        saveWorkingSet()
-    }
-
-    /// Overwrites an existing template of the same name (case-insensitive)
-    /// rather than creating a duplicate.
-    private func saveAsTemplate() {
-        let trimmed = saveNameText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        let target: TimerTemplate
-        if let existing = templates.first(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) {
-            for preset in existing.presets { context.delete(preset) }
-            existing.presets = []
-            target = existing
-        } else {
-            target = TimerTemplate(name: trimmed, order: templates.count)
-            context.insert(target)
-        }
-        target.name = trimmed
-        target.continuous = continuous
-        for (i, draft) in drafts.enumerated() {
-            let preset = TimerPreset(name: draft.name.isEmpty ? "Timer" : draft.name,
-                                     seconds: draft.seconds, repeatCount: draft.repeatCount, order: i)
-            preset.template = target
-            context.insert(preset)
-        }
-        try? context.save()
-        workingSetName = trimmed
-        saveWorkingSet()
-    }
-
-    // MARK: Working-set persistence (survives tab switches / app close, same
-    // pattern WorkoutLogView uses for its own in-progress draft).
-
-    private struct WorkingSet: Codable {
-        var name: String
-        var drafts: [TimerPresetDraft]
-        var continuous: Bool
-    }
-    private let workingSetKey = "TimerListView.workingSet"
-
-    private func loadWorkingSet() {
-        guard let data = UserDefaults.standard.data(forKey: workingSetKey),
-              let saved = try? JSONDecoder().decode(WorkingSet.self, from: data) else { return }
-        drafts = saved.drafts
-        continuous = saved.continuous
-        workingSetName = saved.name
-    }
-
-    private func saveWorkingSet() {
-        let saved = WorkingSet(name: workingSetName, drafts: drafts, continuous: continuous)
-        guard let data = try? JSONEncoder().encode(saved) else { return }
-        UserDefaults.standard.set(data, forKey: workingSetKey)
+        engine.start(templateName: template.name,
+                     presets: template.orderedPresets.map { (name: $0.name, seconds: $0.seconds, repeatCount: $0.repeatCount) },
+                     continuous: template.continuous)
     }
 }
 
-/// Add/edit sheet for one timer in the working set — independent minutes
-/// and seconds wheels for its duration, a repeat count, and an optional
-/// name.
+/// A single timer's edit form — a plain value (not bound directly to a
+/// SwiftData model) so the same sheet works for both adding a brand new
+/// timer and editing an existing one; the caller decides what to do with
+/// the result.
+struct TimerPresetDraft: Equatable {
+    var name: String = ""
+    var seconds: Double = 30
+    var repeatCount: Int = 1
+}
+
+/// Add/edit sheet for one timer — independent minutes and seconds wheels
+/// for its duration, a repeat count, and an optional name.
 private struct TimerPresetEditSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var minutes: Int
     @State private var seconds: Int
     @State private var repeatCount: Int
-    private let existingID: UUID
     private let isNew: Bool
     let onSave: (TimerPresetDraft) -> Void
 
@@ -286,7 +293,6 @@ private struct TimerPresetEditSheet: View {
         _minutes = State(initialValue: Int(d.seconds) / 60)
         _seconds = State(initialValue: Int(d.seconds) % 60)
         _repeatCount = State(initialValue: d.repeatCount)
-        existingID = d.id
         isNew = draft == nil
         self.onSave = onSave
     }
@@ -321,53 +327,11 @@ private struct TimerPresetEditSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         let total = Double(minutes * 60 + seconds)
-                        onSave(TimerPresetDraft(id: existingID, name: name.trimmingCharacters(in: .whitespaces),
+                        onSave(TimerPresetDraft(name: name.trimmingCharacters(in: .whitespaces),
                                                 seconds: total, repeatCount: repeatCount))
                         dismiss()
                     }
                     .disabled(minutes == 0 && seconds == 0)
-                }
-            }
-        }
-    }
-}
-
-/// Sheet listing every saved template — tap to load it into the working
-/// set, swipe to delete it outright.
-private struct TemplatePickerSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let templates: [TimerTemplate]
-    let onLoad: (TimerTemplate) -> Void
-    let onDelete: (TimerTemplate) -> Void
-
-    var body: some View {
-        NavigationStack {
-            List {
-                ForEach(templates, id: \.persistentModelID) { template in
-                    Button {
-                        onLoad(template)
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(template.name)
-                                Text("\(template.presets.count) timer\(template.presets.count == 1 ? "" : "s") · \(Formatters.duration(template.totalSeconds))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.primary)
-                }
-                .onDelete { idx in
-                    for i in idx { onDelete(templates[i]) }
-                }
-            }
-            .navigationTitle("Saved Templates")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
                 }
             }
         }

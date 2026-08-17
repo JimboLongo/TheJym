@@ -109,7 +109,7 @@ struct ContentView: View {
             switch tab {
             case .phases: PhasesView()
             case .equipment: EquipmentView()
-            case .timer: TimerListView()
+            case .timer: TimerTemplatesListView()
             case .settings: SettingsView()
             }
         }
