@@ -305,6 +305,7 @@ struct TodayView: View {
                     }
                     .font(.caption)
                     phaseDaysProgressLine(phase)
+                        .padding(.bottom, 4)
                     cycleSlotChecklist(phase)
                 }
                 .padding(.vertical, 4)
