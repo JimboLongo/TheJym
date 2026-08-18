@@ -304,6 +304,7 @@ struct TodayView: View {
                             .foregroundStyle(.secondary)
                     }
                     .font(.caption)
+                    phaseDaysProgressLine(phase)
                     cycleSlotChecklist(phase)
                 }
                 .padding(.vertical, 4)
@@ -324,6 +325,20 @@ struct TodayView: View {
                 }
             }
         }
+    }
+
+    /// "N of TOTAL Days Complete (X%), REMAINING days remaining" — the same
+    /// filled/total slot counts the progress bar above already uses
+    /// (orderedDays.count × totalCycles, so Rest days count too), just
+    /// spelled out as a sentence.
+    private func phaseDaysProgressLine(_ phase: Phase) -> some View {
+        let total = phase.orderedDays.count * phase.totalCycles
+        let completed = phase.displayFilledSlotCount
+        let percent = total > 0 ? Double(completed) / Double(total) * 100 : 0
+        let remaining = max(0, total - completed)
+        return Text("\(completed) of \(total) Days Complete (\(String(format: "%.0f", percent))%), \(remaining) days remaining")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
     }
 
     /// What's up next in the actual template rotation (Rest included in its
