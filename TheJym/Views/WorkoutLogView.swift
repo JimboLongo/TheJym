@@ -838,15 +838,23 @@ struct ExercisePageView: View {
     /// Shown when a set number is tapped — every past log of this exercise,
     /// History-tab styled.
     @State private var showFullHistory = false
-    /// Shown once, right when only the last set is left unlogged — reps
-    /// needed at that set's weight to reach gold/silver/bronze. Must be
-    /// dismissed with its own X (see `.interactiveDismissDisabled()`).
+    /// Shown once, 2 seconds after the screen goes idle with only the last
+    /// set left unlogged — reps needed at that set's weight to reach gold/
+    /// silver/bronze. An in-page overlay (not a sheet) tied to this
+    /// exercise's own @State, so it survives scrolling away to another
+    /// exercise and back. Dismissed only via its own X.
     @State private var showingLastSetMedalPopup = false
     /// Guards `showingLastSetMedalPopup` so it only ever pops up once per
     /// exercise instance, even if the last set's own weight/reps get edited
     /// afterward (which would otherwise re-trigger the "only last set left"
     /// condition every time).
     @State private var lastSetMedalPopupShown = false
+    /// Guards `checkLastSetPopup`'s 2-second idle wait the same way
+    /// `celebrationGeneration` guards checkCelebrationEffects — bumped on
+    /// every call (including every intermediate value a spinning wheel
+    /// picker fires) so the popup only actually shows once the screen's
+    /// been still for a full 2 seconds, not mid-scroll.
+    @State private var lastSetPopupGeneration = 0
     /// Non-nil briefly, 2 seconds after every set is logged, if today's live
     /// total ranks top-3 for this exercise's plan — drives the celebration
     /// burst, sized/colored to match the medal. Shown together with (and
@@ -1384,15 +1392,24 @@ struct ExercisePageView: View {
         return LastSetMedalTargets(gold: repsNeeded(thresholds.gold), silver: repsNeeded(thresholds.silver),
                                    bronze: repsNeeded(thresholds.bronze))
     }
-    /// Fires exactly once, right when the exercise reaches "every set but
-    /// the last is logged" — see `isAtLastSetOnly` and
-    /// `lastSetMedalPopupShown`. Unlike checkCelebrationEffects, this is
-    /// immediate (no delay): the point is to inform the still-open last set
-    /// before it's logged, not to celebrate something already done.
+    /// Fires at most once per exercise, 2 seconds after the screen goes
+    /// idle with "every set but the last is logged" — see
+    /// `isAtLastSetOnly` and `lastSetMedalPopupShown`. Called on every
+    /// weight/reps edit (including every intermediate value a spinning
+    /// wheel fires), so `lastSetPopupGeneration` restarts the wait each
+    /// time — only once nothing's changed for a full 2 seconds does the
+    /// popup actually show, keeping the reps-needed math from being
+    /// computed (and shown) mid-scroll.
     private func checkLastSetPopup() {
         guard !lastSetMedalPopupShown, isAtLastSetOnly else { return }
-        lastSetMedalPopupShown = true
-        showingLastSetMedalPopup = true
+        lastSetPopupGeneration += 1
+        let generation = lastSetPopupGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard generation == lastSetPopupGeneration, !lastSetMedalPopupShown, isAtLastSetOnly else { return }
+            lastSetMedalPopupShown = true
+            withAnimation { showingLastSetMedalPopup = true }
+        }
     }
     /// The +/- step for this exercise's weight fields: the smallest plate
     /// you own for barbell/plate work, or the finest dumbbell increment
@@ -1523,11 +1540,13 @@ struct ExercisePageView: View {
         .sheet(isPresented: $showFullHistory) {
             ExerciseFullHistoryView(exerciseName: draft.name, allLogs: allLogs)
         }
-        .sheet(isPresented: $showingLastSetMedalPopup) {
-            LastSetMedalPopupView(exerciseName: draft.name,
-                                  targets: lastSetMedalTargets ?? LastSetMedalTargets(gold: nil, silver: nil, bronze: nil))
-                .presentationDetents([.medium])
-                .interactiveDismissDisabled()
+        .overlay {
+            if showingLastSetMedalPopup {
+                LastSetMedalPopupView(exerciseName: draft.name,
+                                      targets: lastSetMedalTargets ?? LastSetMedalTargets(gold: nil, silver: nil, bronze: nil)) {
+                    withAnimation { showingLastSetMedalPopup = false }
+                }
+            }
         }
         .overlay {
             if let tier = celebrationTier {
@@ -2394,35 +2413,37 @@ struct LastSetMedalTargets {
 /// Dismissed only via its own X (see `.interactiveDismissDisabled()` where
 /// it's presented).
 struct LastSetMedalPopupView: View {
-    @Environment(\.dismiss) private var dismiss
     let exerciseName: String
     let targets: LastSetMedalTargets
+    let onDismiss: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Last Set!").font(.headline)
+                    Text(exerciseName).font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button {
-                    dismiss()
-                } label: {
+                Button(action: onDismiss) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
+                        .font(.title3)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
-            VStack(spacing: 4) {
-                Text("Last Set!").font(.title2.bold())
-                Text(exerciseName).font(.subheadline).foregroundStyle(.secondary)
-            }
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 medalRow(emoji: "🥇", label: "Gold", reps: targets.gold, color: .yellow)
                 medalRow(emoji: "🥈", label: "Silver", reps: targets.silver, color: .gray)
                 medalRow(emoji: "🥉", label: "Bronze", reps: targets.bronze, color: .orange)
             }
-            Spacer()
         }
         .padding()
+        .frame(maxWidth: 320)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.separator, lineWidth: 0.5))
+        .shadow(radius: 12)
+        .transition(.scale(scale: 0.9).combined(with: .opacity))
     }
 
     @ViewBuilder
