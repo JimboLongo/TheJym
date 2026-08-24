@@ -1754,6 +1754,7 @@ struct ExercisePageView: View {
                         .pickerStyle(.wheel)
                         .frame(width: 100, height: wheelHeight)
                         .clipped()
+                        .simultaneousGesture(resetTimersWhileDragging)
 
                         if repsExplosion[i] == true {
                             ExplosionBurst()
@@ -1836,6 +1837,18 @@ struct ExercisePageView: View {
                   draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
             withAnimation { collapse() }
         }
+    }
+
+    /// A wheel `.pickerStyle(.wheel)` only commits its bound value once it
+    /// actually settles on a row — mid-spin, while it's still decelerating,
+    /// nothing fires. Attached to each weight/reps wheel via
+    /// `.simultaneousGesture` (which doesn't interfere with the wheel's own
+    /// scroll), this fires `checkAutoCollapse()` continuously for as long as
+    /// a finger's touching it, so the celebration/last-set-popup idle
+    /// timers keep resetting throughout the whole spin, not just once it
+    /// stops.
+    private var resetTimersWhileDragging: some Gesture {
+        DragGesture(minimumDistance: 0).onChanged { _ in checkAutoCollapse() }
     }
 
     /// 2 seconds after every set is logged, if the exercise is complete,
@@ -1973,6 +1986,7 @@ struct ExercisePageView: View {
                 .pickerStyle(.wheel)
                 .frame(width: weightColumnWidth, height: height)
                 .clipped()
+                .simultaneousGesture(resetTimersWhileDragging)
                 if let delta = cascadeIndicator[index] {
                     Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
                         .font(.caption2.bold())
@@ -2000,6 +2014,7 @@ struct ExercisePageView: View {
                 .pickerStyle(.wheel)
                 .frame(width: 100, height: height)
                 .clipped()
+                .simultaneousGesture(resetTimersWhileDragging)
                 if let delta = cascadeIndicator[index] {
                     Text(delta > 0 ? "+\(Formatters.trim(delta))" : Formatters.trim(delta))
                         .font(.caption2.bold())
@@ -2048,6 +2063,7 @@ struct ExercisePageView: View {
                         .pickerStyle(.wheel)
                         .frame(width: 100, height: repTotalRowHeight)
                         .clipped()
+                        .simultaneousGesture(resetTimersWhileDragging)
                         if repsExplosion[i] == true {
                             ExplosionBurst()
                                 .frame(width: 100, height: repTotalRowHeight)
