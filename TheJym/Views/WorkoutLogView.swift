@@ -29,6 +29,20 @@ func medalEmoji(_ rank: Int?) -> String? {
     }
 }
 
+/// "1st", "2nd", "3rd", "4th", ..., "11th", "21st" — the medal emoji's
+/// text counterpart for a rank that didn't crack the top 3.
+func ordinalLabel(_ n: Int) -> String {
+    let suffix: String
+    switch (n % 100, n % 10) {
+    case (11, _), (12, _), (13, _): suffix = "th"
+    case (_, 1): suffix = "st"
+    case (_, 2): suffix = "nd"
+    case (_, 3): suffix = "rd"
+    default: suffix = "th"
+    }
+    return "\(n)\(suffix)"
+}
+
 /// Combines a target's base label with a trailing medal emoji, if ranked.
 private func labelText(_ base: String, medalRank: Int?, baseFont: Font, baseColor: Color? = nil) -> Text {
     var text = Text(base).font(baseFont)
@@ -165,6 +179,13 @@ struct WorkoutLogView: View {
         /// load) — the resolved effective weight is only computed at save
         /// time against a BodyWeightEntry.
         var isBodyweight: Bool = false
+        /// This exercise's rank (1st, 2nd, 3rd, or lower) for its plan's
+        /// total weight moved, recorded once it's complete — see
+        /// ExercisePageView.checkCelebrationEffects. Uncapped (unlike the
+        /// medal popup, which only fires for a top-3 rank) so the Completed
+        /// summary page can show an ordinal even below the podium. Nil until
+        /// the exercise finishes.
+        var achievedRank: Int? = nil
         /// Effective total weight moved so far. For a bodyweight exercise,
         /// each set's weight is ADDED weight — resolve it against `bodyweight`
         /// (nil if not yet known) to get the real per-rep load.
@@ -817,9 +838,18 @@ struct ExercisePageView: View {
     /// Shown when a set number is tapped — every past log of this exercise,
     /// History-tab styled.
     @State private var showFullHistory = false
-    /// Non-nil briefly, 2 seconds after every set is logged, if today's
-    /// total beat one of the three comparisons — drives the celebration
-    /// burst, sized to whichever one it was. Shown together with (and
+    /// Shown once, right when only the last set is left unlogged — reps
+    /// needed at that set's weight to reach gold/silver/bronze. Must be
+    /// dismissed with its own X (see `.interactiveDismissDisabled()`).
+    @State private var showingLastSetMedalPopup = false
+    /// Guards `showingLastSetMedalPopup` so it only ever pops up once per
+    /// exercise instance, even if the last set's own weight/reps get edited
+    /// afterward (which would otherwise re-trigger the "only last set left"
+    /// condition every time).
+    @State private var lastSetMedalPopupShown = false
+    /// Non-nil briefly, 2 seconds after every set is logged, if today's live
+    /// total ranks top-3 for this exercise's plan — drives the celebration
+    /// burst, sized/colored to match the medal. Shown together with (and
     /// centered on) `medalPopupRank`, on the same timing — see
     /// `checkCelebrationEffects`.
     @State private var celebrationTier: CelebrationBurst.Tier?
@@ -1314,6 +1344,56 @@ struct ExercisePageView: View {
         return PaceEngine.medalRank(forNewTotal: total, exerciseName: draft.name,
                                     planKey: draftPlanKey, allLogs: allLogs)
     }
+    /// Uncapped version of `liveMedalRank` — 4th, 5th, etc. once it's not a
+    /// medal. Recorded onto the draft once the exercise is complete (see
+    /// `checkCelebrationEffects`) so the Completed summary page can still
+    /// show a rank even when it didn't crack the top 3.
+    private var liveOverallRank: Int? {
+        let total = draft.loggedTotal(bodyweight: currentBodyweight)
+        guard total > 0 else { return nil }
+        return PaceEngine.rank(forNewTotal: total, exerciseName: draft.name,
+                               planKey: draftPlanKey, allLogs: allLogs)
+    }
+    /// True the instant every set except the last is logged and the last
+    /// one isn't yet — the one moment `checkLastSetPopup` fires. False for
+    /// a single-set exercise (there's no earlier set to have already
+    /// logged, so no "before the last one" moment to warn at).
+    private var isAtLastSetOnly: Bool {
+        guard draft.sets.count >= 2 else { return false }
+        guard draft.sets.dropLast().allSatisfy(\.isLogged) else { return false }
+        return !(draft.sets.last?.isLogged ?? true)
+    }
+    /// Reps needed in the still-unlogged last set (at whatever weight it's
+    /// currently set to) to reach each medal — nil for a tier this plan
+    /// doesn't have enough history for yet, 0 if already secured by the
+    /// sets logged so far. Nil altogether if the last set has no weight to
+    /// compute against.
+    private var lastSetMedalTargets: LastSetMedalTargets? {
+        guard let last = draft.sets.last, let weight = last.weight, weight > 0 else { return nil }
+        let effectiveWeight = draft.isBodyweight ? weight + (currentBodyweight ?? 0) : weight
+        guard effectiveWeight > 0 else { return nil }
+        // draft.loggedTotal only sums sets that already have both a weight
+        // and reps — the still-unlogged last set is naturally excluded.
+        let loggedSoFar = draft.loggedTotal(bodyweight: currentBodyweight)
+        let thresholds = PaceEngine.medalThresholds(exerciseName: draft.name, planKey: draftPlanKey, allLogs: allLogs)
+        func repsNeeded(_ threshold: Double?) -> Int? {
+            guard let threshold else { return nil }
+            let remaining = threshold - loggedSoFar
+            return remaining > 0 ? Int((remaining / effectiveWeight).rounded(.up)) : 0
+        }
+        return LastSetMedalTargets(gold: repsNeeded(thresholds.gold), silver: repsNeeded(thresholds.silver),
+                                   bronze: repsNeeded(thresholds.bronze))
+    }
+    /// Fires exactly once, right when the exercise reaches "every set but
+    /// the last is logged" — see `isAtLastSetOnly` and
+    /// `lastSetMedalPopupShown`. Unlike checkCelebrationEffects, this is
+    /// immediate (no delay): the point is to inform the still-open last set
+    /// before it's logged, not to celebrate something already done.
+    private func checkLastSetPopup() {
+        guard !lastSetMedalPopupShown, isAtLastSetOnly else { return }
+        lastSetMedalPopupShown = true
+        showingLastSetMedalPopup = true
+    }
     /// The +/- step for this exercise's weight fields: the smallest plate
     /// you own for barbell/plate work, or the finest dumbbell increment
     /// (attachments considered) for a dumbbell exercise.
@@ -1442,6 +1522,12 @@ struct ExercisePageView: View {
         .frame(height: pageHeight, alignment: .top)
         .sheet(isPresented: $showFullHistory) {
             ExerciseFullHistoryView(exerciseName: draft.name, allLogs: allLogs)
+        }
+        .sheet(isPresented: $showingLastSetMedalPopup) {
+            LastSetMedalPopupView(exerciseName: draft.name,
+                                  targets: lastSetMedalTargets ?? LastSetMedalTargets(gold: nil, silver: nil, bronze: nil))
+                .presentationDetents([.medium])
+                .interactiveDismissDisabled()
         }
         .overlay {
             if let tier = celebrationTier {
@@ -1721,6 +1807,7 @@ struct ExercisePageView: View {
     /// (even after it was already "done") restarts the countdown.
     private func checkAutoCollapse() {
         checkCelebrationEffects()
+        checkLastSetPopup()
         guard draft.autoCollapseEnabled, isReadyToAutoCollapse else { return }
         collapseGeneration += 1
         let generation = collapseGeneration
@@ -1733,11 +1820,10 @@ struct ExercisePageView: View {
     }
 
     /// 2 seconds after every set is logged, if the exercise is complete,
-    /// briefly shows the medal popup (today's live total ranks top-3 for
-    /// this plan) and the celebration burst (today's total beat one of the
-    /// three comparisons — All-Time Best is the biggest, Best at Weights is
-    /// medium, just beating Previous Workout is the smallest) together, on
-    /// the same timing, centered on each other — independent of
+    /// records its rank for this plan onto the draft (even below the top 3
+    /// — see `liveOverallRank` and the Completed summary page) and, only
+    /// if that rank IS top-3, briefly shows the medal popup together with a
+    /// matching celebration burst, centered on it — independent of
     /// `autoCollapseEnabled` (fires even if the exercise was manually kept
     /// open) and of the 4-second auto-collapse itself.
     private func checkCelebrationEffects() {
@@ -1747,14 +1833,15 @@ struct ExercisePageView: View {
         Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard generation == celebrationGeneration, isReadyToAutoCollapse else { return }
-            let rank = liveMedalRank
-            let tier = bestBeatenTier()
-            guard rank != nil || tier != nil else { return }
+            let overallRank = liveOverallRank
+            draft.achievedRank = overallRank
+            let medal = overallRank.flatMap { $0 <= 3 ? $0 : nil }
+            guard let medal else { return }
             withAnimation {
-                medalPopupRank = rank
-                celebrationTier = tier
+                medalPopupRank = medal
+                celebrationTier = CelebrationBurst.Tier(medalRank: medal)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.95) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 withAnimation {
                     medalPopupRank = nil
                     celebrationTier = nil
@@ -1840,29 +1927,6 @@ struct ExercisePageView: View {
         .padding(.vertical, 8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         .padding(.top, 10)
-    }
-
-    /// The most prestigious comparison today's total actually beat, if any
-    /// — same "beaten" definition PaceRow/RepTotalPaceRow use (today's
-    /// resolved total vs. that comparison's), just picking the best one
-    /// among however many got beaten instead of showing each individually.
-    private func bestBeatenTier() -> CelebrationBurst.Tier? {
-        let loggedTotal = draft.loggedTotal(bodyweight: currentBodyweight)
-        let beatenKinds: Set<ComparisonTarget.Kind>
-        switch draft.goalType {
-        case .fixedSets:
-            beatenKinds = Set(comparisons
-                .filter { $0.hasData && loggedTotal > $0.totalWeightMoved }
-                .map(\.kind))
-        case .repTotal(let target):
-            beatenKinds = Set(repTotalComparisons(target: target)
-                .filter { $0.hasData && loggedTotal > $0.totalWeightMoved }
-                .map(\.kind))
-        }
-        if beatenKinds.contains(.bestForExercise) { return .allTimeBest }
-        if beatenKinds.contains(.bestAtTheseWeights) { return .bestAtWeights }
-        if beatenKinds.contains(.lastLogged) { return .previousWorkout }
-        return nil
     }
 
     /// Shared weight-entry cell for one set — a plate/dumbbell wheel picker
@@ -2212,20 +2276,28 @@ struct ExplosionBurst: View {
     }
 }
 
-// MARK: - Scaled celebration for beating a pace-calculator comparison on
-// exercise completion — bigger the more prestigious the comparison beaten.
+// MARK: - Medal-scaled celebration burst on exercise completion — bigger
+// and longer the more prestigious the medal (gold biggest, bronze smallest).
+// Purely visual — no text label; see MedalPopup for the emoji itself.
 
 struct CelebrationBurst: View {
     enum Tier {
-        case previousWorkout
-        case bestAtWeights
-        case allTimeBest
+        case bronze, silver, gold
+
+        init?(medalRank: Int?) {
+            switch medalRank {
+            case 1: self = .gold
+            case 2: self = .silver
+            case 3: self = .bronze
+            default: return nil
+            }
+        }
 
         var particleCount: Int {
             switch self {
-            case .previousWorkout: return 10
-            case .bestAtWeights: return 20
-            case .allTimeBest: return 36
+            case .bronze: return 16
+            case .silver: return 28
+            case .gold: return 48
             }
         }
         // Radii are large enough to clear a 135pt medal emoji (see
@@ -2233,30 +2305,23 @@ struct CelebrationBurst: View {
         // overlapping its glyph.
         var radius: Double {
             switch self {
-            case .previousWorkout: return 85
-            case .bestAtWeights: return 105
-            case .allTimeBest: return 130
+            case .bronze: return 130
+            case .silver: return 160
+            case .gold: return 200
             }
         }
         var duration: Double {
             switch self {
-            case .previousWorkout: return 0.675
-            case .bestAtWeights: return 0.975
-            case .allTimeBest: return 1.35
-            }
-        }
-        var label: String? {
-            switch self {
-            case .previousWorkout: return nil
-            case .bestAtWeights: return "PR! 🔥"
-            case .allTimeBest: return "ALL-TIME BEST! 🏆"
+            case .bronze: return 1.0
+            case .silver: return 1.4
+            case .gold: return 1.8
             }
         }
         var colors: [Color] {
             switch self {
-            case .previousWorkout: return [.green]
-            case .bestAtWeights: return [.green, .yellow]
-            case .allTimeBest: return [.yellow, .orange, .red]
+            case .bronze: return [.orange, .brown]
+            case .silver: return [.gray, .white]
+            case .gold: return [.yellow, .orange, .red]
             }
         }
     }
@@ -2273,16 +2338,6 @@ struct CelebrationBurst: View {
                     .offset(expanded ? offset(for: i) : .zero)
                     .opacity(expanded ? 0 : 1)
                     .scaleEffect(expanded ? 0.3 : 1)
-            }
-            if let label = tier.label {
-                Text(label)
-                    .font(.headline.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.black.opacity(0.75), in: Capsule())
-                    .opacity(expanded ? 1 : 0)
-                    .scaleEffect(expanded ? 1 : 0.5)
             }
         }
         .onAppear {
@@ -2312,17 +2367,80 @@ struct MedalPopup: View {
             .scaleEffect(scale)
             .opacity(opacity)
             .onAppear {
-                withAnimation(.spring(response: 0.6, dampingFraction: 0.55)) {
+                withAnimation(.spring(response: 0.9, dampingFraction: 0.55)) {
                     scale = 1.15
                     opacity = 1
                 }
-                withAnimation(.easeOut(duration: 0.3).delay(0.525)) {
+                withAnimation(.easeOut(duration: 0.45).delay(0.8)) {
                     scale = 1.0
                 }
-                withAnimation(.easeIn(duration: 0.525).delay(1.425)) {
+                withAnimation(.easeIn(duration: 0.8).delay(2.2)) {
                     opacity = 0
                 }
             }
+    }
+}
+
+/// Reps needed in the still-unlogged last set to reach each medal — see
+/// `ExercisePageView.lastSetMedalTargets`.
+struct LastSetMedalTargets {
+    let gold: Int?
+    let silver: Int?
+    let bronze: Int?
+}
+
+/// Shown once, right as the exercise reaches its last unlogged set —
+/// reps needed at that set's current weight to hit gold/silver/bronze.
+/// Dismissed only via its own X (see `.interactiveDismissDisabled()` where
+/// it's presented).
+struct LastSetMedalPopupView: View {
+    @Environment(\.dismiss) private var dismiss
+    let exerciseName: String
+    let targets: LastSetMedalTargets
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            VStack(spacing: 4) {
+                Text("Last Set!").font(.title2.bold())
+                Text(exerciseName).font(.subheadline).foregroundStyle(.secondary)
+            }
+            VStack(spacing: 10) {
+                medalRow(emoji: "🥇", label: "Gold", reps: targets.gold, color: .yellow)
+                medalRow(emoji: "🥈", label: "Silver", reps: targets.silver, color: .gray)
+                medalRow(emoji: "🥉", label: "Bronze", reps: targets.bronze, color: .orange)
+            }
+            Spacer()
+        }
+        .padding()
+    }
+
+    @ViewBuilder
+    private func medalRow(emoji: String, label: String, reps: Int?, color: Color) -> some View {
+        HStack {
+            Text(emoji).font(.title)
+            Text(label).font(.headline)
+            Spacer()
+            if let reps {
+                Text(reps == 0 ? "Already locked in! 🔥" : "\(reps) more rep\(reps == 1 ? "" : "s")")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(reps == 0 ? .green : .primary)
+            } else {
+                Text("No history yet").font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -2808,6 +2926,15 @@ struct CompletedSummaryPageView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(draft.name).font(.headline)
+                if let rank = draft.achievedRank {
+                    if let emoji = medalEmoji(rank) {
+                        Text(emoji).font(.title3)
+                    } else {
+                        Text(ordinalLabel(rank))
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
                 Button {
                     // Reopening moves it back to its own page and out of

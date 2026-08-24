@@ -420,4 +420,42 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertNil(PaceEngine.medalRank(forNewTotal: 100, exerciseName: "Bench Press",
                                           planKey: planKey, allLogs: allLogs))
     }
+
+    /// `PaceEngine.rank(forNewTotal:...)` — the uncapped counterpart to
+    /// `medalRank(forNewTotal:...)`, used to show "4th" etc. once a
+    /// finished exercise didn't crack the top 3.
+    @MainActor
+    func testRankForNewTotalIsUncappedPastThirdPlace() {
+        let context = makeContext()
+        log("Bench Press", weights: [150, 150, 150], daysAgo: 28, context: context) // 3600
+        log("Bench Press", weights: [145, 145, 145], daysAgo: 21, context: context) // 3480
+        log("Bench Press", weights: [140, 140, 140], daysAgo: 14, context: context) // 3360
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context)  // 3240
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+        let planKey = "Bench Press|8/8/8"
+
+        XCTAssertEqual(PaceEngine.rank(forNewTotal: 4000, exerciseName: "Bench Press",
+                                       planKey: planKey, allLogs: allLogs), 1)
+        XCTAssertEqual(PaceEngine.rank(forNewTotal: 3360, exerciseName: "Bench Press",
+                                       planKey: planKey, allLogs: allLogs), 3)
+        // Below every existing total -> 5th (unlike medalRank, never nil).
+        XCTAssertEqual(PaceEngine.rank(forNewTotal: 100, exerciseName: "Bench Press",
+                                       planKey: planKey, allLogs: allLogs), 5)
+    }
+
+    /// `PaceEngine.medalThresholds(...)` — the top-3 distinct totals a
+    /// last-set popup compares the still-unlogged final set against.
+    @MainActor
+    func testMedalThresholdsReturnsTopThreeDistinctTotalsAndNilBeyondHistory() {
+        let context = makeContext()
+        log("Bench Press", weights: [150, 150, 150], daysAgo: 28, context: context) // 3600
+        log("Bench Press", weights: [145, 145, 145], daysAgo: 21, context: context) // 3480
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+        let planKey = "Bench Press|8/8/8"
+
+        let thresholds = PaceEngine.medalThresholds(exerciseName: "Bench Press", planKey: planKey, allLogs: allLogs)
+        XCTAssertEqual(thresholds.gold, 3600)
+        XCTAssertEqual(thresholds.silver, 3480)
+        XCTAssertNil(thresholds.bronze, "only 2 sessions exist yet, so there's no 3rd-place total")
+    }
 }

@@ -140,13 +140,39 @@ enum PaceEngine {
         return medalRank(for: total, among: topTotals)
     }
 
+    /// Same idea as `medalRank(forNewTotal:...)`, but uncapped — 4th, 5th,
+    /// etc. once it's ranked past a medal, instead of nil. Used to show an
+    /// ordinal ("4th") in place of a medal once a finished exercise didn't
+    /// crack the top 3.
+    static func rank(forNewTotal total: Double, exerciseName: String, planKey: String, allLogs: [ExerciseLog]) -> Int {
+        let planLogs = allLogs.filter { $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty }
+        let topTotals = Array(Set(planLogs.map(\.totalWeightMoved) + [total])).sorted(by: >)
+        return rank(for: total, among: topTotals) ?? topTotals.count
+    }
+
+    /// This plan's top-3 distinct historical totals (gold/silver/bronze),
+    /// highest first — nil entries once history doesn't go that deep yet.
+    /// Used to tell the user how many reps they need in their last set to
+    /// reach each one (see WorkoutLogView's last-set popup).
+    static func medalThresholds(exerciseName: String, planKey: String, allLogs: [ExerciseLog]) -> (gold: Double?, silver: Double?, bronze: Double?) {
+        let planLogs = allLogs.filter { $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty }
+        let topTotals = Array(Set(planLogs.map(\.totalWeightMoved))).sorted(by: >)
+        return (topTotals[safe: 0], topTotals[safe: 1], topTotals[safe: 2])
+    }
+
     /// Which medal tier (1 = gold, 2 = silver, 3 = bronze) `total` earns
     /// among `topTotals` — the plan's distinct totals sorted highest-first.
     /// Nil once ranked below 3rd, or if `total` isn't among them at all.
     private static func medalRank(for total: Double, among topTotals: [Double]) -> Int? {
-        guard let index = topTotals.firstIndex(of: total) else { return nil }
-        let rank = index + 1
-        return rank <= 3 ? rank : nil
+        guard let r = rank(for: total, among: topTotals), r <= 3 else { return nil }
+        return r
+    }
+
+    /// Uncapped rank (1-based) `total` earns among `topTotals` — the plan's
+    /// distinct totals sorted highest-first. Nil only if `total` isn't
+    /// among them at all.
+    private static func rank(for total: Double, among topTotals: [Double]) -> Int? {
+        topTotals.firstIndex(of: total).map { $0 + 1 }
     }
 
     /// Whether every set in this log hit or beat its own target rep count —
