@@ -186,6 +186,9 @@ struct WorkoutLogView: View {
         /// summary page can show an ordinal even below the podium. Nil until
         /// the exercise finishes.
         var achievedRank: Int? = nil
+        /// True if at least one set fell short of its own target reps —
+        /// recorded alongside `achievedRank`. Mirrors ExerciseLog.missedTarget.
+        var missedTarget: Bool = false
         /// Effective total weight moved so far. For a bodyweight exercise,
         /// each set's weight is ADDED weight — resolve it against `bodyweight`
         /// (nil if not yet known) to get the real per-rep load.
@@ -679,6 +682,15 @@ struct WorkoutLogView: View {
 
     // MARK: Saving + AI
 
+    /// True once every set is logged but at least one fell short of its own
+    /// target reps. Mirrors ExercisePageView.missedAnyTarget — duplicated
+    /// here since finishWorkout saves fresh from the ExerciseDraft rather
+    /// than trusting the in-progress page's own transient computation.
+    private func missedAnyTarget(for d: ExerciseDraft) -> Bool {
+        guard case .fixedSets = d.goalType, d.targetReps.count == d.sets.count else { return false }
+        return zip(d.sets, d.targetReps).contains { ($0.reps ?? 0) < $1 }
+    }
+
     private func finishWorkout() {
         // Must be read BEFORE the new session is linked to the phase, since
         // it reflects slot-fill state as of right now.
@@ -726,6 +738,7 @@ struct WorkoutLogView: View {
             // for why this isn't just recomputed live in History instead.
             log.achievedRank = PaceEngine.rank(forNewTotal: log.totalWeightMoved, exerciseName: d.name,
                                                planKey: log.planKey, allLogs: allExerciseLogs)
+            log.missedTarget = missedAnyTarget(for: d)
 
             // Recap + next-cycle progression — skip during a deload (weights
             // are intentionally cut, so progression math doesn't apply) or
@@ -1886,6 +1899,7 @@ struct ExercisePageView: View {
             guard generation == celebrationGeneration, isReadyToAutoCollapse else { return }
             let overallRank = liveOverallRank
             draft.achievedRank = overallRank
+            draft.missedTarget = missedAnyTarget
             if missedAnyTarget {
                 withAnimation { showingMissedPopup = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
@@ -3049,6 +3063,11 @@ struct CompletedSummaryPageView: View {
             HStack {
                 Text(draft.name).font(.headline)
                 if let rank = draft.achievedRank {
+                    if draft.missedTarget {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
                     if let emoji = medalEmoji(rank) {
                         Text(emoji).font(.title3)
                     } else {

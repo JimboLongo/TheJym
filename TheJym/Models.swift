@@ -848,6 +848,10 @@ final class ExerciseLog {
     /// that reshuffles as new PRs happen. Nil for anything not logged
     /// through that live flow (e.g. imported history, a rest-day activity).
     var achievedRank: Int? = nil
+    /// True if at least one set fell short of its own target reps — frozen
+    /// at save time alongside `achievedRank`. Always false for a repTotal
+    /// exercise (reaching its total is already required to finish it).
+    var missedTarget: Bool = false
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
     var sets: [SetLog] = []

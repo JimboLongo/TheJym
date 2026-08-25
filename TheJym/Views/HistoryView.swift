@@ -271,6 +271,11 @@ struct HistoryView: View {
             HStack(spacing: 6) {
                 Text(log.exerciseName).font(.subheadline.weight(.semibold))
                 if let rank = log.achievedRank {
+                    if log.missedTarget {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption2)
+                    }
                     if let emoji = medalEmoji(rank) {
                         Text(emoji).font(.subheadline)
                     } else {
