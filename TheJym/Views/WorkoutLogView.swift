@@ -722,6 +722,10 @@ struct WorkoutLogView: View {
                 set.exerciseLog = log
                 context.insert(set)
             }
+            // Frozen at save time — see ExerciseLog.achievedRank's own doc
+            // for why this isn't just recomputed live in History instead.
+            log.achievedRank = PaceEngine.rank(forNewTotal: log.totalWeightMoved, exerciseName: d.name,
+                                               planKey: log.planKey, allLogs: allExerciseLogs)
 
             // Recap + next-cycle progression — skip during a deload (weights
             // are intentionally cut, so progression math doesn't apply) or

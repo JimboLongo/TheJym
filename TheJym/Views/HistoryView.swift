@@ -270,6 +270,15 @@ struct HistoryView: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(log.exerciseName).font(.subheadline.weight(.semibold))
+                if let rank = log.achievedRank {
+                    if let emoji = medalEmoji(rank) {
+                        Text(emoji).font(.subheadline)
+                    } else {
+                        Text(ordinalLabel(rank))
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if case .repTotal(let target) = log.goalType {
                     Text("\(log.repTotalSoFar)/\(target) reps")
                         .font(.caption.bold())

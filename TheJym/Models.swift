@@ -842,6 +842,12 @@ final class ExerciseLog {
     /// holds that activity's distance (not a lifted weight), and edits in
     /// History write through to keep both in sync.
     var restDayActivity: RestDayActivity?
+    /// This session's rank (1st, 2nd, 3rd, or lower) for its plan's total
+    /// weight moved, frozen at save time (WorkoutLogView.finishWorkout) —
+    /// a historical fact about what it earned THEN, not a live standing
+    /// that reshuffles as new PRs happen. Nil for anything not logged
+    /// through that live flow (e.g. imported history, a rest-day activity).
+    var achievedRank: Int? = nil
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
     var sets: [SetLog] = []
