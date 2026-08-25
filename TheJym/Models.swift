@@ -1089,12 +1089,17 @@ final class TimerPreset {
     var seconds: Double
     var repeatCount: Int
     var order: Int
+    /// A rest timer between work timers — plays a low continuous tone for
+    /// its own duration instead of staying silent, and its final 3-2-1
+    /// countdown beeps rise in pitch (1,2,3) instead of falling.
+    var isRest: Bool = false
 
-    init(name: String, seconds: Double, repeatCount: Int = 1, order: Int) {
+    init(name: String, seconds: Double, repeatCount: Int = 1, order: Int, isRest: Bool = false) {
         self.name = name
         self.seconds = seconds
         self.repeatCount = max(1, repeatCount)
         self.order = order
+        self.isRest = isRest
     }
 }
 

@@ -28,6 +28,10 @@ struct TimerSegment: Codable, Identifiable, Equatable {
     var repCount: Int
     var presetIndex: Int   // 0-based, this timer's position among the template's timers
     var presetCount: Int
+    /// A rest timer between work timers — plays a low continuous tone for
+    /// its own duration, and its final 3-2-1 countdown beeps rise in pitch
+    /// (1,2,3) instead of falling. See TimerAudioEngine.
+    var isRest: Bool = false
 }
 
 private struct TimerRunState: Codable {
@@ -54,6 +58,14 @@ final class TimerEngine: NSObject, ObservableObject {
 
     private var ticker: Timer?
     private let storageKey = "TimerEngine.runState"
+    /// Which of {1,2,3} have already been beeped for the CURRENT segment —
+    /// cleared every time the segment changes, so each only beeps once.
+    private var beepedRemaining: Set<Int> = []
+    /// Tracks whether the rest tone is actually playing, independent of
+    /// AVAudioPlayerNode's own state, so `updateLoopTone` only calls
+    /// start/stop on real transitions instead of restarting (and audibly
+    /// stuttering) it every tick.
+    private var loopIsPlaying = false
 
     private override init() {
         super.init()
@@ -86,7 +98,7 @@ final class TimerEngine: NSObject, ObservableObject {
     /// Starts a fresh run from a template's own timers — replaces whatever
     /// run (if any) was already active. `presets` must already be in the
     /// order they should run.
-    func start(templateName: String, presets: [(name: String, seconds: Double, repeatCount: Int)], continuous: Bool) {
+    func start(templateName: String, presets: [(name: String, seconds: Double, repeatCount: Int, isRest: Bool)], continuous: Bool) {
         cancelPendingNotifications(count: segments.count)
         let flat = Self.flatten(presets)
         guard !flat.isEmpty else { return }
@@ -95,8 +107,10 @@ final class TimerEngine: NSObject, ObservableObject {
         self.continuous = continuous
         self.currentIndex = 0
         self.segmentEndDate = Date().addingTimeInterval(flat[0].seconds)
+        beepedRemaining = []
         saveState()
         startTicking()
+        updateLoopTone()
 
         if continuous {
             // No manual gates ahead, so every fire date is already knowable
@@ -115,7 +129,9 @@ final class TimerEngine: NSObject, ObservableObject {
         guard isAwaitingManualStart, let seg = currentSegment else { return }
         let end = Date().addingTimeInterval(seg.seconds)
         segmentEndDate = end
+        beepedRemaining = []
         saveState()
+        updateLoopTone()
         scheduleSingle(seg, index: currentIndex, fireDate: end)
     }
 
@@ -127,6 +143,7 @@ final class TimerEngine: NSObject, ObservableObject {
         currentIndex = 0
         segmentEndDate = nil
         stopTicking()
+        updateLoopTone()
         UserDefaults.standard.removeObject(forKey: storageKey)
     }
 
@@ -157,45 +174,87 @@ final class TimerEngine: NSObject, ObservableObject {
     /// long gap (relaunch, time spent backgrounded). Continuous mode can
     /// walk through several already-completed segments at once; non-
     /// continuous only ever advances past the ONE currently-active segment,
-    /// then waits for startNext().
+    /// then waits for startNext(). Always ends by checking the countdown
+    /// beeps and the rest-tone loop against wherever it landed.
     private func tick() {
         tickToken += 1
-        guard let end = segmentEndDate, Date() >= end else { return }
+        handleCountdownBeeps()
 
-        if continuous {
-            var cursor = end
-            var idx = currentIndex
-            while Date() >= cursor {
-                idx += 1
-                guard segments.indices.contains(idx) else {
-                    currentIndex = segments.count
-                    segmentEndDate = nil
-                    saveState()
-                    stopTicking()
-                    return
+        if let end = segmentEndDate, Date() >= end {
+            if continuous {
+                var cursor = end
+                var idx = currentIndex
+                while Date() >= cursor {
+                    idx += 1
+                    guard segments.indices.contains(idx) else {
+                        currentIndex = segments.count
+                        segmentEndDate = nil
+                        saveState()
+                        stopTicking()
+                        updateLoopTone()
+                        return
+                    }
+                    cursor = cursor.addingTimeInterval(segments[idx].seconds)
                 }
-                cursor = cursor.addingTimeInterval(segments[idx].seconds)
+                currentIndex = idx
+                segmentEndDate = cursor
+            } else {
+                currentIndex += 1
+                segmentEndDate = nil
+                if currentIndex >= segments.count { stopTicking() }
             }
-            currentIndex = idx
-            segmentEndDate = cursor
-        } else {
-            currentIndex += 1
-            segmentEndDate = nil
-            if currentIndex >= segments.count { stopTicking() }
+            beepedRemaining = []
+            saveState()
         }
-        saveState()
+        updateLoopTone()
+    }
+
+    // MARK: Tones — rest-timer loop and the 3-2-1 / 1-2-3 countdown beeps
+
+    /// Fires once each for the 3rd, 2nd, and 1st second remaining in the
+    /// current segment — descending pitch (3,2,1) for a work timer, rising
+    /// pitch (1,2,3) for a rest timer, so the two feel distinctly different
+    /// even without looking at the screen.
+    private func handleCountdownBeeps() {
+        guard let seg = currentSegment, let end = segmentEndDate else { return }
+        let remaining = Int(end.timeIntervalSinceNow.rounded())
+        guard (1...3).contains(remaining), !beepedRemaining.contains(remaining) else { return }
+        beepedRemaining.insert(remaining)
+        let frequency: Double
+        if seg.isRest {
+            frequency = remaining == 3 ? 440 : remaining == 2 ? 660 : 880
+        } else {
+            frequency = remaining == 3 ? 880 : remaining == 2 ? 660 : 440
+        }
+        TimerAudioEngine.shared.playBeep(frequency: frequency)
+    }
+
+    /// Starts/stops the continuous low tone to match whether the segment
+    /// actually counting down right now is a rest timer — a no-op if it's
+    /// already in the right state, so this can be called on every tick
+    /// without restarting (and stuttering) an already-playing loop.
+    private func updateLoopTone() {
+        let shouldPlay = isActive && !isFinished && currentSegment?.isRest == true && segmentEndDate != nil
+        guard shouldPlay != loopIsPlaying else { return }
+        loopIsPlaying = shouldPlay
+        if shouldPlay {
+            TimerAudioEngine.shared.startLoop()
+        } else {
+            TimerAudioEngine.shared.stopLoop()
+        }
     }
 
     // MARK: Flattening
 
-    private static func flatten(_ presets: [(name: String, seconds: Double, repeatCount: Int)]) -> [TimerSegment] {
+    private static func flatten(_ presets: [(name: String, seconds: Double, repeatCount: Int, isRest: Bool)]) -> [TimerSegment] {
         var out: [TimerSegment] = []
         for (i, preset) in presets.enumerated() {
             let reps = max(1, preset.repeatCount)
             for rep in 1...reps {
                 out.append(TimerSegment(presetName: preset.name, seconds: preset.seconds,
                                         repIndex: rep, repCount: reps,
-                                        presetIndex: i, presetCount: presets.count))
+                                        presetIndex: i, presetCount: presets.count,
+                                        isRest: preset.isRest))
             }
         }
         return out

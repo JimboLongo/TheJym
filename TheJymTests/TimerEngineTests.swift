@@ -3,10 +3,10 @@
 //  TheJymTests
 //
 //  Covers the pure sequencing logic — flattening a list of (name, seconds,
-//  repeatCount) timers into the running order, and the resulting
-//  segment/total bookkeeping. The actual wall-clock countdown and
-//  notification scheduling aren't exercised here (TimerEngine has no
-//  injectable clock), so this focuses on what's deterministic.
+//  repeatCount, isRest) timers into the running order, and the resulting
+//  segment/total bookkeeping. The actual wall-clock countdown, tone
+//  playback, and notification scheduling aren't exercised here (TimerEngine
+//  has no injectable clock), so this focuses on what's deterministic.
 //
 
 import XCTest
@@ -22,8 +22,8 @@ final class TimerEngineTests: XCTestCase {
     func testFlattensEachPresetRepeatedItsOwnRepeatCountInOrder() {
         let engine = TimerEngine.shared
         engine.start(templateName: "Test",
-                     presets: [(name: "Sprint", seconds: 30, repeatCount: 3),
-                              (name: "Cooldown", seconds: 60, repeatCount: 1)],
+                     presets: [(name: "Sprint", seconds: 30, repeatCount: 3, isRest: false),
+                              (name: "Cooldown", seconds: 60, repeatCount: 1, isRest: false)],
                      continuous: true)
 
         XCTAssertEqual(engine.segments.count, 4)
@@ -37,8 +37,8 @@ final class TimerEngineTests: XCTestCase {
     func testTotalSecondsSumsAcrossAllRepeats() {
         let engine = TimerEngine.shared
         engine.start(templateName: "Test",
-                     presets: [(name: "Work", seconds: 20, repeatCount: 2),
-                              (name: "Rest", seconds: 10, repeatCount: 3)],
+                     presets: [(name: "Work", seconds: 20, repeatCount: 2, isRest: false),
+                              (name: "Rest", seconds: 10, repeatCount: 3, isRest: true)],
                      continuous: false)
         // (20 * 2) + (10 * 3) = 70
         XCTAssertEqual(engine.totalSeconds, 70, accuracy: 1e-9)
@@ -47,7 +47,7 @@ final class TimerEngineTests: XCTestCase {
     func testStartBeginsTheFirstSegmentImmediately() {
         let engine = TimerEngine.shared
         engine.start(templateName: "Test",
-                     presets: [(name: "Only", seconds: 45, repeatCount: 1)],
+                     presets: [(name: "Only", seconds: 45, repeatCount: 1, isRest: false)],
                      continuous: false)
 
         XCTAssertTrue(engine.isActive)
@@ -66,7 +66,7 @@ final class TimerEngineTests: XCTestCase {
     func testStopClearsAllState() {
         let engine = TimerEngine.shared
         engine.start(templateName: "Test",
-                     presets: [(name: "Only", seconds: 10, repeatCount: 1)],
+                     presets: [(name: "Only", seconds: 10, repeatCount: 1, isRest: false)],
                      continuous: true)
         XCTAssertTrue(engine.isActive)
 
@@ -80,9 +80,18 @@ final class TimerEngineTests: XCTestCase {
     func testRepeatCountBelowOneIsTreatedAsOne() {
         let engine = TimerEngine.shared
         engine.start(templateName: "Test",
-                     presets: [(name: "Zero", seconds: 15, repeatCount: 0)],
+                     presets: [(name: "Zero", seconds: 15, repeatCount: 0, isRest: false)],
                      continuous: true)
         XCTAssertEqual(engine.segments.count, 1)
         XCTAssertEqual(engine.segments.first?.repCount, 1)
+    }
+
+    func testIsRestPropagatesToEverySegmentFromItsOwnPreset() {
+        let engine = TimerEngine.shared
+        engine.start(templateName: "Test",
+                     presets: [(name: "Sprint", seconds: 30, repeatCount: 2, isRest: false),
+                              (name: "Rest", seconds: 15, repeatCount: 2, isRest: true)],
+                     continuous: true)
+        XCTAssertEqual(engine.segments.map(\.isRest), [false, false, true, true])
     }
 }

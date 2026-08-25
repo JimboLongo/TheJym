@@ -163,6 +163,10 @@ struct TimerTemplateDetailView: View {
                             Text("\(index + 1).")
                                 .foregroundStyle(.secondary)
                                 .frame(width: 20, alignment: .leading)
+                            if preset.isRest {
+                                Image(systemName: "figure.cooldown")
+                                    .foregroundStyle(.blue)
+                            }
                             Text(preset.name)
                             Spacer()
                             Text(preset.repeatCount > 1
@@ -188,18 +192,19 @@ struct TimerTemplateDetailView: View {
         .toolbar { EditButton() }
         .sheet(item: $editingPreset) { preset in
             TimerPresetEditSheet(draft: TimerPresetDraft(name: preset.name, seconds: preset.seconds,
-                                                          repeatCount: preset.repeatCount)) { updated in
-                preset.name = updated.name.isEmpty ? "Timer" : updated.name
+                                                          repeatCount: preset.repeatCount, isRest: preset.isRest)) { updated in
+                preset.name = updated.name.isEmpty ? (updated.isRest ? "Rest" : "Timer") : updated.name
                 preset.seconds = updated.seconds
                 preset.repeatCount = updated.repeatCount
+                preset.isRest = updated.isRest
                 try? context.save()
             }
         }
         .sheet(isPresented: $showingAddSheet) {
             TimerPresetEditSheet(draft: nil) { draft in
-                let preset = TimerPreset(name: draft.name.isEmpty ? "Timer" : draft.name,
+                let preset = TimerPreset(name: draft.name.isEmpty ? (draft.isRest ? "Rest" : "Timer") : draft.name,
                                          seconds: draft.seconds, repeatCount: draft.repeatCount,
-                                         order: template.presets.count)
+                                         order: template.presets.count, isRest: draft.isRest)
                 preset.template = template
                 context.insert(preset)
                 try? context.save()
@@ -224,11 +229,17 @@ struct TimerTemplateDetailView: View {
     private var runningSection: some View {
         if let seg = engine.currentSegment {
             VStack(alignment: .leading, spacing: 6) {
-                Text(seg.presetName).font(.headline)
+                HStack(spacing: 6) {
+                    if seg.isRest {
+                        Image(systemName: "figure.cooldown").foregroundStyle(.blue)
+                    }
+                    Text(seg.presetName).font(.headline)
+                }
                 Text("Timer \(seg.presetIndex + 1)/\(seg.presetCount) · Rep \(seg.repIndex)/\(seg.repCount)")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(Formatters.duration(engine.remainingSeconds))
                     .font(.system(size: 44, weight: .bold, design: .monospaced))
+                    .foregroundStyle(seg.isRest ? .blue : .primary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 4)
                 if engine.isAwaitingManualStart {
@@ -256,7 +267,7 @@ struct TimerTemplateDetailView: View {
 
     private func startRun() {
         engine.start(templateName: template.name,
-                     presets: template.orderedPresets.map { (name: $0.name, seconds: $0.seconds, repeatCount: $0.repeatCount) },
+                     presets: template.orderedPresets.map { (name: $0.name, seconds: $0.seconds, repeatCount: $0.repeatCount, isRest: $0.isRest) },
                      continuous: template.continuous)
     }
 }
@@ -269,6 +280,8 @@ struct TimerPresetDraft: Equatable {
     var name: String = ""
     var seconds: Double = 30
     var repeatCount: Int = 1
+    /// A rest timer between work timers — see TimerPreset.isRest.
+    var isRest: Bool = false
 }
 
 /// Add/edit sheet for one timer — independent minutes and seconds wheels
@@ -279,6 +292,7 @@ private struct TimerPresetEditSheet: View {
     @State private var minutes: Int
     @State private var seconds: Int
     @State private var repeatCount: Int
+    @State private var isRest: Bool
     private let isNew: Bool
     let onSave: (TimerPresetDraft) -> Void
 
@@ -292,6 +306,7 @@ private struct TimerPresetEditSheet: View {
         _minutes = State(initialValue: Int(d.seconds) / 60)
         _seconds = State(initialValue: Int(d.seconds) % 60)
         _repeatCount = State(initialValue: d.repeatCount)
+        _isRest = State(initialValue: d.isRest)
         isNew = draft == nil
         self.onSave = onSave
     }
@@ -299,6 +314,11 @@ private struct TimerPresetEditSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Picker("Type", selection: $isRest) {
+                    Text("Timer").tag(false)
+                    Text("Rest").tag(true)
+                }
+                .pickerStyle(.segmented)
                 TextField("Name (e.g. Sprint, Rest)", text: $name)
                 HStack(spacing: 0) {
                     Picker("Minutes", selection: $minutes) {
@@ -327,7 +347,7 @@ private struct TimerPresetEditSheet: View {
                     Button("Save") {
                         let total = Double(minutes * 60 + seconds)
                         onSave(TimerPresetDraft(name: name.trimmingCharacters(in: .whitespaces),
-                                                seconds: total, repeatCount: repeatCount))
+                                                seconds: total, repeatCount: repeatCount, isRest: isRest))
                         dismiss()
                     }
                     .disabled(minutes == 0 && seconds == 0)
