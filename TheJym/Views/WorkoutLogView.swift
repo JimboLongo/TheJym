@@ -2339,14 +2339,14 @@ struct CelebrationBurst: View {
             case .gold: return 48
             }
         }
-        // Radii are large enough to clear a 135pt medal emoji (see
+        // Radii are large enough to clear a 203pt medal emoji (see
         // MedalPopup) so the burst visibly surrounds it rather than
         // overlapping its glyph.
         var radius: Double {
             switch self {
-            case .bronze: return 130
-            case .silver: return 160
-            case .gold: return 200
+            case .bronze: return 195
+            case .silver: return 240
+            case .gold: return 300
             }
         }
         var duration: Double {
@@ -2373,7 +2373,7 @@ struct CelebrationBurst: View {
             ForEach(0..<tier.particleCount, id: \.self) { i in
                 Circle()
                     .fill(tier.colors[i % tier.colors.count])
-                    .frame(width: 6, height: 6)
+                    .frame(width: 9, height: 9)
                     .offset(expanded ? offset(for: i) : .zero)
                     .opacity(expanded ? 0 : 1)
                     .scaleEffect(expanded ? 0.3 : 1)
@@ -2402,7 +2402,7 @@ struct MedalPopup: View {
 
     var body: some View {
         Text(emoji)
-            .font(.system(size: 135))
+            .font(.system(size: 203))
             .scaleEffect(scale)
             .opacity(opacity)
             .onAppear {
