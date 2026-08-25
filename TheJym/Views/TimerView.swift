@@ -178,6 +178,13 @@ struct TimerTemplateDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.primary)
+                    .contextMenu {
+                        Button {
+                            duplicatePreset(preset)
+                        } label: {
+                            Label("Duplicate", systemImage: "plus.square.on.square")
+                        }
+                    }
                 }
                 .onDelete(perform: deletePresets)
                 .onMove(perform: movePresets)
@@ -223,6 +230,19 @@ struct TimerTemplateDetailView: View {
         var ordered = template.orderedPresets
         ordered.move(fromOffsets: from, toOffset: to)
         for (i, preset) in ordered.enumerated() { preset.order = i }
+        try? context.save()
+    }
+
+    /// Long-press a timer to copy it, inserted right after the original.
+    private func duplicatePreset(_ preset: TimerPreset) {
+        var ordered = template.orderedPresets
+        guard let idx = ordered.firstIndex(where: { $0.persistentModelID == preset.persistentModelID }) else { return }
+        let copy = TimerPreset(name: preset.name, seconds: preset.seconds,
+                               repeatCount: preset.repeatCount, order: 0, isRest: preset.isRest)
+        copy.template = template
+        context.insert(copy)
+        ordered.insert(copy, at: idx + 1)
+        for (i, p) in ordered.enumerated() { p.order = i }
         try? context.save()
     }
 
