@@ -162,7 +162,8 @@ struct TimerTemplateDetailView: View {
                         HStack {
                             Text("\(index + 1).")
                                 .foregroundStyle(.secondary)
-                                .frame(width: 20, alignment: .leading)
+                                .fixedSize()
+                                .frame(width: 28, alignment: .leading)
                             if preset.isRest {
                                 Image(systemName: "figure.cooldown")
                                     .foregroundStyle(.blue)
