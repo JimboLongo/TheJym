@@ -274,7 +274,7 @@ struct HistoryView: View {
                     if let emoji = medalEmoji(rank) {
                         Text(emoji).font(.subheadline)
                     } else {
-                        Text(ordinalLabel(rank))
+                        Text("\(ordinalLabel(rank)) Best")
                             .font(.caption2.bold())
                             .foregroundStyle(.secondary)
                     }

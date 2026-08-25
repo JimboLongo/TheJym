@@ -859,17 +859,24 @@ struct ExercisePageView: View {
     /// picker fires) so the popup only actually shows once the screen's
     /// been still for a full 2 seconds, not mid-scroll.
     @State private var lastSetPopupGeneration = 0
-    /// Non-nil briefly, 2 seconds after every set is logged, if today's live
-    /// total ranks top-3 for this exercise's plan — drives the celebration
-    /// burst, sized/colored to match the medal. Shown together with (and
-    /// centered on) `medalPopupRank`, on the same timing — see
-    /// `checkCelebrationEffects`.
+    /// Non-nil briefly, after every set is logged, if today's live total
+    /// ranks top-3 for this exercise's plan — drives the celebration burst,
+    /// sized/colored to match the medal (nil, no burst, for a rank below
+    /// 3rd). Shown together with (and centered on) `rankPopupRank`, on the
+    /// same timing — see `checkCelebrationEffects`.
     @State private var celebrationTier: CelebrationBurst.Tier?
-    /// Non-nil briefly, 2 seconds after every set is logged, if today's live
-    /// total ranks top-3 for this exercise's plan — drives the big medal
-    /// popup. Independent of the 4-second auto-collapse timer itself: this
-    /// can pop while the exercise is still open, as soon as it's complete.
-    @State private var medalPopupRank: Int?
+    /// Non-nil briefly, after every set is logged, once the exercise is
+    /// complete — drives the big medal-or-"Nth Best" popup (RankPopupView),
+    /// covering every rank, not just the top 3. Independent of the
+    /// 4-second auto-collapse timer itself: this can pop while the
+    /// exercise is still open, as soon as it's complete. Shown after
+    /// `showingMissedPopup`, if that also fired.
+    @State private var rankPopupRank: Int?
+    /// Briefly true, right before `rankPopupRank`, if the exercise was
+    /// complete but fell short of its own target reps on at least one set
+    /// — a big red X + "MISSED", shown first so a rank popup right after
+    /// doesn't read as if the target was actually hit.
+    @State private var showingMissedPopup = false
     /// Guards `checkCelebrationEffects`'s delayed check the same way
     /// `collapseGeneration` guards auto-collapse — bumped on every call so a
     /// stale delayed task from an earlier state doesn't fire after
@@ -1559,8 +1566,14 @@ struct ExercisePageView: View {
             }
         }
         .overlay {
-            if let rank = medalPopupRank, let emoji = medalEmoji(rank) {
-                MedalPopup(emoji: emoji)
+            if let rank = rankPopupRank {
+                RankPopupView(rank: rank)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay {
+            if showingMissedPopup {
+                MissedPopupView()
                     .allowsHitTesting(false)
             }
         }
@@ -1856,10 +1869,12 @@ struct ExercisePageView: View {
     }
 
     /// 2 seconds after every set is logged, if the exercise is complete,
-    /// records its rank for this plan onto the draft (even below the top 3
-    /// — see `liveOverallRank` and the Completed summary page) and, only
-    /// if that rank IS top-3, briefly shows the medal popup together with a
-    /// matching celebration burst, centered on it — independent of
+    /// records its rank for this plan onto the draft (see `liveOverallRank`,
+    /// the Completed summary page, and History) and shows it — first a
+    /// "MISSED" popup, if at least one set fell short of its own target
+    /// reps, then (after that finishes, or immediately if nothing was
+    /// missed) the medal-or-"Nth Best" rank popup, with a matching
+    /// celebration burst for a top-3 rank — independent of
     /// `autoCollapseEnabled` (fires even if the exercise was manually kept
     /// open) and of the 4-second auto-collapse itself.
     private func checkCelebrationEffects() {
@@ -1871,17 +1886,41 @@ struct ExercisePageView: View {
             guard generation == celebrationGeneration, isReadyToAutoCollapse else { return }
             let overallRank = liveOverallRank
             draft.achievedRank = overallRank
-            let medal = overallRank.flatMap { $0 <= 3 ? $0 : nil }
-            guard let medal else { return }
-            withAnimation {
-                medalPopupRank = medal
-                celebrationTier = CelebrationBurst.Tier(medalRank: medal)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                withAnimation {
-                    medalPopupRank = nil
-                    celebrationTier = nil
+            if missedAnyTarget {
+                withAnimation { showingMissedPopup = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                    withAnimation { showingMissedPopup = false }
+                    guard generation == celebrationGeneration else { return }
+                    showRankPopup(overallRank)
                 }
+            } else {
+                showRankPopup(overallRank)
+            }
+        }
+    }
+
+    /// True once every set is logged but at least one fell short of its own
+    /// target reps. repTotal can never miss this way — reaching the total
+    /// is already part of its own "ready to collapse" condition — so this
+    /// only ever applies to fixedSets.
+    private var missedAnyTarget: Bool {
+        guard case .fixedSets = draft.goalType, draft.targetReps.count == draft.sets.count else { return false }
+        return zip(draft.sets, draft.targetReps).contains { ($0.reps ?? 0) < $1 }
+    }
+
+    /// Briefly shows the medal (top-3) or "Nth Best" popup, paired with a
+    /// matching celebration burst for a medal rank (nil beyond 3rd, so no
+    /// burst then) — see RankPopupView / CelebrationBurst.Tier.
+    private func showRankPopup(_ rank: Int?) {
+        guard let rank else { return }
+        withAnimation {
+            rankPopupRank = rank
+            celebrationTier = CelebrationBurst.Tier(medalRank: rank)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            withAnimation {
+                rankPopupRank = nil
+                celebrationTier = nil
             }
         }
     }
@@ -2317,7 +2356,7 @@ struct ExplosionBurst: View {
 
 // MARK: - Medal-scaled celebration burst on exercise completion — bigger
 // and longer the more prestigious the medal (gold biggest, bronze smallest).
-// Purely visual — no text label; see MedalPopup for the emoji itself.
+// Purely visual — no text label; see RankPopupView for the emoji itself.
 
 struct CelebrationBurst: View {
     enum Tier {
@@ -2340,7 +2379,7 @@ struct CelebrationBurst: View {
             }
         }
         // Radii are large enough to clear a 203pt medal emoji (see
-        // MedalPopup) so the burst visibly surrounds it rather than
+        // RankPopupView) so the burst visibly surrounds it rather than
         // overlapping its glyph.
         var radius: Double {
             switch self {
@@ -2392,31 +2431,73 @@ struct CelebrationBurst: View {
     }
 }
 
-/// A single medal emoji that pops in big, settles, then fades — shown 2
-/// seconds after an exercise becomes complete if today's live total ranks
-/// top-3 for its plan. See `ExercisePageView.checkCelebrationEffects`.
-struct MedalPopup: View {
-    let emoji: String
+/// A single medal emoji (top-3) or "Nth Best" text (everything else) that
+/// pops in big, settles, then fades — shown after an exercise becomes
+/// complete, its rank for this plan already resolved. See
+/// `ExercisePageView.checkCelebrationEffects`.
+struct RankPopupView: View {
+    let rank: Int
     @State private var scale: CGFloat = 0.3
     @State private var opacity: Double = 0
 
     var body: some View {
-        Text(emoji)
-            .font(.system(size: 203))
-            .scaleEffect(scale)
-            .opacity(opacity)
-            .onAppear {
-                withAnimation(.spring(response: 0.9, dampingFraction: 0.55)) {
-                    scale = 1.15
-                    opacity = 1
-                }
-                withAnimation(.easeOut(duration: 0.45).delay(0.8)) {
-                    scale = 1.0
-                }
-                withAnimation(.easeIn(duration: 0.8).delay(2.2)) {
-                    opacity = 0
-                }
+        Group {
+            if let emoji = medalEmoji(rank) {
+                Text(emoji).font(.system(size: 203))
+            } else {
+                Text("\(ordinalLabel(rank)) Best")
+                    .font(.system(size: 56, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
+        }
+        .scaleEffect(scale)
+        .opacity(opacity)
+        .onAppear {
+            withAnimation(.spring(response: 0.9, dampingFraction: 0.55)) {
+                scale = 1.15
+                opacity = 1
+            }
+            withAnimation(.easeOut(duration: 0.45).delay(0.8)) {
+                scale = 1.0
+            }
+            withAnimation(.easeIn(duration: 0.8).delay(2.2)) {
+                opacity = 0
+            }
+        }
+    }
+}
+
+/// A big red X + "MISSED" that pops in, settles, then fades — shown before
+/// the rank popup if the exercise was complete but fell short of its own
+/// target reps on at least one set. See
+/// `ExercisePageView.checkCelebrationEffects`/`missedAnyTarget`.
+struct MissedPopupView: View {
+    @State private var scale: CGFloat = 0.3
+    @State private var opacity: Double = 0
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 140))
+            Text("MISSED")
+                .font(.system(size: 40, weight: .heavy, design: .rounded))
+        }
+        .foregroundStyle(.red)
+        .scaleEffect(scale)
+        .opacity(opacity)
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.55)) {
+                scale = 1.15
+                opacity = 1
+            }
+            withAnimation(.easeOut(duration: 0.25).delay(0.45)) {
+                scale = 1.0
+            }
+            withAnimation(.easeIn(duration: 0.4).delay(1.3)) {
+                opacity = 0
+            }
+        }
     }
 }
 
@@ -2971,7 +3052,7 @@ struct CompletedSummaryPageView: View {
                     if let emoji = medalEmoji(rank) {
                         Text(emoji).font(.title3)
                     } else {
-                        Text(ordinalLabel(rank))
+                        Text("\(ordinalLabel(rank)) Best")
                             .font(.caption.bold())
                             .foregroundStyle(.secondary)
                     }
