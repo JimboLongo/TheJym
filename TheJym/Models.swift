@@ -562,14 +562,24 @@ final class Phase {
 
     /// Total slots filled across all history (bonus sessions don't count),
     /// training and Rest both — a monotonic progress counter, same role the
-    /// old raw session count played, just slot-aware now.
+    /// old raw session count played, just slot-aware now. `filledSlotIDs`
+    /// is only added on top of the completed-cycles term when there's
+    /// actually a cycle in flight (currentCycle > completedCycles) — once
+    /// the phase is done, currentCycle clamps back down to totalCycles
+    /// (cycleWalk's own `min(n, totalCycles)`), which is the SAME cycle
+    /// completedCycles already counted, so adding filledSlotIDs again on
+    /// top would double-count that last cycle's slots.
     var filledSlotCount: Int {
-        cycleWalk.completedCycles * orderedDays.count + cycleWalk.filledSlotIDs.count
+        let walk = cycleWalk
+        let base = walk.completedCycles * orderedDays.count
+        return walk.currentCycle > walk.completedCycles ? base + walk.filledSlotIDs.count : base
     }
 
     /// Display-frozen counterpart to `filledSlotCount` — see `displayCycleWalk`.
     var displayFilledSlotCount: Int {
-        displayCycleWalk.completedCycles * orderedDays.count + displayCycleWalk.filledSlotIDs.count
+        let walk = displayCycleWalk
+        let base = walk.completedCycles * orderedDays.count
+        return walk.currentCycle > walk.completedCycles ? base + walk.filledSlotIDs.count : base
     }
 
     /// Current cycle number (1-based), based on how many full cycles' worth

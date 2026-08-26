@@ -101,8 +101,8 @@ struct StatsView: View {
                     statRow("Miles walked", milesLabel(stats.milesSinceStart))
                 }
 
-                if activePhase != nil {
-                    Section("Current Phase") {
+                if let activePhase {
+                    Section("Current Phase — Phase \(activePhase.number)") {
                         if let delta = stats.cyclePaceDelta {
                             statRow("Cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")")
                         }
