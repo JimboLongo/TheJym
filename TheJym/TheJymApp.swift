@@ -131,6 +131,7 @@ struct ContentView: View {
             fixPhaseStartDatesFromHistory()
             stampLegacyCompletedCycles()
             repairMissingCycleNumbers()
+            undoPrematurePhaseAutoContinue()
             autoContinueQueuedPhases()
             refreshStreakNotification()
             refreshWeightNotification()
@@ -148,6 +149,7 @@ struct ContentView: View {
             if newPhase == .active {
                 WorkoutSession.backfillRestDays(context: context)
                 WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
+                undoPrematurePhaseAutoContinue()
                 autoContinueQueuedPhases()
             }
             if newPhase == .active || newPhase == .background {
@@ -303,6 +305,32 @@ struct ContentView: View {
             changed = true
         }
         if changed { try? context.save() }
+    }
+
+    /// One-time cleanup for a bug in an earlier build of this same
+    /// feature: autoContinueQueuedPhases briefly activated a queued Phase
+    /// n+1 the instant its predecessor's LIVE isComplete turned true,
+    /// rather than waiting for displayIsComplete like it does now — so
+    /// finishing every cycle of a phase in one sitting switched the
+    /// active phase (and the Train tab's whole header) over immediately,
+    /// before the "day after" freeze the rest of this screen relies on.
+    /// Reverts that: if the active phase has never actually been trained
+    /// (no sessions) and the phase one number below it hasn't reached
+    /// displayIsComplete yet, that's overwhelmingly the signature of this
+    /// bug — a real, deliberate switch via the standby picker is only
+    /// ever reachable once the old phase's displayIsComplete has already
+    /// flipped, so this can't misfire on a legitimate manual switch.
+    /// Harmless to leave running indefinitely: once no install is left
+    /// carrying that bad state, it's a fast no-op forever after. Must run
+    /// before autoContinueQueuedPhases (undoes the bad activation first,
+    /// so that check then correctly finds nothing to do yet).
+    private func undoPrematurePhaseAutoContinue() {
+        guard let active = phases.first(where: \.isActive), active.sessions.isEmpty,
+              let previous = phases.first(where: { $0.number == active.number - 1 }),
+              !previous.displayIsComplete
+        else { return }
+        previous.activate(among: phases)
+        try? context.save()
     }
 
     /// bootstrap() only seeds Dumbbells (alongside the starter bars) on a
