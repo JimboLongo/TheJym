@@ -195,6 +195,13 @@ struct PhaseDetailView: View {
         }
     }
 
+    /// True if any exercise actually planned for `day` in `cycle` (base or
+    /// overridden) no longer has a matching exercise/set in the Exercises
+    /// library — see PlannedExercise.hasLibraryMatch's own doc.
+    private func dayHasLibraryMismatch(_ day: PhaseDay, cycle: Int) -> Bool {
+        phase.plan(for: day, cycle: cycle).contains { !$0.hasLibraryMatch(in: exerciseDefs) }
+    }
+
     var body: some View {
         List {
             ForEach(1...max(phase.totalCycles, 1), id: \.self) { cycle in
@@ -212,7 +219,8 @@ struct PhaseDetailView: View {
                                     ForEach(Array(zip(base, effective)), id: \.0.persistentModelID) { baseSlot, effectiveSlot in
                                         let log = cycleSession?.exerciseLogs.first { $0.exerciseName == effectiveSlot.exerciseName }
                                         let isOverridden = effectiveSlot.persistentModelID != baseSlot.persistentModelID
-                                        CyclePlannedExerciseRow(plannedExercise: effectiveSlot, isOverridden: isOverridden, log: log) {
+                                        CyclePlannedExerciseRow(plannedExercise: effectiveSlot, isOverridden: isOverridden,
+                                                               hasLibraryMismatch: !effectiveSlot.hasLibraryMatch(in: exerciseDefs), log: log) {
                                             if let log, !log.sets.isEmpty {
                                                 editingSession = cycleSession
                                             } else {
@@ -223,7 +231,14 @@ struct PhaseDetailView: View {
                                     }
                                 }
                             } label: {
-                                Text(day.name).font(.subheadline.bold())
+                                HStack(spacing: 4) {
+                                    Text(day.name).font(.subheadline.bold())
+                                    if dayHasLibraryMismatch(day, cycle: cycle) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.caption2)
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
                             }
                             .padding(.top, 2)
                         }
@@ -339,6 +354,7 @@ struct PhaseDetailView: View {
 private struct CyclePlannedExerciseRow: View {
     let plannedExercise: PlannedExercise
     let isOverridden: Bool
+    let hasLibraryMismatch: Bool
     let log: ExerciseLog?
     let onTap: () -> Void
 
@@ -353,10 +369,20 @@ private struct CyclePlannedExerciseRow: View {
                                 .font(.caption2)
                                 .foregroundStyle(.orange)
                         }
+                        if hasLibraryMismatch {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
                     }
                     Text(plannedExercise.setsSummaryText)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
+                    if hasLibraryMismatch {
+                        Text("No match in Exercises")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
                 }
                 Spacer()
                 if let log, !log.sets.isEmpty {
