@@ -318,6 +318,13 @@ struct ContentView: View {
     /// restDayActivity != nil, so an unmigrated row renders as a normal
     /// exercise ("3.1 lbs x 1 rep") instead of a distance.
     ///
+    /// Also links the rarer case of a rest activity logged with no
+    /// distance at all (a bare "Walk", say) — it never had a suffix for
+    /// the pass below to key off, so it's still unlinked even though its
+    /// RestDayActivity exists. That second pass matches purely by same
+    /// name + same calendar day and never writes SetLog.weight, since
+    /// there's no distance to move.
+    ///
     /// Only ever touches a log whose exerciseName still carries the old
     /// " (N mi)"/" (N km)" suffix — matched via the same regex `hasMatch`
     /// used to identify junk ExerciseDef rows below. A log already in the
@@ -384,11 +391,36 @@ struct ContentView: View {
             changed = true
         }
 
+        // Second, narrower pass: a log that never had a distance suffix at
+        // all (a distance-less rest activity, e.g. a plain "Walk" logged
+        // with no mileage) has nothing for the pass above to match, so it's
+        // left permanently unlinked even though its RestDayActivity exists.
+        // Link purely by same-day + same-name; never touch SetLog.weight
+        // here since there's no distance to move and inventing one would
+        // fabricate data.
+        for log in logs {
+            guard log.restDayActivity == nil, log.sets.count == 1,
+                  let logDate = log.session?.date
+            else { continue }
+            guard let matchedActivity = restActivities.first(where: {
+                $0.name == log.exerciseName && cal.isDate($0.date, inSameDayAs: logDate)
+            }) else { continue }
+            log.restDayActivity = matchedActivity
+            changed = true
+        }
+
         let restActivityDatesByName = Dictionary(grouping: restActivities, by: \.name)
             .mapValues { Set($0.map { cal.startOfDay(for: $0.date) }) }
         for def in (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? [] {
             let matchesSuffix = def.name.firstMatch(of: suffixPattern) != nil
             let restDatesForName = restActivityDatesByName[def.name]
+            // Matches by name + date, not identity — a genuine planned
+            // exercise that happens to share a name with a rest activity
+            // (e.g. "Cardio", also an ActiveRecoveryType label) and is only
+            // ever logged on days that also have a same-named
+            // RestDayActivity would have its def deleted here too. Fine in
+            // practice: this migration already ran and the real data had
+            // no such collision, but a future re-run wouldn't be immune.
             let isRestActivityOnlyName = restDatesForName.map { restDates in
                 logs.allSatisfy { candidate in
                     guard candidate.exerciseName == def.name else { return true }
