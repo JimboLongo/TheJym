@@ -148,16 +148,24 @@ final class ExerciseDef {
     /// Default for new plan slots created from this exercise (e.g. Pull-Up,
     /// Dip) — still overridable per PlannedExercise.
     var isBodyweight: Bool = false
+    /// When this exercise was added to the library — powers the Exercises
+    /// tab's "date added" sort. The `= .now` default here only backfills a
+    /// value for rows that predate this field (via lightweight migration);
+    /// every real creation path sets it explicitly below instead of
+    /// trusting that default to fire on its own inside a hand-written init
+    /// (it doesn't reliably — see PlannedExercise.slotID's own doc for why).
+    var dateAdded: Date = Date.now
 
     init(name: String, notes: String = "",
          equipment: Bar? = nil, repSchemes: [[Int]] = [], repTotalTargets: [Int] = [],
-         isBodyweight: Bool = false) {
+         isBodyweight: Bool = false, dateAdded: Date = Date.now) {
         self.name = name
         self.notes = notes
         self.equipment = equipment
         self.repSchemes = repSchemes
         self.repTotalTargets = repTotalTargets
         self.isBodyweight = isBodyweight
+        self.dateAdded = dateAdded
     }
 
     /// Adds `reps` as a saved set if it isn't already present.
@@ -787,6 +795,23 @@ final class PlannedExercise {
                 goalKindRaw = 1
                 repTotalTarget = target
             }
+        }
+    }
+
+    /// True if this slot's exercise still exists (by name) in the
+    /// Exercises library AND that exercise still has this slot's exact set
+    /// saved (a matching rep scheme, or rep-total target) — false if
+    /// either was renamed, deleted, or changed there since this slot was
+    /// planned. Purely a display check for flagging a broken reference on
+    /// the Edit Phase screen; doesn't affect logging, which reads this
+    /// slot's own stored fields directly, not the library.
+    func hasLibraryMatch(in defs: [ExerciseDef]) -> Bool {
+        guard let def = defs.first(where: { $0.name == exerciseName }) else { return false }
+        switch goalType {
+        case .fixedSets:
+            return def.repSchemes.contains(targetReps)
+        case .repTotal(let target):
+            return def.repTotalTargets.contains(target)
         }
     }
 

@@ -43,6 +43,11 @@ struct PhaseEditView: View {
                                         set: { day.name = $0 }))
                                         .font(.headline)
                                         .fixedSize()
+                                    if dayHasLibraryMismatch(day) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(.orange)
+                                            .font(.caption)
+                                    }
                                     Spacer()
                                     Button {
                                         editingDayID = day.persistentModelID
@@ -73,7 +78,9 @@ struct PhaseEditView: View {
                 } header: {
                     Text("One Cycle")
                 } footer: {
-                    Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder days, or swipe to delete one. Deleting a day doesn't delete workouts you've already logged for it, they stay in History without a day attached.")
+                    Text(anyDayHasLibraryMismatch
+                         ? "Drag \(Image(systemName: "line.3.horizontal")) to reorder days, or swipe to delete one. Deleting a day doesn't delete workouts you've already logged for it, they stay in History without a day attached.\n\n⚠️ A day above has an exercise or set that no longer matches anything in Exercises — it was likely renamed or removed there. Open the day to fix it."
+                         : "Drag \(Image(systemName: "line.3.horizontal")) to reorder days, or swipe to delete one. Deleting a day doesn't delete workouts you've already logged for it, they stay in History without a day attached.")
                 }
             }
             .environment(\.editMode, .constant(.active))
@@ -99,6 +106,16 @@ struct PhaseEditView: View {
                 }
             }
         }
+    }
+
+    /// True if any of this day's base-template exercises no longer has a
+    /// matching exercise/set in the Exercises library — see
+    /// PlannedExercise.hasLibraryMatch's own doc.
+    private func dayHasLibraryMismatch(_ day: PhaseDay) -> Bool {
+        day.basePlannedExercises.contains { !$0.hasLibraryMatch(in: exerciseDefs) }
+    }
+    private var anyDayHasLibraryMismatch: Bool {
+        phase.orderedDays.contains { dayHasLibraryMismatch($0) }
     }
 
     private func addDay(name: String, isRest: Bool) {
@@ -201,6 +218,15 @@ struct PlannedExerciseRow: View {
         return false
     }
 
+    /// See PlannedExercise.hasLibraryMatch's own doc — nil def means the
+    /// exercise itself was renamed/removed in Exercises; a non-nil def
+    /// whose sets don't include this one means just the set was.
+    private var libraryMismatchMessage: String? {
+        if def == nil { return "No exercise named \"\(pe.exerciseName)\" in Exercises anymore." }
+        guard !pe.hasLibraryMatch(in: exerciseDefs) else { return nil }
+        return "This set isn't saved on \(pe.exerciseName) in Exercises anymore."
+    }
+
     /// What's currently planned — a rep scheme or a rep-total target,
     /// formatted the same as the sets picker's own options.
     private var planSummary: String {
@@ -240,6 +266,12 @@ struct PlannedExerciseRow: View {
             if isRepTotal {
                 Toggle("AI progresses rep total instead of weight", isOn: $pe.repTotalProgressesReps)
                     .font(.caption)
+            }
+
+            if let libraryMismatchMessage {
+                Label(libraryMismatchMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
             }
         }
         .padding(.vertical, 2)

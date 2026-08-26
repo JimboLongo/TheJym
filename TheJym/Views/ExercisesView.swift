@@ -30,13 +30,25 @@ struct ExercisesView: View {
     @State private var showingBulkDeleteConfirm = false
     @State private var showingLibraryPicker = false
     @State private var searchText = ""
+    @State private var sortOrder: ExerciseSortOrder = .name
 
     private var isEditing: Bool { editMode?.wrappedValue == .active }
 
+    enum ExerciseSortOrder: String, CaseIterable, Identifiable {
+        case name = "Name"
+        case dateAdded = "Date Added"
+        var id: String { rawValue }
+    }
+
     private var filteredDefs: [ExerciseDef] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return exerciseDefs }
-        return exerciseDefs.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+        let base = trimmed.isEmpty ? exerciseDefs : exerciseDefs.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+        switch sortOrder {
+        case .name:
+            return base // already alphabetical — the @Query itself sorts by name
+        case .dateAdded:
+            return base.sorted { $0.dateAdded > $1.dateAdded } // newest first
+        }
     }
 
     struct SetHistoryTarget: Hashable {
@@ -93,6 +105,15 @@ struct ExercisesView: View {
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search exercises")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarLeading) {
+                    Menu {
+                        Picker("Sort", selection: $sortOrder) {
+                            ForEach(ExerciseSortOrder.allCases) { order in
+                                Text(order.rawValue).tag(order)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
                     if !exerciseDefs.isEmpty { EditButton() }
                     if isEditing {
                         Button(selectedIDs.count == exerciseDefs.count ? "Deselect All" : "Select All") {
