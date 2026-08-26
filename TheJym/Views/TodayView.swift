@@ -83,11 +83,7 @@ struct TodayView: View {
     /// switched away from and back) keeps its real start so pace math
     /// against its own history stays correct.
     private func activatePhase(_ phase: Phase) {
-        for p in phases where p.isActive { p.isActive = false }
-        if phase.sessions.isEmpty {
-            phase.startDate = .now
-        }
-        phase.isActive = true
+        phase.activate(among: phases)
         try? context.save()
     }
 

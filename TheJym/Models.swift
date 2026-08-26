@@ -276,6 +276,21 @@ final class Phase {
     /// A short label for badges/headers, e.g. "Pull A · Push A · Legs A · Rest".
     var summary: String { orderedDays.map(\.name).joined(separator: " · ") }
 
+    /// Makes `self` the active phase among `allPhases`, deactivating
+    /// whichever was active before. Resets startDate to now only if
+    /// nothing's been logged under `self` yet — a standby phase's
+    /// creation-time startDate is stale by the time it's actually picked
+    /// up; one that's already been trained (e.g. switched away from and
+    /// back) keeps its real start so pace math against its own history
+    /// stays correct. Caller is responsible for saving the context.
+    func activate(among allPhases: [Phase]) {
+        for p in allPhases where p.isActive { p.isActive = false }
+        if sessions.isEmpty {
+            startDate = .now
+        }
+        isActive = true
+    }
+
     /// True if `cycle` should train at cut deload loads — either manually
     /// toggled (always honored) or the single cycle AI auto-schedules
     /// (only while `aiDeloadEnabled` — i.e. Settings' "Deload Weeks"
@@ -624,6 +639,18 @@ final class Phase {
             events.append((date, restDaysPerCycle))
         }
         return events
+    }
+}
+
+extension Array where Element == Phase {
+    /// The phase that should auto-continue from `completed`, if any —
+    /// exactly the phase numbered one higher, not currently active, and
+    /// not itself already complete. Nil whenever there's no single,
+    /// unambiguous "next" phase already queued up (built ahead of time via
+    /// the Phases tab's "+") — the Phase Complete screen's own picker
+    /// still handles that case. See ContentView.autoContinueQueuedPhases.
+    func queuedNextPhase(after completed: Phase) -> Phase? {
+        first { $0.number == completed.number + 1 && !$0.isActive && !$0.displayIsComplete }
     }
 }
 

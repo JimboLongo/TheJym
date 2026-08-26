@@ -131,6 +131,7 @@ struct ContentView: View {
             fixPhaseStartDatesFromHistory()
             stampLegacyCompletedCycles()
             repairMissingCycleNumbers()
+            autoContinueQueuedPhases()
             refreshStreakNotification()
             refreshWeightNotification()
         }
@@ -141,11 +142,13 @@ struct ContentView: View {
         // action to remember to call this itself. Re-running the
         // yesterday-credit check here too catches the overnight rollover
         // for someone who leaves the app backgrounded (not fully quit)
-        // across midnight instead of relaunching it.
+        // across midnight instead of relaunching it — same reasoning for
+        // auto-continuing into a queued next phase, right below.
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 WorkoutSession.backfillRestDays(context: context)
                 WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
+                autoContinueQueuedPhases()
             }
             if newPhase == .active || newPhase == .background {
                 refreshStreakNotification()
@@ -271,6 +274,28 @@ struct ContentView: View {
                 session.cycleNumber = n
                 changed = true
             }
+        }
+        if changed { try? context.save() }
+    }
+
+    /// If a Phase just showed as complete (displayIsComplete) and a
+    /// standby phase numbered exactly one higher already exists (built
+    /// ahead of time via the Phases tab's "+"), auto-continues straight
+    /// into it — no "Phase Complete" screen, no manual pick needed.
+    /// Mirrors the display-frozen timing everything else here uses: a
+    /// phase's last slot finishing doesn't flip this mid-day, only once
+    /// displayIsComplete actually turns true (the day after) does the
+    /// next phase's own first day become what the Train tab shows.
+    /// Leaves everything alone whenever there's no single, unambiguous
+    /// "next" phase already queued up — Phase Complete's own picker still
+    /// handles that case. Must run after repairMissingCycleNumbers() (its
+    /// cycle-completion math depends on correct cycleNumbers).
+    private func autoContinueQueuedPhases() {
+        var changed = false
+        for phase in phases where phase.isActive && phase.displayIsComplete {
+            guard let next = phases.queuedNextPhase(after: phase) else { continue }
+            next.activate(among: phases)
+            changed = true
         }
         if changed { try? context.save() }
     }
