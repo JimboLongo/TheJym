@@ -125,6 +125,7 @@ struct ContentView: View {
             WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
+            repairDuplicatePlannedExerciseSlotIDs()
             ensureBandsBarExists()
             repairDanglingEquipmentReferences()
             fixPhaseStartDatesFromHistory()
@@ -366,6 +367,38 @@ struct ContentView: View {
             changed = true
         }
         if changed { try? context.save() }
+    }
+
+    /// One-time repair for a bug where every PlannedExercise ended up with
+    /// the SAME `slotID`: SwiftData's @Model macro doesn't reliably re-run
+    /// a stored property's `= UUID()` default inside a hand-written init,
+    /// so PlannedExercise.init's own `self.slotID = UUID()` used to be
+    /// missing (now added). A shared slotID broke per-cycle overrides —
+    /// Phase.plan(for:cycle:) matches an override to its base slot BY
+    /// slotID, so one override's substitution ended up applying to every
+    /// slot in its day instead of just its own, exactly matching the
+    /// report that motivated this fix. Reassigns a fresh, distinct slotID
+    /// to every base slot (cycleOverride == 0) that collides with another
+    /// PlannedExercise anywhere in the store; any override whose
+    /// `overriddenSlotID` pointed at a colliding value can no longer be
+    /// trusted to identify which specific base slot it meant, so it's
+    /// deleted rather than left silently inert (or still colliding).
+    private func repairDuplicatePlannedExerciseSlotIDs() {
+        guard let all = try? context.fetch(FetchDescriptor<PlannedExercise>()), !all.isEmpty else { return }
+        var countsBySlotID: [UUID: Int] = [:]
+        for pe in all { countsBySlotID[pe.slotID, default: 0] += 1 }
+        let collidingIDs = Set(countsBySlotID.filter { $0.value > 1 }.map(\.key))
+        guard !collidingIDs.isEmpty else { return }
+
+        for pe in all where pe.cycleOverride > 0 {
+            if let overridden = pe.overriddenSlotID, collidingIDs.contains(overridden) {
+                context.delete(pe)
+            }
+        }
+        for pe in all where pe.cycleOverride == 0 && collidingIDs.contains(pe.slotID) {
+            pe.slotID = UUID()
+        }
+        try? context.save()
     }
 
     /// Create default settings, bars, dumbbells, and exercise library on first launch.

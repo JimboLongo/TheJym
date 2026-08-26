@@ -757,6 +757,15 @@ final class PlannedExercise {
         self.suggestedWeights = suggestedWeights
         self.isBodyweight = isBodyweight
         self.repTotalProgressesReps = repTotalProgressesReps
+        // Explicit, not relying on the property's own `= UUID()` default —
+        // SwiftData's @Model macro doesn't reliably re-run a stored
+        // property's default-value expression inside a hand-written init,
+        // so every PlannedExercise risked ending up with the SAME slotID.
+        // That's exactly what broke per-cycle overrides: Phase.plan(for:
+        // cycle:) matches an override to its base slot BY slotID, so a
+        // shared one meant one override's substitution applied to every
+        // slot in the day instead of just its own.
+        self.slotID = UUID()
         self.cycleOverride = cycleOverride
         self.overriddenSlotID = overriddenSlotID
         switch goalType {

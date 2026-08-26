@@ -125,4 +125,34 @@ final class PhaseCycleOverrideTests: XCTestCase {
         XCTAssertEqual(target, 40)
         XCTAssertEqual(overridden?.isBodyweight, true)
     }
+
+    /// Regression test: every PlannedExercise used to end up with the SAME
+    /// `slotID` (a hand-written init didn't explicitly set it, and
+    /// SwiftData's @Model macro doesn't reliably re-run a stored
+    /// property's `= UUID()` default on its own) — so overriding ONE
+    /// exercise in a multi-exercise day silently applied that same
+    /// override to every other exercise in the day too, since
+    /// Phase.plan(for:cycle:) matches an override to its base slot by
+    /// slotID. `makeDay` alone (a single-exercise day) could never have
+    /// caught this; every other test above unknowingly relied on a day
+    /// with exactly one slot.
+    @MainActor
+    func testOverridingOneExerciseDoesNotAffectAnotherExerciseInTheSameDay() {
+        let context = makeContext()
+        let (phase, day, benchPress) = makeDay(context: context)
+        let barbellRow = PlannedExercise(order: 1, exerciseName: "Barbell Row", targetReps: [8, 8, 8])
+        barbellRow.day = day
+        context.insert(barbellRow)
+
+        XCTAssertNotEqual(benchPress.slotID, barbellRow.slotID,
+                          "two distinct PlannedExercise slots must never share a slotID")
+
+        day.setCycleOverride(for: benchPress, cycle: 3, exerciseName: "Incline Press",
+                             targetReps: [8, 8, 8], goalType: .fixedSets, isBodyweight: false,
+                             context: context)
+
+        let plan = phase.plan(for: day, cycle: 3)
+        XCTAssertEqual(plan.map(\.exerciseName), ["Incline Press", "Barbell Row"],
+                       "only Bench Press's own slot should be overridden — Barbell Row must stay untouched")
+    }
 }
