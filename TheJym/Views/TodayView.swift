@@ -98,28 +98,40 @@ struct TodayView: View {
         try? context.save()
     }
 
-    /// Once `phase`'s cycles are truly exhausted (currentCycle >
-    /// totalCycles — nothing legitimate left to train under it) and a
-    /// phase numbered one higher is already queued to auto-continue into
-    /// (see Array<Phase>.queuedNextPhase), a day beyond what's already
-    /// been logged today should preview/start against THAT phase's own
-    /// matching day instead of `phase`'s own template wrapped back to day
-    /// one — there's no real "Lower Day 1" left under a phase with no
-    /// cycles remaining. Matched by name (case-insensitive) + isRest,
-    /// since day identity has no other link across two different Phase
-    /// objects. Nil (use `phase`/`day` as given) whenever `phase` still
-    /// has real cycles left, there's no queued next phase, or it has no
-    /// day sharing this one's name — the featured "what I did today" row
-    /// deliberately never calls this, so it always keeps showing today's
-    /// own phase regardless.
+    /// Once `phase`'s cycles are truly exhausted (isComplete — the LIVE
+    /// walk's completedCycles >= totalCycles, true the instant the last
+    /// slot is logged, unlike displayIsComplete which freezes until
+    /// tomorrow) and a phase numbered one higher is already queued to
+    /// auto-continue into (see Array<Phase>.queuedNextPhase), a day beyond
+    /// what's already been logged today should preview/start against THAT
+    /// phase's own matching day instead of `phase`'s own template wrapped
+    /// back to day one — there's no real "Lower Day 1" left under a phase
+    /// with no cycles remaining. NOT phase.currentCycle > phase.totalCycles
+    /// — cycleWalk clamps currentCycle to `min(n, totalCycles)`, so that
+    /// comparison can never be true and silently never redirects.
+    ///
+    /// Matched by name (case-insensitive) + isRest first; if the split was
+    /// renamed between phases and no name matches, falls back to the same
+    /// ordered position within the cycle (same slot index), only when
+    /// that position also agrees on isRest — never pairs a training day
+    /// with a Rest day just because they share an index. Nil (use
+    /// `phase`/`day` as given) whenever `phase` still has real cycles
+    /// left, there's no queued next phase, or neither match finds
+    /// anything — the featured "what I did today" row deliberately never
+    /// calls this, so it always keeps showing today's own phase
+    /// regardless.
     private func effectiveDaySource(_ day: PhaseDay, phase: Phase) -> (phase: Phase, day: PhaseDay) {
-        guard phase.currentCycle > phase.totalCycles,
-              let next = phases.queuedNextPhase(after: phase),
-              let matchingDay = next.orderedDays.first(where: {
-                  $0.isRest == day.isRest && $0.name.localizedCaseInsensitiveCompare(day.name) == .orderedSame
-              })
-        else { return (phase, day) }
-        return (next, matchingDay)
+        guard phase.isComplete, let next = phases.queuedNextPhase(after: phase) else { return (phase, day) }
+        if let byName = next.orderedDays.first(where: {
+            $0.isRest == day.isRest && $0.name.localizedCaseInsensitiveCompare(day.name) == .orderedSame
+        }) {
+            return (next, byName)
+        }
+        if let idx = phase.orderedDays.firstIndex(where: { $0.persistentModelID == day.persistentModelID }),
+           idx < next.orderedDays.count, next.orderedDays[idx].isRest == day.isRest {
+            return (next, next.orderedDays[idx])
+        }
+        return (phase, day)
     }
 
     /// This exercise's logs, same plan key, any phase — mirrors

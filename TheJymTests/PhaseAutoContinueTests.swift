@@ -73,6 +73,24 @@ final class PhaseAutoContinueTests: XCTestCase {
         XCTAssertEqual(phases.queuedNextPhase(after: phase1)?.number, 2)
     }
 
+    /// Regression test: currentCycle is clamped to totalCycles (Models.swift
+    /// cycleWalk's `min(n, totalCycles)`), even once every cycle is done —
+    /// it never runs past totalCycles the way a naive "which cycle am I
+    /// on" counter might. Anything gating on `currentCycle > totalCycles`
+    /// to detect "this phase has no real cycles left" is dead code; use
+    /// `isComplete` instead (see TodayView.effectiveDaySource, which hit
+    /// exactly this bug).
+    @MainActor
+    func testCurrentCycleStaysClampedToTotalCyclesEvenOnceComplete() {
+        let context = makeContext()
+        let phase1 = makeCompletedPhase(number: 1, daysAgo: 0, context: context)
+        try? context.save()
+
+        XCTAssertTrue(phase1.isComplete)
+        XCTAssertEqual(phase1.currentCycle, phase1.totalCycles,
+                       "currentCycle must never exceed totalCycles, even on a fully completed phase")
+    }
+
     @MainActor
     func testNoQueuedNextPhaseWhenNumberingSkips() {
         let context = makeContext()
