@@ -323,7 +323,9 @@ struct ContentView: View {
     /// the pass below to key off, so it's still unlinked even though its
     /// RestDayActivity exists. That second pass matches purely by same
     /// name + same calendar day and never writes SetLog.weight, since
-    /// there's no distance to move.
+    /// there's no distance to move. Bounded to sessions before this
+    /// commit's date — see the pass itself for why that bound has to
+    /// exist at all, unlike the suffix pass above it.
     ///
     /// Only ever touches a log whose exerciseName still carries the old
     /// " (N mi)"/" (N km)" suffix — matched via the same regex `hasMatch`
@@ -398,9 +400,28 @@ struct ContentView: View {
         // Link purely by same-day + same-name; never touch SetLog.weight
         // here since there's no distance to move and inventing one would
         // fabricate data.
+        //
+        // Unlike the suffix pass, this match criteria doesn't self-expire —
+        // restDayActivity == nil / one SetLog / same-day-name-match is a
+        // standing condition, not something that gets consumed by running
+        // once. Left unbounded, it would silently re-fire on every future
+        // launch against new data: a single-set ad hoc exercise named
+        // "Walk" or "Cardio" (also an ActiveRecoveryType label) logged on a
+        // day that also has a same-named RestDayActivity would get linked,
+        // HistoryView would render it as a distance, and SetEditRow's
+        // write-through would push weight edits into
+        // RestDayActivity.distance — which StatsEngine sums for miles.
+        // Bounding to sessions before e5089d3 (2026-08-17, when the write
+        // paths started linking correctly on their own) confines this to
+        // the legacy backlog it was written for, matching how every other
+        // repair in this file re-derives "already done" from data rather
+        // than a persisted flag — there's no didRepair-style Bool anywhere
+        // in AppSettings, so a settings marker would be a new pattern, not
+        // a followed one.
+        let cutoff = cal.date(from: DateComponents(year: 2026, month: 8, day: 17))!
         for log in logs {
             guard log.restDayActivity == nil, log.sets.count == 1,
-                  let logDate = log.session?.date
+                  let logDate = log.session?.date, logDate < cutoff
             else { continue }
             guard let matchedActivity = restActivities.first(where: {
                 $0.name == log.exerciseName && cal.isDate($0.date, inSameDayAs: logDate)
