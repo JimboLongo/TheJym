@@ -304,9 +304,34 @@ struct PhaseBuilderView: View {
         case .success(let url):
             let didAccess = url.startAccessingSecurityScopedResource()
             defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            let isXLSX = url.pathExtension.lowercased() == "xlsx"
+
+            // Plain Day/Exercise/Set template files (no Date column) take
+            // priority — they describe the cycle directly, with no
+            // cycle-detection needed. Falls through to the full
+            // Date/Exercise/Sets/Weights/Reps historical format below if the
+            // file doesn't have that shape.
+            let templateDays: [ImportEngine.DetectedDay]?
+            if isXLSX {
+                guard let data = try? Data(contentsOf: url) else {
+                    importErrorMessage = "Couldn't read that file."
+                    return
+                }
+                templateDays = ImportEngine.parseTemplateRows(xlsxData: data)
+            } else {
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    importErrorMessage = "Couldn't read that file as text."
+                    return
+                }
+                templateDays = ImportEngine.parseTemplateRows(csv: text)
+            }
+            if let templateDays, templateDays.contains(where: { !$0.isRest && !$0.exercises.isEmpty }) {
+                applyImportedDays(templateDays)
+                return
+            }
 
             let parsed: (rows: [ImportEngine.ImportedEntry], skipped: Int)?
-            if url.pathExtension.lowercased() == "xlsx" {
+            if isXLSX {
                 guard let data = try? Data(contentsOf: url) else {
                     importErrorMessage = "Couldn't read that file."
                     return
@@ -325,7 +350,7 @@ struct PhaseBuilderView: View {
             }
 
             guard let (rows, _) = parsed, !rows.isEmpty else {
-                importErrorMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Sets, Weights, and Reps columns — see the Import Format Guide in History for the exact layout."
+                importErrorMessage = "No valid rows found. Make sure the sheet has either Day, Exercise, and Set columns, or Date, Exercise, Sets, Weights, and Reps columns — see the Import Format Guide in History for the exact layout."
                 return
             }
             guard let detected = ImportEngine.detectLastCyclePattern(from: rows),
@@ -333,13 +358,16 @@ struct PhaseBuilderView: View {
                 importErrorMessage = "Couldn't detect a training cycle in that file — make sure it has a Day column (e.g. \"Push A\") repeating across the days you trained."
                 return
             }
+            applyImportedDays(detected)
+        }
+    }
 
-            let imported = Self.dayDrafts(from: detected)
-            if dayDrafts.isEmpty {
-                dayDrafts = imported
-            } else {
-                pendingImportedDayDrafts = imported
-            }
+    private func applyImportedDays(_ detected: [ImportEngine.DetectedDay]) {
+        let imported = Self.dayDrafts(from: detected)
+        if dayDrafts.isEmpty {
+            dayDrafts = imported
+        } else {
+            pendingImportedDayDrafts = imported
         }
     }
 

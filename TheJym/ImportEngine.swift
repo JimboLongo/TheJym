@@ -247,6 +247,120 @@ enum ImportEngine {
         }
     }
 
+    // MARK: - Plain template parsing (Day/Exercise/Set -> day drafts, no history)
+
+    /// Parses a plain phase-template file — just Day, Exercise, and Set
+    /// columns (any order, header matched case-insensitively; an optional
+    /// Weight column seeds starting weights). No Date/Weights/Reps needed,
+    /// since this describes what a cycle SHOULD look like rather than being
+    /// reconstructed from logged history:
+    ///
+    ///   Day     | Exercise    | Set
+    ///   Upper A | Bench Press | 5/5/5/3/3/3
+    ///   Upper A | Barbell Row | 8/8/8/8
+    ///   Rest    |             |
+    ///   Lower A | Back Squat  | 5/5/5/3/3
+    ///
+    /// Set works the same as the full format's Sets column: a slash-
+    /// separated rep scheme, or "40 total" for a rep-total goal. "Rest" (or
+    /// "Rest Day") in Day marks a rest day — Exercise/Set are ignored.
+    ///
+    /// Rows are grouped into days by walking the file in order: a run of
+    /// consecutive rows sharing the same Day label becomes that day's
+    /// exercise list; a different (or repeated) label starts a new day —
+    /// this is what lets the same label recur later in the file (e.g. a
+    /// second, separate Rest day) without merging into an earlier
+    /// occurrence, something date-based detectLastCyclePattern gets from
+    /// chronological order but this format has no dates to offer.
+    ///
+    /// Returns nil if the file doesn't have this shape — no Day/Exercise/Set
+    /// columns, or it also has a Date column (that's the full historical
+    /// format instead, handled by parseRows/detectLastCyclePattern).
+    static func parseTemplateRows(csv: String) -> [DetectedDay]? {
+        let lines = csv.split(whereSeparator: { $0 == "\n" || $0 == "\r\n" }).map(String.init)
+        guard let headerLine = lines.first else { return nil }
+        let delimiter: Character = headerLine.contains("\t") ? "\t" : ","
+        let header = splitDelimitedLine(headerLine, delimiter: delimiter)
+        let dataRows = lines.dropFirst()
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { splitDelimitedLine($0, delimiter: delimiter) }
+        return parseTemplateFields(header: header, rows: Array(dataRows))
+    }
+
+    /// Parses an .xlsx workbook's first sheet the same way. Returns nil both
+    /// when the file itself can't be read as a valid .xlsx AND when it
+    /// doesn't have this format's shape — callers that need to tell those
+    /// apart should fall back to parseRows(xlsxData:) and inspect its own
+    /// nil/empty-rows result instead.
+    static func parseTemplateRows(xlsxData: Data) -> [DetectedDay]? {
+        guard let grid = XLSXReader.readFirstSheetAsRows(data: xlsxData), let header = grid.first else { return nil }
+        let dataRows = grid.dropFirst().filter { row in
+            !row.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+        }
+        return parseTemplateFields(header: header, rows: Array(dataRows))
+    }
+
+    private static func parseTemplateFields(header rawHeader: [String], rows: [[String]]) -> [DetectedDay]? {
+        let header = rawHeader.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        guard let dayIdx = header.firstIndex(where: { $0.hasPrefix("day") }),
+              let exerciseIdx = header.firstIndex(where: { $0.hasPrefix("exercise") }),
+              let setIdx = header.firstIndex(where: { $0.hasPrefix("set") }),
+              !header.contains(where: { $0.hasPrefix("date") })
+        else { return nil }
+        let weightIdx = header.firstIndex(where: { $0.hasPrefix("weight") })
+
+        struct TemplateRow { let dayLabel: String; let exercise: DetectedExercise? }
+        var parsedRows: [TemplateRow] = []
+        for fields in rows {
+            guard fields.count > max(dayIdx, exerciseIdx, setIdx) else { continue }
+            let dayLabel = fields[dayIdx].trimmingCharacters(in: .whitespaces)
+            guard !dayLabel.isEmpty else { continue }
+
+            if isRestLabel(dayLabel) {
+                parsedRows.append(TemplateRow(dayLabel: "Rest", exercise: nil))
+                continue
+            }
+
+            let exerciseName = fields[exerciseIdx].trimmingCharacters(in: .whitespaces)
+            guard !exerciseName.isEmpty else { continue }
+            let setStr = fields[setIdx].trimmingCharacters(in: .whitespaces)
+
+            let goalType: GoalType
+            let targetReps: [Int]
+            if let target = parseRepTotalTarget(setStr) {
+                goalType = .repTotal(target: target)
+                targetReps = []
+            } else {
+                targetReps = setStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                guard !targetReps.isEmpty else { continue }
+                goalType = .fixedSets
+            }
+            let weights = weightIdx.flatMap { fields[safe: $0] }?
+                .split(separator: "/").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) } ?? []
+
+            parsedRows.append(TemplateRow(
+                dayLabel: dayLabel,
+                exercise: DetectedExercise(name: exerciseName, goalType: goalType, targetReps: targetReps, weights: weights)))
+        }
+        guard !parsedRows.isEmpty else { return nil }
+
+        var days: [DetectedDay] = []
+        for row in parsedRows {
+            guard let exercise = row.exercise else {
+                days.append(DetectedDay(name: "Rest", isRest: true, exercises: []))
+                continue
+            }
+            if let last = days.last, !last.isRest, last.name.localizedCaseInsensitiveCompare(row.dayLabel) == .orderedSame {
+                days[days.count - 1] = DetectedDay(name: last.name, isRest: false, exercises: last.exercises + [exercise])
+            } else {
+                days.append(DetectedDay(name: row.dayLabel, isRest: false, exercises: [exercise]))
+            }
+        }
+        return days
+    }
+
+    // MARK: - Full historical parsing (Date/Exercise/Sets/Weights/Reps -> logged history)
+
     /// Parses CSV (or tab-delimited — pasting straight out of a spreadsheet
     /// often carries tabs, not commas) text into rows, matching the header
     /// case-insensitively. Returns the parsed rows plus a count of data rows
