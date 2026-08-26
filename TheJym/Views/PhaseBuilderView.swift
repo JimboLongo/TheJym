@@ -11,6 +11,7 @@
 
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct PhaseBuilderView: View {
     @Environment(\.modelContext) private var context
@@ -39,6 +40,9 @@ struct PhaseBuilderView: View {
     @State private var pendingPreset: SplitPreset?
     @State private var editingDayID: UUID?
     @State private var showingPresetPicker = false
+    @State private var showingImporter = false
+    @State private var pendingImportedDayDrafts: [DayDraft]?
+    @State private var importErrorMessage: String?
 
     struct SplitPreset {
         let name: String
@@ -119,6 +123,20 @@ struct PhaseBuilderView: View {
         }
     }
 
+    /// A full-width, plain-styled row button — used for the two "seed the
+    /// day list from X" entry points above the day list itself. Factored out
+    /// so `body` stays simple enough for the type-checker.
+    private func seedSourceRow(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -137,18 +155,10 @@ struct PhaseBuilderView: View {
                 }
 
                 Section {
-                    Button {
-                        showingPresetPicker = true
-                    } label: {
-                        HStack {
-                            Text("Start from a Preset")
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                    seedSourceRow("Start from a Preset") { showingPresetPicker = true }
+                    seedSourceRow("Import from CSV or Excel…") { showingImporter = true }
                 } footer: {
-                    Text("Fills in the day list below — you can still add, rename, reorder, or delete days after.")
+                    Text("Fills in the day list below — you can still add, rename, reorder, or delete days after. Importing reads the days and exercises from the file's most recently completed training cycle; it doesn't log any history.")
                 }
 
                 Section {
@@ -250,6 +260,12 @@ struct PhaseBuilderView: View {
                 }
                 Button("Cancel", role: .cancel) { pendingPreset = nil }
             }
+            .importModifiers(
+                showingImporter: $showingImporter,
+                pendingImportedDayDrafts: $pendingImportedDayDrafts,
+                importErrorMessage: $importErrorMessage,
+                dayDrafts: $dayDrafts,
+                handleImport: handleImport)
             .onAppear(perform: seed)
             .navigationDestination(item: $editingDayID) { id in
                 DayEditorView(day: bindingForDay(id: id), exerciseDefs: exerciseDefs, bars: bars)
@@ -279,6 +295,78 @@ struct PhaseBuilderView: View {
 
     private func applyPreset(_ preset: SplitPreset) {
         dayDrafts = preset.days.map { DayDraft(name: $0.name, isRest: $0.isRest) }
+    }
+
+    private func handleImport(_ result: Result<URL, Error>) {
+        switch result {
+        case .failure(let error):
+            importErrorMessage = "Couldn't read that file: \(error.localizedDescription)"
+        case .success(let url):
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+
+            let parsed: (rows: [ImportEngine.ImportedEntry], skipped: Int)?
+            if url.pathExtension.lowercased() == "xlsx" {
+                guard let data = try? Data(contentsOf: url) else {
+                    importErrorMessage = "Couldn't read that file."
+                    return
+                }
+                parsed = ImportEngine.parseRows(xlsxData: data)
+                if parsed == nil {
+                    importErrorMessage = "Couldn't read that Excel file — make sure it's a standard .xlsx workbook."
+                    return
+                }
+            } else {
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    importErrorMessage = "Couldn't read that file as text."
+                    return
+                }
+                parsed = ImportEngine.parseRows(csv: text)
+            }
+
+            guard let (rows, _) = parsed, !rows.isEmpty else {
+                importErrorMessage = "No valid rows found. Make sure the sheet has Date, Exercise, Sets, Weights, and Reps columns — see the Import Format Guide in History for the exact layout."
+                return
+            }
+            guard let detected = ImportEngine.detectLastCyclePattern(from: rows),
+                  detected.contains(where: { !$0.isRest && !$0.exercises.isEmpty }) else {
+                importErrorMessage = "Couldn't detect a training cycle in that file — make sure it has a Day column (e.g. \"Push A\") repeating across the days you trained."
+                return
+            }
+
+            let imported = Self.dayDrafts(from: detected)
+            if dayDrafts.isEmpty {
+                dayDrafts = imported
+            } else {
+                pendingImportedDayDrafts = imported
+            }
+        }
+    }
+
+    /// Builds day drafts from a detected last-cycle pattern — each
+    /// exercise's starting weights come straight from that occurrence's
+    /// actual logged weights. Shared with HistoryView's import-into-new-
+    /// phase flow.
+    static func dayDrafts(from detected: [ImportEngine.DetectedDay]) -> [DayDraft] {
+        detected.map { day in
+            guard !day.isRest else {
+                return DayDraft(name: "Rest", isRest: true)
+            }
+            let exercises = day.exercises.map { e -> DraftExercise in
+                var draft = DraftExercise(
+                    name: e.name, repsText: "",
+                    weightsText: e.weights.map { Formatters.trim($0) }.joined(separator: "/"))
+                switch e.goalType {
+                case .fixedSets:
+                    draft.repsText = e.targetReps.map(String.init).joined(separator: "/")
+                case .repTotal(let target):
+                    draft.goalType = .repTotal(target: target)
+                    draft.repTotalTargetText = String(target)
+                }
+                return draft
+            }
+            return DayDraft(name: day.name, isRest: false, exercises: exercises)
+        }
     }
 
     private func seed() {
@@ -360,6 +448,44 @@ struct PhaseBuilderView: View {
         try? context.save()
         onPhaseCreated?(phase)
         dismiss()
+    }
+}
+
+private extension View {
+    /// The CSV/Excel import flow's three modals, grouped into one modifier
+    /// call — folded into `PhaseBuilderView.body`'s own modifier chain, this
+    /// pushed the type-checker over its time budget, so they're applied here
+    /// as a single opaque step instead.
+    func importModifiers(
+        showingImporter: Binding<Bool>,
+        pendingImportedDayDrafts: Binding<[PhaseBuilderView.DayDraft]?>,
+        importErrorMessage: Binding<String?>,
+        dayDrafts: Binding<[PhaseBuilderView.DayDraft]>,
+        handleImport: @escaping (Result<URL, Error>) -> Void
+    ) -> some View {
+        self
+            .confirmationDialog(
+                "Replace your current days with the imported ones?",
+                isPresented: Binding(get: { pendingImportedDayDrafts.wrappedValue != nil },
+                                     set: { if !$0 { pendingImportedDayDrafts.wrappedValue = nil } }),
+                titleVisibility: .visible
+            ) {
+                Button("Replace", role: .destructive) {
+                    if let imported = pendingImportedDayDrafts.wrappedValue { dayDrafts.wrappedValue = imported }
+                    pendingImportedDayDrafts.wrappedValue = nil
+                }
+                Button("Cancel", role: .cancel) { pendingImportedDayDrafts.wrappedValue = nil }
+            }
+            .fileImporter(isPresented: showingImporter,
+                         allowedContentTypes: [.commaSeparatedText, .plainText, .text, .xlsxSpreadsheet],
+                         onCompletion: handleImport)
+            .alert("Import Problem", isPresented: Binding(
+                get: { importErrorMessage.wrappedValue != nil },
+                set: { if !$0 { importErrorMessage.wrappedValue = nil } })) {
+                Button("OK") { importErrorMessage.wrappedValue = nil }
+            } message: {
+                Text(importErrorMessage.wrappedValue ?? "")
+            }
     }
 }
 

@@ -417,7 +417,7 @@ struct HistoryView: View {
                detected.contains(where: { !$0.isRest && !$0.exercises.isEmpty }) {
                 pendingImportRows = rows
                 pendingImportSkipped = skipped
-                seededPhaseDayDrafts = dayDrafts(from: detected)
+                seededPhaseDayDrafts = PhaseBuilderView.dayDrafts(from: detected)
                 showingImportPhaseReview = true
                 return
             }
@@ -434,31 +434,6 @@ struct HistoryView: View {
                 importResultMessage = msg
                 isImporting = false
             }
-        }
-    }
-
-    /// Builds Phase Builder's day-draft seed from a detected last-cycle
-    /// pattern — each exercise's starting weights come straight from that
-    /// occurrence's actual logged weights.
-    private func dayDrafts(from detected: [ImportEngine.DetectedDay]) -> [PhaseBuilderView.DayDraft] {
-        detected.map { day in
-            guard !day.isRest else {
-                return PhaseBuilderView.DayDraft(name: "Rest", isRest: true)
-            }
-            let exercises = day.exercises.map { e -> PhaseBuilderView.DraftExercise in
-                var draft = PhaseBuilderView.DraftExercise(
-                    name: e.name, repsText: "",
-                    weightsText: e.weights.map { Formatters.trim($0) }.joined(separator: "/"))
-                switch e.goalType {
-                case .fixedSets:
-                    draft.repsText = e.targetReps.map(String.init).joined(separator: "/")
-                case .repTotal(let target):
-                    draft.goalType = .repTotal(target: target)
-                    draft.repTotalTargetText = String(target)
-                }
-                return draft
-            }
-            return PhaseBuilderView.DayDraft(name: day.name, isRest: false, exercises: exercises)
         }
     }
 
