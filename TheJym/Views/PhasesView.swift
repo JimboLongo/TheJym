@@ -83,6 +83,14 @@ struct PhasesView: View {
     }
 }
 
+/// Identifies one day's occurrence within one specific cycle — used to key
+/// per-(cycle, day) collapse state, since the same PhaseDay is rendered
+/// once per cycle and each occurrence collapses independently.
+private struct DayCycleKey: Hashable {
+    let cycle: Int
+    let dayID: PersistentIdentifier
+}
+
 struct PhaseDetailView: View {
     let phase: Phase
 
@@ -93,13 +101,21 @@ struct PhaseDetailView: View {
     /// on screen at once; any cycle can still be opened to browse its
     /// history.
     @State private var expandedCycles: Set<Int>
+    /// Days collapsed within an expanded cycle — absence means expanded, so
+    /// every day starts open without needing to pre-populate this set.
+    @State private var collapsedDays: Set<DayCycleKey> = []
+    /// The exact (day, cycle) session being edited — reuses History's own
+    /// session editor (SetEditRow etc.) rather than a second copy of it, so
+    /// changing a set's weight/reps here goes through the exact same code
+    /// path/validation as editing it from History.
+    @State private var editingSession: WorkoutSession?
 
     init(phase: Phase) {
         self.phase = phase
         _expandedCycles = State(initialValue: [phase.displayCurrentCycle])
     }
 
-    private func isExpanded(_ cycle: Int) -> Binding<Bool> {
+    private func isCycleExpanded(_ cycle: Int) -> Binding<Bool> {
         Binding(
             get: { expandedCycles.contains(cycle) },
             set: { expanded in
@@ -107,26 +123,47 @@ struct PhaseDetailView: View {
             })
     }
 
+    private func isDayExpanded(cycle: Int, day: PhaseDay) -> Binding<Bool> {
+        let key = DayCycleKey(cycle: cycle, dayID: day.persistentModelID)
+        return Binding(
+            get: { !collapsedDays.contains(key) },
+            set: { expanded in
+                if expanded { collapsedDays.remove(key) } else { collapsedDays.insert(key) }
+            })
+    }
+
+    /// This exact cycle's session for `day`, if logged — what actually
+    /// happened that occurrence, distinct from every other cycle's own
+    /// session for the same day.
+    private func session(cycle: Int, day: PhaseDay) -> WorkoutSession? {
+        (day.phase?.sessions ?? []).first {
+            $0.day?.persistentModelID == day.persistentModelID && $0.cycleNumber == cycle
+        }
+    }
+
     var body: some View {
         List {
             ForEach(1...max(phase.totalCycles, 1), id: \.self) { cycle in
                 Section {
-                    DisclosureGroup(isExpanded: isExpanded(cycle)) {
+                    DisclosureGroup(isExpanded: isCycleExpanded(cycle)) {
                         ForEach(phase.trainingDays, id: \.persistentModelID) { day in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(day.name)
-                                    .font(.subheadline.bold())
+                            let cycleSession = session(cycle: cycle, day: day)
+                            DisclosureGroup(isExpanded: isDayExpanded(cycle: cycle, day: day)) {
                                 let plan = phase.plan(for: day)
                                 if plan.isEmpty {
                                     Text("No exercises planned for \(day.name).")
                                         .font(.caption).foregroundStyle(.secondary)
                                 } else {
                                     ForEach(plan, id: \.persistentModelID) { pe in
-                                        PhaseExerciseRow(day: day, plannedExercise: pe)
+                                        CyclePlannedExerciseRow(plannedExercise: pe, session: cycleSession) {
+                                            editingSession = cycleSession
+                                        }
                                     }
                                 }
+                            } label: {
+                                Text(day.name).font(.subheadline.bold())
                             }
-                            .padding(.top, 4)
+                            .padding(.top, 2)
                         }
                     } label: {
                         Text("Cycle \(cycle)").font(.headline)
@@ -143,80 +180,59 @@ struct PhaseDetailView: View {
         .sheet(isPresented: $showingEdit) {
             PhaseEditView(phase: phase)
         }
+        .navigationDestination(item: $editingSession) { session in
+            SessionDetailView(session: session)
+        }
     }
 }
 
-/// One exercise under a "Pull 1"-style cycle/day section. Tapping it expands
-/// to show every cycle it's actually been logged, most recent last, with dates —
-/// the same expanded content regardless of which cycle you tapped from, since
-/// the plan (exercise + reps) is the same every cycle. History is matched by
-/// the specific PhaseDay object, not its name, so "Pull A" and "Pull B" never
-/// bleed into each other even if they happened to share a name.
-struct PhaseExerciseRow: View {
-    let day: PhaseDay
+/// One exercise's plan for one specific cycle occurrence of a day — shows
+/// what was actually logged that cycle (not history across every cycle,
+/// since the enclosing Cycle N group already scopes this to just one).
+/// Tapping it, once something's actually logged, opens that exact session
+/// for editing — any exercise's any set, weight or reps — in the same
+/// editor History's own session detail uses.
+private struct CyclePlannedExerciseRow: View {
     let plannedExercise: PlannedExercise
+    let session: WorkoutSession?
+    let onTapToEdit: () -> Void
 
-    @State private var expanded = false
-
-    private var history: [(cycle: Int, date: Date, log: ExerciseLog)] {
-        (day.phase?.sessions ?? [])
-            .filter { $0.day?.persistentModelID == day.persistentModelID }
-            .compactMap { session in
-                guard let log = session.exerciseLogs.first(where: { $0.exerciseName == plannedExercise.exerciseName }),
-                      !log.sets.isEmpty else { return nil }
-                return (session.cycleNumber, session.date, log)
-            }
-            .sorted { $0.cycle < $1.cycle }
+    private var log: ExerciseLog? {
+        session?.exerciseLogs.first { $0.exerciseName == plannedExercise.exerciseName }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation { expanded.toggle() }
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(plannedExercise.exerciseName).font(.subheadline.bold())
-                        Text(plannedExercise.setsSummaryText)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+        Button(action: onTapToEdit) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(plannedExercise.exerciseName).font(.subheadline.bold())
+                    Text(plannedExercise.setsSummaryText)
+                        .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
-                        .font(.caption)
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if expanded {
-                if history.isEmpty {
-                    Text("Not logged yet.")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .padding(.leading, 8)
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(history, id: \.log.persistentModelID) { entry in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text("Cycle \(entry.cycle)").font(.caption.bold())
-                                    Spacer()
-                                    Text(Formatters.date.string(from: entry.date))
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                }
-                                ForEach(entry.log.sortedSets, id: \.persistentModelID) { s in
-                                    Text("\(Formatters.trim(s.weight)) lbs × \(s.reps) reps")
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                Spacer()
+                if let log, !log.sets.isEmpty {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        ForEach(log.sortedSets, id: \.persistentModelID) { s in
+                            Text("\(Formatters.trim(s.weight)) × \(s.reps)")
                         }
                     }
-                    .padding(.leading, 8)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Not logged")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .disabled(log?.sets.isEmpty ?? true)
         .padding(.vertical, 2)
     }
 }
