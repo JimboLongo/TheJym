@@ -62,6 +62,7 @@ struct WorkoutLogView: View {
     @Query private var allExerciseLogs: [ExerciseLog]
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \BodyWeightEntry.date) private var allBodyWeights: [BodyWeightEntry]
+    @Query private var allPhases: [Phase]
 
     /// Nil for a standalone "quick workout" not tied to any Phase — cycle/
     /// deload math and next-cycle weight suggestions just don't apply then.
@@ -710,6 +711,21 @@ struct WorkoutLogView: View {
         return zip(d.sets, d.targetReps).contains { ($0.reps ?? 0) < $1 }
     }
 
+    /// If finishing this workout just completed `phase` — its actual last
+    /// cycle, right now, not the display-frozen "wait for tomorrow" check
+    /// TodayView's own Phase Complete screen uses — and a standby phase
+    /// numbered exactly one higher already exists, activates it
+    /// immediately. Without this, the Train tab would keep showing
+    /// `phase`'s own template wrapped back to its first day (there's no
+    /// real next cycle left to train under it) until the calendar rolls
+    /// over, even though Phase n+1 is right there ready to go. See
+    /// Array<Phase>.queuedNextPhase(after:)/Phase.activate(among:).
+    private func autoContinueToQueuedPhaseIfComplete() {
+        guard let phase, phase.isComplete, let next = allPhases.queuedNextPhase(after: phase) else { return }
+        next.activate(among: allPhases)
+        try? context.save()
+    }
+
     private func finishWorkout() {
         // Must be read BEFORE the new session is linked to the phase, since
         // it reflects slot-fill state as of right now.
@@ -802,6 +818,7 @@ struct WorkoutLogView: View {
             }
         }
         try? context.save()
+        autoContinueToQueuedPhaseIfComplete()
         clearSavedDraft()
 
         if !entries.isEmpty {

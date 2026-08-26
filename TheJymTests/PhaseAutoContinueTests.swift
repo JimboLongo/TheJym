@@ -53,6 +53,26 @@ final class PhaseAutoContinueTests: XCTestCase {
         XCTAssertEqual(phases.queuedNextPhase(after: phase1)?.number, 2)
     }
 
+    /// The exact scenario reported: every cycle finished TODAY (not
+    /// yesterday) — displayIsComplete stays frozen off until tomorrow, but
+    /// the LIVE isComplete (what WorkoutLogView.finishWorkout and
+    /// ContentView's own repair now both check) should already be true, so
+    /// auto-continuing into Phase 2 doesn't wait a full day once there's
+    /// truly no cycle left to train under Phase 1.
+    @MainActor
+    func testCompletingTheLastSlotTodayIsLiveCompleteEvenThoughDisplayIsFrozen() {
+        let context = makeContext()
+        let phase1 = makeCompletedPhase(number: 1, daysAgo: 0, context: context)
+        let phase2 = Phase(number: 2, totalCycles: 8, isActive: false)
+        context.insert(phase2)
+        try? context.save()
+
+        XCTAssertTrue(phase1.isComplete)
+        XCTAssertFalse(phase1.displayIsComplete, "display freeze should still hold off until tomorrow")
+        let phases = [phase1, phase2]
+        XCTAssertEqual(phases.queuedNextPhase(after: phase1)?.number, 2)
+    }
+
     @MainActor
     func testNoQueuedNextPhaseWhenNumberingSkips() {
         let context = makeContext()

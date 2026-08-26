@@ -278,21 +278,24 @@ struct ContentView: View {
         if changed { try? context.save() }
     }
 
-    /// If a Phase just showed as complete (displayIsComplete) and a
-    /// standby phase numbered exactly one higher already exists (built
-    /// ahead of time via the Phases tab's "+"), auto-continues straight
-    /// into it — no "Phase Complete" screen, no manual pick needed.
-    /// Mirrors the display-frozen timing everything else here uses: a
-    /// phase's last slot finishing doesn't flip this mid-day, only once
-    /// displayIsComplete actually turns true (the day after) does the
-    /// next phase's own first day become what the Train tab shows.
-    /// Leaves everything alone whenever there's no single, unambiguous
-    /// "next" phase already queued up — Phase Complete's own picker still
-    /// handles that case. Must run after repairMissingCycleNumbers() (its
-    /// cycle-completion math depends on correct cycleNumbers).
+    /// If a Phase is actually complete (its real last cycle, not the
+    /// display-frozen "wait for tomorrow" check the Phase Complete screen
+    /// itself gates on) and a standby phase numbered exactly one higher
+    /// already exists (built ahead of time via the Phases tab's "+"),
+    /// auto-continues straight into it — no "Phase Complete" screen, no
+    /// manual pick needed. WorkoutLogView.finishWorkout already does this
+    /// the instant a completing workout is saved; this is the same check
+    /// run again on launch/foreground, catching completion from any other
+    /// path (import, a History edit) that isn't live logging. Leaves
+    /// everything alone whenever there's no single, unambiguous "next"
+    /// phase already queued up — Phase Complete's own picker (which still
+    /// waits for displayIsComplete, so it doesn't flip mid-day when
+    /// there's nothing to auto-continue into) handles that case. Must run
+    /// after repairMissingCycleNumbers() (isComplete's cycle-completion
+    /// math depends on correct cycleNumbers).
     private func autoContinueQueuedPhases() {
         var changed = false
-        for phase in phases where phase.isActive && phase.displayIsComplete {
+        for phase in phases where phase.isActive && phase.isComplete {
             guard let next = phases.queuedNextPhase(after: phase) else { continue }
             next.activate(among: phases)
             changed = true
