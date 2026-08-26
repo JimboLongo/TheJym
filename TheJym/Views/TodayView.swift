@@ -10,6 +10,17 @@
 import SwiftUI
 import SwiftData
 
+/// A day to jump straight into logging, paired with whichever Phase it
+/// actually belongs to — not always the currently-active one. See
+/// TodayView.effectiveDaySource: once the active phase's cycles are
+/// exhausted, a day beyond what's already been logged today resolves to
+/// the queued next phase's own matching day instead.
+private struct DayJumpTarget: Identifiable, Hashable {
+    let phase: Phase
+    let day: PhaseDay
+    var id: PersistentIdentifier { day.persistentModelID }
+}
+
 struct TodayView: View {
     @Binding var overflowTab: OverflowTab?
     /// Passed down to WorkoutLogView so finishing a workout can jump to the
@@ -39,7 +50,7 @@ struct TodayView: View {
     @State private var showingPhaseSetup = false
     @State private var showingNextPhasePlanner = false
     @State private var statsPhase: Phase?
-    @State private var quickJumpDay: PhaseDay?
+    @State private var quickJumpTarget: DayJumpTarget?
     /// Today's already-logged session for the featured day, opened for
     /// editing when that day is tapped after it's already done.
     @State private var editingTodaySession: WorkoutSession?
@@ -85,6 +96,30 @@ struct TodayView: View {
     private func activatePhase(_ phase: Phase) {
         phase.activate(among: phases)
         try? context.save()
+    }
+
+    /// Once `phase`'s cycles are truly exhausted (currentCycle >
+    /// totalCycles — nothing legitimate left to train under it) and a
+    /// phase numbered one higher is already queued to auto-continue into
+    /// (see Array<Phase>.queuedNextPhase), a day beyond what's already
+    /// been logged today should preview/start against THAT phase's own
+    /// matching day instead of `phase`'s own template wrapped back to day
+    /// one — there's no real "Lower Day 1" left under a phase with no
+    /// cycles remaining. Matched by name (case-insensitive) + isRest,
+    /// since day identity has no other link across two different Phase
+    /// objects. Nil (use `phase`/`day` as given) whenever `phase` still
+    /// has real cycles left, there's no queued next phase, or it has no
+    /// day sharing this one's name — the featured "what I did today" row
+    /// deliberately never calls this, so it always keeps showing today's
+    /// own phase regardless.
+    private func effectiveDaySource(_ day: PhaseDay, phase: Phase) -> (phase: Phase, day: PhaseDay) {
+        guard phase.currentCycle > phase.totalCycles,
+              let next = phases.queuedNextPhase(after: phase),
+              let matchingDay = next.orderedDays.first(where: {
+                  $0.isRest == day.isRest && $0.name.localizedCaseInsensitiveCompare(day.name) == .orderedSame
+              })
+        else { return (phase, day) }
+        return (next, matchingDay)
     }
 
     /// This exercise's logs, same plan key, any phase — mirrors
@@ -155,13 +190,11 @@ struct TodayView: View {
             .sheet(item: $editingQuickWorkout) { day in
                 QuickWorkoutBuilderView(existingDay: day)
             }
-            .navigationDestination(item: $quickJumpDay) { day in
-                if let phase = activePhase {
-                    if day.isRest {
-                        RestDayLogView(phase: phase, day: day, selectedTab: $selectedTab)
-                    } else {
-                        WorkoutLogView(phase: phase, day: day, selectedTab: $selectedTab)
-                    }
+            .navigationDestination(item: $quickJumpTarget) { target in
+                if target.day.isRest {
+                    RestDayLogView(phase: target.phase, day: target.day, selectedTab: $selectedTab)
+                } else {
+                    WorkoutLogView(phase: target.phase, day: target.day, selectedTab: $selectedTab)
                 }
             }
             .navigationDestination(item: $startingQuickWorkout) { day in
@@ -485,12 +518,16 @@ struct TodayView: View {
     }
 
     /// Reopens today's already-logged session for editing if this day is
-    /// done, otherwise jumps into starting it fresh.
-    private func tapFeaturedDay(_ day: PhaseDay, isDone: Bool) {
+    /// done, otherwise jumps into starting it fresh. Always against
+    /// `phase` itself, never redirected via effectiveDaySource — the
+    /// featured row is specifically what today already did (or is about
+    /// to do) under this phase, regardless of whether its cycles are
+    /// otherwise exhausted.
+    private func tapFeaturedDay(_ phase: Phase, _ day: PhaseDay, isDone: Bool) {
         if isDone, let session = todaySession(for: day) {
             editingTodaySession = session
         } else {
-            quickJumpDay = day
+            quickJumpTarget = DayJumpTarget(phase: phase, day: day)
         }
     }
 
@@ -561,7 +598,7 @@ struct TodayView: View {
         let isDone = isFeaturedDayDoneToday(day)
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                tapFeaturedDay(day, isDone: isDone)
+                tapFeaturedDay(phase, day, isDone: isDone)
             } label: {
                 Image(systemName: isDone ? "checkmark.circle.fill" : "play.circle.fill")
                     .font(.system(size: 30))
@@ -592,7 +629,7 @@ struct TodayView: View {
         .padding(.vertical, 2)
         .opacity(isDone ? 0.5 : 1)
         .contentShape(Rectangle())
-        .onTapGesture { tapFeaturedDay(day, isDone: isDone) }
+        .onTapGesture { tapFeaturedDay(phase, day, isDone: isDone) }
     }
 
     /// Any other day in the cycle: just its name, with a disclosure to
@@ -601,12 +638,18 @@ struct TodayView: View {
     /// and the log button on one line instead of needing to expand.
     @ViewBuilder
     private func collapsibleDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
+        // Redirected once, up front, to whichever phase actually owns this
+        // day going forward — see effectiveDaySource's own doc. `day`
+        // itself (not `effective.day`) still keys expand/collapse state
+        // and the isRest branch, since those just describe this row's own
+        // identity in the list, not what it resolves to when tapped.
+        let effective = effectiveDaySource(day, phase: phase)
         if day.isRest {
             HStack {
                 Label(day.name, systemImage: "moon.zzz").foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    quickJumpDay = day
+                    quickJumpTarget = DayJumpTarget(phase: effective.phase, day: effective.day)
                 } label: {
                     Label("Log Rest Day Activity", systemImage: "figure.walk")
                         .font(.subheadline)
@@ -623,7 +666,7 @@ struct TodayView: View {
                     }
                 } label: {
                     HStack {
-                        Text(dayDisplayName(day, phase: phase))
+                        Text(dayDisplayName(effective.day, phase: effective.phase))
                         Spacer()
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption)
@@ -634,19 +677,19 @@ struct TodayView: View {
                 .buttonStyle(.plain)
 
                 if isExpanded {
-                    let plan = phase.plan(for: day)
+                    let plan = effective.phase.plan(for: effective.day)
                     if plan.isEmpty {
-                        Text("No exercises planned for \(day.name).")
+                        Text("No exercises planned for \(effective.day.name).")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
                         ForEach(plan, id: \.persistentModelID) { pe in
-                            plannedExerciseRow(pe, phase: phase, day: day)
+                            plannedExerciseRow(pe, phase: effective.phase, day: effective.day)
                         }
                     }
                     Button {
-                        quickJumpDay = day
+                        quickJumpTarget = DayJumpTarget(phase: effective.phase, day: effective.day)
                     } label: {
-                        Label("Start \(day.name) Workout", systemImage: "play.fill")
+                        Label("Start \(effective.day.name) Workout", systemImage: "play.fill")
                             .font(.subheadline)
                     }
                 }

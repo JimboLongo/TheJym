@@ -278,24 +278,26 @@ struct ContentView: View {
         if changed { try? context.save() }
     }
 
-    /// If a Phase is actually complete (its real last cycle, not the
-    /// display-frozen "wait for tomorrow" check the Phase Complete screen
-    /// itself gates on) and a standby phase numbered exactly one higher
-    /// already exists (built ahead of time via the Phases tab's "+"),
-    /// auto-continues straight into it — no "Phase Complete" screen, no
-    /// manual pick needed. WorkoutLogView.finishWorkout already does this
-    /// the instant a completing workout is saved; this is the same check
-    /// run again on launch/foreground, catching completion from any other
-    /// path (import, a History edit) that isn't live logging. Leaves
-    /// everything alone whenever there's no single, unambiguous "next"
-    /// phase already queued up — Phase Complete's own picker (which still
-    /// waits for displayIsComplete, so it doesn't flip mid-day when
-    /// there's nothing to auto-continue into) handles that case. Must run
-    /// after repairMissingCycleNumbers() (isComplete's cycle-completion
+    /// If a Phase just showed as complete (displayIsComplete — the day
+    /// after its last slot filled, same freeze the Phase Complete screen
+    /// itself waits on so today's own header/summary doesn't flip out
+    /// from under you mid-day) and a standby phase numbered exactly one
+    /// higher already exists (built ahead of time via the Phases tab's
+    /// "+"), auto-continues straight into it — no "Phase Complete"
+    /// screen, no manual pick needed, once the day actually rolls over.
+    /// The Train tab's own "next up" preview (TodayView.effectiveDaySource)
+    /// separately handles TODAY, before this fires — once a phase's
+    /// cycles are truly exhausted, a day beyond what's already been
+    /// logged today previews the queued phase's matching day instead of
+    /// wrapping this phase's own template back to day one, even while
+    /// this phase is still the one shown active. Leaves everything alone
+    /// whenever there's no single, unambiguous "next" phase already
+    /// queued up — Phase Complete's own picker still handles that case.
+    /// Must run after repairMissingCycleNumbers() (its cycle-completion
     /// math depends on correct cycleNumbers).
     private func autoContinueQueuedPhases() {
         var changed = false
-        for phase in phases where phase.isActive && phase.isComplete {
+        for phase in phases where phase.isActive && phase.displayIsComplete {
             guard let next = phases.queuedNextPhase(after: phase) else { continue }
             next.activate(among: phases)
             changed = true
