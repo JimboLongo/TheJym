@@ -133,6 +133,7 @@ struct ContentView: View {
             repairMissingCycleNumbers()
             undoPrematurePhaseAutoContinue()
             autoContinueQueuedPhases()
+            repairLegacyRestActivityNames()
             refreshStreakNotification()
             refreshWeightNotification()
         }
@@ -304,6 +305,102 @@ struct ContentView: View {
             next.activate(among: phases)
             changed = true
         }
+        if changed { try? context.save() }
+    }
+
+    /// One-time repair for pre-Aug-17 rest-day activity rows: commit
+    /// e5089d3 moved a walk's distance from ExerciseLog.exerciseName
+    /// (e.g. "Walk (3.1 mi)") into that log's single SetLog.weight, linked
+    /// back to the originating RestDayActivity via the new
+    /// ExerciseLog.restDayActivity relationship — but only changed the
+    /// write paths, never migrated records already in the old shape.
+    /// HistoryView gates its whole distance display/edit path on
+    /// restDayActivity != nil, so an unmigrated row renders as a normal
+    /// exercise ("3.1 lbs x 1 rep") instead of a distance.
+    ///
+    /// Only ever touches a log whose exerciseName still carries the old
+    /// " (N mi)"/" (N km)" suffix — matched via the same regex `hasMatch`
+    /// used to identify junk ExerciseDef rows below. A log already in the
+    /// new shape (bare name, distance already in SetLog.weight,
+    /// restDayActivity already set) has no suffix to match and is left
+    /// completely alone; the suffix requirement is what keeps this from
+    /// ever touching a correct row. Also requires exactly one SetLog —
+    /// that's the shape the old write path always produced, and every row
+    /// found on-device matched it, but a row with any other count is left
+    /// alone rather than guessed at.
+    ///
+    /// For each match: finds the RestDayActivity dated the same calendar
+    /// day with the stripped base name (and matching unit) and prefers
+    /// ITS distance, since that's what StatsEngine's miles-walked totals
+    /// already read — only falls back to the value parsed out of the old
+    /// name if no RestDayActivity matches (didn't happen for any row this
+    /// was checked against, but the fallback is kept for safety). Then
+    /// renames the log, sets its one SetLog's weight to that distance, and
+    /// links restDayActivity — the link is what actually makes History's
+    /// distance UI take over; a rename alone would leave the row broken.
+    ///
+    /// Also deletes two kinds of junk ExerciseDef, so a rest activity has
+    /// no entry point into the Exercises tab (matching c417e8a's intent,
+    /// which only ever reached the import path — TodayView.logActivity's
+    /// own ExerciseDef.ensureAnyVariantExists call was still live until
+    /// this same repair):
+    ///  1. Any def whose name matches the suffix — left behind by the old
+    ///     write path's ensureAnyVariantExists(name: "Walk (2 mi)", ...),
+    ///     one per distinct distance ever logged.
+    ///  2. Any def named exactly like a RestDayActivity (e.g. bare
+    ///     "Walk") where EVERY ExerciseLog sharing that name traces back
+    ///     to a same-day RestDayActivity of that name — i.e. nothing
+    ///     using that name is a real, independently-planned exercise.
+    ///     Checked by date match, not just `restDayActivity != nil`, so a
+    ///     rest activity logged before restDayActivity existed (no
+    ///     distance, so no suffix for the loop above to migrate) still
+    ///     counts as accounted for and doesn't block the def's deletion.
+    /// Both are safe: ExerciseDef has no incoming relationship (matched
+    /// only by name string), and neither deletion touches the
+    /// ExerciseLog/RestDayActivity data itself.
+    private func repairLegacyRestActivityNames() {
+        let suffixPattern = /^(.+) \((\d+(?:\.\d+)?) (mi|km)\)$/
+        guard let logs = try? context.fetch(FetchDescriptor<ExerciseLog>()) else { return }
+        let restActivities = (try? context.fetch(FetchDescriptor<RestDayActivity>())) ?? []
+        let cal = Calendar.current
+        var changed = false
+
+        for log in logs {
+            guard log.restDayActivity == nil,
+                  let match = log.exerciseName.firstMatch(of: suffixPattern),
+                  log.sets.count == 1, let set = log.sets.first
+            else { continue }
+            let baseName = String(match.1)
+            let parsedDistance = Double(match.2)
+            let unit = String(match.3)
+            let logDate = log.session?.date
+            let matchedActivity = restActivities.first { activity in
+                activity.name == baseName && activity.distanceUnit == unit
+                    && logDate.map { cal.isDate(activity.date, inSameDayAs: $0) } == true
+            }
+            set.weight = matchedActivity?.distance ?? parsedDistance ?? 0
+            log.exerciseName = baseName
+            log.restDayActivity = matchedActivity
+            changed = true
+        }
+
+        let restActivityDatesByName = Dictionary(grouping: restActivities, by: \.name)
+            .mapValues { Set($0.map { cal.startOfDay(for: $0.date) }) }
+        for def in (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? [] {
+            let matchesSuffix = def.name.firstMatch(of: suffixPattern) != nil
+            let restDatesForName = restActivityDatesByName[def.name]
+            let isRestActivityOnlyName = restDatesForName.map { restDates in
+                logs.allSatisfy { candidate in
+                    guard candidate.exerciseName == def.name else { return true }
+                    guard let sessionDate = candidate.session?.date else { return false }
+                    return restDates.contains(cal.startOfDay(for: sessionDate))
+                }
+            } ?? false
+            guard matchesSuffix || isRestActivityOnlyName else { continue }
+            context.delete(def)
+            changed = true
+        }
+
         if changed { try? context.save() }
     }
 

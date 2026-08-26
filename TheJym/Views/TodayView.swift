@@ -1017,8 +1017,11 @@ struct RestDayLogView: View {
         let set = SetLog(index: 0, weight: distance ?? 0, reps: 1)
         set.exerciseLog = log
         context.insert(set)
-        var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
-        ExerciseDef.ensureAnyVariantExists(name: trimmed, knownDefs: &knownDefs, context: context)
+        // Deliberately no ExerciseDef.ensureAnyVariantExists here — a rest
+        // activity's name (e.g. "Walk") isn't a real exercise, so it
+        // shouldn't show up in the Exercises tab. Same reasoning
+        // c417e8a already applied to the import path; this was the one
+        // remaining write path still creating that junk entry.
 
         try? context.save()
         activityName = ""
