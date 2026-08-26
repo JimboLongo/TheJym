@@ -64,6 +64,33 @@ struct TodayView: View {
     private var activePhase: Phase? { phases.first(where: \.isActive) }
     private var settings: AppSettings? { settingsList.first }
 
+    /// Other saved phases not currently running and not yet complete —
+    /// pre-built ahead of time (e.g. via the Phases tab's "+") so they can
+    /// be picked up directly instead of always building a fresh one.
+    /// Offered alongside "build a new phase" whenever there's no active
+    /// phase to train right now — never started yet, or the active one
+    /// just finished (displayIsComplete, same frozen check the "Phase
+    /// Complete" screen itself gates on, so this list can't disagree with
+    /// it about whether that phase still counts as running).
+    private var standbyPhases: [Phase] {
+        phases.filter { !$0.isActive && !$0.displayIsComplete }.sorted { $0.number < $1.number }
+    }
+
+    /// Makes `phase` the active one, deactivating whichever was active
+    /// before. Resets startDate to now only if nothing's been logged under
+    /// it yet — a standby phase's creation-time startDate is stale by the
+    /// time it's actually picked up; one that's already been trained (e.g.
+    /// switched away from and back) keeps its real start so pace math
+    /// against its own history stays correct.
+    private func activatePhase(_ phase: Phase) {
+        for p in phases where p.isActive { p.isActive = false }
+        if phase.sessions.isEmpty {
+            phase.startDate = .now
+        }
+        phase.isActive = true
+        try? context.save()
+    }
+
     /// This exercise's logs, same plan key, any phase — mirrors
     /// WorkoutLogView.history(for:) exactly, since the preview needs to
     /// resolve the same starting weight opening the workout would.
@@ -238,15 +265,55 @@ struct TodayView: View {
 
     @ViewBuilder
     private var noPhaseSection: some View {
-        Section {
-            ContentUnavailableView {
-                Label("No Active Phase", systemImage: "calendar.badge.plus")
-            } description: {
-                Text("Build your split day by day (e.g. Pull A, Push A, Legs A, Rest), pick your exercises, and choose how many cycles the phase runs.")
-            } actions: {
-                Button("Set Up Phase 1") { showingPhaseSetup = true }
-                    .buttonStyle(.borderedProminent)
+        if standbyPhases.isEmpty {
+            Section {
+                ContentUnavailableView {
+                    Label("No Active Phase", systemImage: "calendar.badge.plus")
+                } description: {
+                    Text("Build your split day by day (e.g. Pull A, Push A, Legs A, Rest), pick your exercises, and choose how many cycles the phase runs.")
+                } actions: {
+                    Button("Set Up Phase 1") { showingPhaseSetup = true }
+                        .buttonStyle(.borderedProminent)
+                }
             }
+        } else {
+            Section {
+                Label("No Active Phase", systemImage: "calendar.badge.plus")
+                    .foregroundStyle(.secondary)
+            } footer: {
+                Text("Choose one of your saved phases below to pick up where it left off, or build a new one.")
+            }
+            Section("Choose a Phase") {
+                standbyPhaseRows
+                Button("Build a New Phase") { showingPhaseSetup = true }
+            }
+        }
+    }
+
+    /// Shared between the empty-Train-tab state and the phase-complete
+    /// screen — one tappable row per standby phase, switching straight to
+    /// it.
+    private var standbyPhaseRows: some View {
+        ForEach(standbyPhases, id: \.persistentModelID) { phase in
+            Button {
+                activatePhase(phase)
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Phase \(phase.number)").font(.headline)
+                        Text(phase.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
         }
     }
 
@@ -592,7 +659,7 @@ struct TodayView: View {
             ContentUnavailableView {
                 Label("Phase \(phase.number) Complete 🎉", systemImage: "trophy.fill")
             } description: {
-                Text("All \(phase.totalCycles) cycles done. Time to plan Phase \(phase.number + 1).")
+                Text("All \(phase.totalCycles) cycles done. Choose what's next.")
             } actions: {
                 if settings?.aiAssistantEnabled == true {
                     Button("Plan Phase \(phase.number + 1) with AI") { showingNextPhasePlanner = true }
@@ -602,6 +669,11 @@ struct TodayView: View {
                     phase.isActive = false
                     showingPhaseSetup = true
                 }
+            }
+        }
+        if !standbyPhases.isEmpty {
+            Section("Or Switch to an Existing Phase") {
+                standbyPhaseRows
             }
         }
     }

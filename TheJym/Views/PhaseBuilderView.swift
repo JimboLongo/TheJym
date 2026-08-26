@@ -229,7 +229,7 @@ struct PhaseBuilderView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Start Phase") { save() }
+                    Button("Save") { save() }
                         .disabled(!canSave)
                 }
             }
@@ -430,13 +430,19 @@ struct PhaseBuilderView: View {
 
     private func save() {
         let nextNumber = (phases.map(\.number).max() ?? 0) + 1
-        // Deactivate old phases
-        for p in phases { p.isActive = false }
+        // Only takes over as the active phase if nothing else already is —
+        // e.g. the very first phase ever, or one built right after
+        // explicitly deactivating a just-completed phase (TodayView,
+        // NextPhasePlannerView). Building a phase ahead of time while
+        // another is still running (Phases tab's "+") just saves it as a
+        // standby instead, matching this screen's "Save" button — it
+        // doesn't presume you want to switch to it yet.
+        let shouldActivate = !phases.contains(where: \.isActive)
 
         let deload = (settingsList.first?.deloadWeeksEnabled == true)
             ? ProgressionEngine.deloadCycle(totalCycles: cycles) : 0
 
-        let phase = Phase(number: nextNumber, totalCycles: cycles, deloadCycle: deload)
+        let phase = Phase(number: nextNumber, totalCycles: cycles, isActive: shouldActivate, deloadCycle: deload)
         context.insert(phase)
 
         var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
