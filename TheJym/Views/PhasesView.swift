@@ -93,11 +93,16 @@ private struct DayCycleKey: Hashable {
 
 /// One (day, cycle, base slot) an override action targets — identifies
 /// which base slot to override/revert and which cycle to do it for.
+/// `effective` is what this cycle is currently actually planned to train
+/// (the base slot itself, or its existing override) — "Change Set…" reads
+/// its exercise name from here, not `baseSlot`, so changing the set again
+/// after already swapping the exercise stays on the swapped-to exercise.
 private struct OverrideTarget: Identifiable {
     let id = UUID()
     let day: PhaseDay
     let cycle: Int
     let baseSlot: PlannedExercise
+    let effective: PlannedExercise
     let isOverridden: Bool
 }
 
@@ -122,11 +127,17 @@ struct PhaseDetailView: View {
     /// changing a set's weight/reps here goes through the exact same code
     /// path/validation as editing it from History.
     @State private var editingSession: WorkoutSession?
-    /// Showing the "Change Exercise or Set… / Revert to Default" menu for
-    /// this not-yet-logged slot.
+    /// Showing the "Change Exercise… / Change Set… / Revert to Default"
+    /// menu for this not-yet-logged slot.
     @State private var overrideTarget: OverrideTarget?
-    /// Picking a replacement exercise/set for this slot's cycle.
+    /// Picking a whole replacement exercise (+ its set) for this slot's
+    /// cycle.
     @State private var pickingReplacementFor: OverrideTarget?
+    /// Picking a different set for this slot's cycle, same exercise.
+    @State private var pickingSetFor: OverrideTarget?
+    /// Adding a brand new set (for `pickingSetFor`'s exercise) not already
+    /// saved on it.
+    @State private var addingNewSetFor: OverrideTarget?
 
     init(phase: Phase) {
         self.phase = phase
@@ -181,7 +192,7 @@ struct PhaseDetailView: View {
                                                 editingSession = cycleSession
                                             } else {
                                                 overrideTarget = OverrideTarget(day: day, cycle: cycle, baseSlot: baseSlot,
-                                                                               isOverridden: isOverridden)
+                                                                               effective: effectiveSlot, isOverridden: isOverridden)
                                             }
                                         }
                                     }
@@ -210,19 +221,22 @@ struct PhaseDetailView: View {
             SessionDetailView(session: session)
         }
         .confirmationDialog(
-            overrideTarget.map { "Cycle \($0.cycle) — \($0.baseSlot.exerciseName)" } ?? "",
+            overrideTarget.map { "Cycle \($0.cycle) — \($0.effective.exerciseName)" } ?? "",
             isPresented: Binding(get: { overrideTarget != nil }, set: { if !$0 { overrideTarget = nil } }),
             titleVisibility: .visible
         ) {
-            Button("Change Exercise or Set…") {
+            Button("Change Exercise…") {
                 pickingReplacementFor = overrideTarget
+                overrideTarget = nil
+            }
+            Button("Change Set…") {
+                pickingSetFor = overrideTarget
                 overrideTarget = nil
             }
             if overrideTarget?.isOverridden == true {
                 Button("Revert to Default", role: .destructive) {
                     if let target = overrideTarget {
                         target.day.removeCycleOverride(for: target.baseSlot, cycle: target.cycle, context: context)
-                        try? context.save()
                     }
                     overrideTarget = nil
                 }
@@ -237,6 +251,54 @@ struct PhaseDetailView: View {
                                             targetReps: reps, goalType: goalType, isBodyweight: def.isBodyweight,
                                             context: context)
                 try? context.save()
+            }
+        }
+        .confirmationDialog(
+            pickingSetFor?.effective.exerciseName ?? "",
+            isPresented: Binding(get: { pickingSetFor != nil }, set: { if !$0 { pickingSetFor = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let target = pickingSetFor,
+               let def = exerciseDefs.first(where: { $0.name == target.effective.exerciseName }) {
+                ForEach(def.repSchemes, id: \.self) { reps in
+                    Button(reps.map(String.init).joined(separator: "/")) {
+                        target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
+                                                    targetReps: reps, goalType: .fixedSets, isBodyweight: def.isBodyweight,
+                                                    context: context)
+                        try? context.save()
+                        pickingSetFor = nil
+                    }
+                }
+                ForEach(def.repTotalTargets, id: \.self) { total in
+                    Button("\(total) total reps") {
+                        target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
+                                                    targetReps: [], goalType: .repTotal(target: total), isBodyweight: def.isBodyweight,
+                                                    context: context)
+                        try? context.save()
+                        pickingSetFor = nil
+                    }
+                }
+            }
+            Button("Add New Set…") {
+                addingNewSetFor = pickingSetFor
+                pickingSetFor = nil
+            }
+            Button("Cancel", role: .cancel) { pickingSetFor = nil }
+        }
+        .sheet(item: $addingNewSetFor) { target in
+            AddSetSheet(exerciseName: target.effective.exerciseName) { goalType, reps in
+                let def = exerciseDefs.first { $0.name == target.effective.exerciseName }
+                    ?? { let new = ExerciseDef(name: target.effective.exerciseName, isBodyweight: target.effective.isBodyweight)
+                         context.insert(new); return new }()
+                switch goalType {
+                case .fixedSets: def.addRepScheme(reps)
+                case .repTotal(let total): def.addRepTotalTarget(total)
+                }
+                target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
+                                            targetReps: reps, goalType: goalType, isBodyweight: def.isBodyweight,
+                                            context: context)
+                try? context.save()
+                addingNewSetFor = nil
             }
         }
     }
