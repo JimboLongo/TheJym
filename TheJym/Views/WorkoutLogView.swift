@@ -117,7 +117,7 @@ struct WorkoutLogView: View {
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
         guard let phase else { return false }
-        return settings?.deloadWeeksEnabled == true && phase.deloadCycle == phase.currentCycle
+        return phase.isDeloadCycle(phase.currentCycle, aiDeloadEnabled: settings?.deloadWeeksEnabled == true)
     }
     /// The custom auto weight-increase rule's threshold/amount, only when
     /// the Settings toggle for it is on — nil otherwise, which tells
@@ -255,6 +255,28 @@ struct WorkoutLogView: View {
         draft.isExpanded ? "ex-\(draft.id)" : "summary"
     }
 
+    /// Broken out of `body` — inlining this ExercisePageView construction
+    /// directly in the switch statement pushed the type-checker over its
+    /// time budget once `isDeloadCycle` was added as another argument.
+    private func exercisePage(_ i: Int, plateSizes: [Double], dumbbellIncrement: Double,
+                              pageHeight: CGFloat) -> some View {
+        ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
+                         exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
+                         plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
+                         pageHeight: pageHeight, currentBodyweight: currentBodyweight,
+                         currentPageID: $currentPageID, allDrafts: drafts,
+                         isDeloadCycle: isDeloadCycle)
+    }
+
+    private func completedSummaryPage(pageHeight: CGFloat) -> some View {
+        CompletedSummaryPageView(drafts: $drafts, allLogs: allExerciseLogs,
+                                 currentBodyweight: currentBodyweight,
+                                 pageHeight: pageHeight,
+                                 currentPageID: $currentPageID,
+                                 isDeloadCycle: isDeloadCycle,
+                                 onFinish: { showDatePicker = true })
+    }
+
     var body: some View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
         let dumbbellIncrement = settings?.dumbbellRoundingIncrement ?? 5
@@ -265,18 +287,11 @@ struct WorkoutLogView: View {
                         Group {
                             switch page {
                             case .exercise(let i):
-                                ExercisePageView(draft: $drafts[i], allLogs: allExerciseLogs,
-                                                exerciseDef: exerciseDefs.first { $0.name == drafts[i].name },
-                                                plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
-                                                pageHeight: geo.size.height, currentBodyweight: currentBodyweight,
-                                                currentPageID: $currentPageID, allDrafts: drafts)
+                                exercisePage(i, plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
+                                            pageHeight: geo.size.height)
                                     .id("ex-\(drafts[i].id)")
                             case .completedSummary:
-                                CompletedSummaryPageView(drafts: $drafts, allLogs: allExerciseLogs,
-                                                        currentBodyweight: currentBodyweight,
-                                                        pageHeight: geo.size.height,
-                                                        currentPageID: $currentPageID,
-                                                        onFinish: { showDatePicker = true })
+                                completedSummaryPage(pageHeight: geo.size.height)
                                     .id("summary")
                             }
                         }
@@ -741,7 +756,7 @@ struct WorkoutLogView: View {
             // Frozen at save time — see ExerciseLog.achievedRank's own doc
             // for why this isn't just recomputed live in History instead.
             log.achievedRank = PaceEngine.rank(forNewTotal: log.totalWeightMoved, exerciseName: d.name,
-                                               planKey: log.planKey, allLogs: allExerciseLogs)
+                                               planKey: log.planKey, isDeload: isDeloadCycle, allLogs: allExerciseLogs)
             log.missedTarget = missedAnyTarget(for: d)
 
             // Recap + next-cycle progression — skip during a deload (weights
@@ -846,6 +861,11 @@ struct ExercisePageView: View {
     /// order — used only to find the next still-open one to jump to right
     /// after this one collapses (see nextOpenPageID()).
     let allDrafts: [WorkoutLogView.ExerciseDraft]
+    /// Whether the day/cycle this exercise belongs to is a deload — a
+    /// deload session only ever compares against other deload sessions,
+    /// and vice versa (see PaceEngine.comparisons's own doc), so every
+    /// pace/rank call below passes this through.
+    let isDeloadCycle: Bool
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1350,6 +1370,7 @@ struct ExercisePageView: View {
                                targetReps: draft.targetReps,
                                currentWeights: draft.sets.map { $0.weight ?? 0 },
                                isBodyweight: draft.isBodyweight,
+                               isDeload: isDeloadCycle,
                                allLogs: allLogs)
     }
     private func repTotalComparisons(target: Int) -> [PaceEngine.RepTotalComparisonTarget] {
@@ -1357,7 +1378,7 @@ struct ExercisePageView: View {
             ? draft.sets.map { "BW+\(Formatters.trim($0.weight ?? 0))" }.joined(separator: "/")
             : draft.sets.map { Formatters.trim($0.weight ?? 0) }.joined(separator: "/")
         return PaceEngine.repTotalComparisons(for: draft.name, target: target,
-                                              currentWeightsKey: weightsKey, allLogs: allLogs)
+                                              currentWeightsKey: weightsKey, isDeload: isDeloadCycle, allLogs: allLogs)
     }
     /// Same format `ExerciseLog.planKey`/`PlannedExercise.planKey` use —
     /// this exercise's plan key, computed from the in-progress draft (which
@@ -1378,7 +1399,7 @@ struct ExercisePageView: View {
         let total = draft.loggedTotal(bodyweight: currentBodyweight)
         guard total > 0 else { return nil }
         return PaceEngine.medalRank(forNewTotal: total, exerciseName: draft.name,
-                                    planKey: draftPlanKey, allLogs: allLogs)
+                                    planKey: draftPlanKey, isDeload: isDeloadCycle, allLogs: allLogs)
     }
     /// Uncapped version of `liveMedalRank` — 4th, 5th, etc. once it's not a
     /// medal. Recorded onto the draft once the exercise is complete (see
@@ -1388,7 +1409,7 @@ struct ExercisePageView: View {
         let total = draft.loggedTotal(bodyweight: currentBodyweight)
         guard total > 0 else { return nil }
         return PaceEngine.rank(forNewTotal: total, exerciseName: draft.name,
-                               planKey: draftPlanKey, allLogs: allLogs)
+                               planKey: draftPlanKey, isDeload: isDeloadCycle, allLogs: allLogs)
     }
     /// True the instant every set except the last is logged and the last
     /// one isn't yet — the one moment `checkLastSetPopup` fires. False for
@@ -1411,7 +1432,8 @@ struct ExercisePageView: View {
         // draft.loggedTotal only sums sets that already have both a weight
         // and reps — the still-unlogged last set is naturally excluded.
         let loggedSoFar = draft.loggedTotal(bodyweight: currentBodyweight)
-        let thresholds = PaceEngine.medalThresholds(exerciseName: draft.name, planKey: draftPlanKey, allLogs: allLogs)
+        let thresholds = PaceEngine.medalThresholds(exerciseName: draft.name, planKey: draftPlanKey,
+                                                    isDeload: isDeloadCycle, allLogs: allLogs)
         func repsNeeded(_ threshold: Double?) -> Int? {
             guard let threshold else { return nil }
             let remaining = threshold - loggedSoFar
@@ -2949,6 +2971,8 @@ struct CompletedSummaryPageView: View {
     let currentBodyweight: Double?
     let pageHeight: CGFloat
     @Binding var currentPageID: String?
+    /// See ExercisePageView's own doc — same deload-matched comparisons.
+    let isDeloadCycle: Bool
     /// Called when the finish button here is tapped — starts the date
     /// confirmation step in the parent.
     var onFinish: () -> Void
@@ -3003,6 +3027,7 @@ struct CompletedSummaryPageView: View {
                                targetReps: draft.targetReps,
                                currentWeights: draft.sets.map { $0.weight ?? 0 },
                                isBodyweight: draft.isBodyweight,
+                               isDeload: isDeloadCycle,
                                allLogs: allLogs)
     }
     private func repTotalComparisons(for draft: WorkoutLogView.ExerciseDraft, target: Int) -> [PaceEngine.RepTotalComparisonTarget] {
@@ -3010,7 +3035,7 @@ struct CompletedSummaryPageView: View {
             ? draft.sets.map { "BW+\(Formatters.trim($0.weight ?? 0))" }.joined(separator: "/")
             : draft.sets.map { Formatters.trim($0.weight ?? 0) }.joined(separator: "/")
         return PaceEngine.repTotalComparisons(for: draft.name, target: target,
-                                              currentWeightsKey: weightsKey, allLogs: allLogs)
+                                              currentWeightsKey: weightsKey, isDeload: isDeloadCycle, allLogs: allLogs)
     }
     private func avgWeightPerRep(for draft: WorkoutLogView.ExerciseDraft) -> Double {
         let totalReps = draft.sets.compactMap(\.reps).reduce(0, +)

@@ -270,6 +270,11 @@ struct HistoryView: View {
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(log.exerciseName).font(.subheadline.weight(.semibold))
+                if log.session?.isDeload == true {
+                    Text("(Deload)")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
                 if let rank = log.achievedRank {
                     if log.missedTarget {
                         Image(systemName: "xmark.circle.fill")

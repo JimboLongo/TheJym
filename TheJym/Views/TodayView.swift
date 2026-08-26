@@ -107,7 +107,13 @@ struct TodayView: View {
         return settings?.dumbbellRoundingIncrement ?? 5
     }
     private func isDeloadCycle(_ phase: Phase) -> Bool {
-        settings?.deloadWeeksEnabled == true && phase.deloadCycle == phase.currentCycle
+        phase.isDeloadCycle(phase.currentCycle, aiDeloadEnabled: settings?.deloadWeeksEnabled == true)
+    }
+    /// A training day's name, tagged "(Deload)" during a deload cycle — a
+    /// Rest day never is, since there's no weight for it to cut. e.g.
+    /// "Lower A (Deload)".
+    private func dayDisplayName(_ day: PhaseDay, phase: Phase) -> String {
+        (!day.isRest && isDeloadCycle(phase)) ? "\(day.name) (Deload)" : day.name
     }
     private var customIncreaseStreak: Int? {
         settings?.customWeightIncreaseEnabled == true ? settings?.customWeightIncreaseStreak : nil
@@ -361,7 +367,7 @@ struct TodayView: View {
                                  total: Double(phase.orderedDays.count * phase.totalCycles))
                     HStack {
                         Text("Cycle \(phase.displayCurrentCycle) of \(phase.totalCycles)")
-                        if settings?.deloadWeeksEnabled == true, phase.deloadCycle == phase.displayCurrentCycle {
+                        if phase.isDeloadCycle(phase.displayCurrentCycle, aiDeloadEnabled: settings?.deloadWeeksEnabled == true) {
                             Label("Deload", systemImage: "arrow.down.heart")
                                 .foregroundStyle(.orange)
                         }
@@ -575,7 +581,7 @@ struct TodayView: View {
             } else {
                 let plan = phase.plan(for: day)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(day.name).font(.headline).strikethrough(isDone)
+                    Text(dayDisplayName(day, phase: phase)).font(.headline).strikethrough(isDone)
                     if plan.isEmpty {
                         Text("No exercises planned — edit the phase to add some.")
                             .font(.caption2).foregroundStyle(.secondary)
@@ -621,7 +627,7 @@ struct TodayView: View {
                     }
                 } label: {
                     HStack {
-                        Text(day.name)
+                        Text(dayDisplayName(day, phase: phase))
                         Spacer()
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption)

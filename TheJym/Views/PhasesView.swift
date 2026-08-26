@@ -111,6 +111,8 @@ struct PhaseDetailView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \Bar.name) private var bars: [Bar]
+    @Query private var settingsList: [AppSettings]
+    private var aiDeloadEnabled: Bool { settingsList.first?.deloadWeeksEnabled == true }
 
     @State private var showingEdit = false
     /// Which cycles are expanded — starts with only the current one open
@@ -161,6 +163,29 @@ struct PhaseDetailView: View {
             })
     }
 
+    private func isCycleDeload(_ cycle: Int) -> Binding<Bool> {
+        Binding(
+            get: { phase.isDeloadCycle(cycle, aiDeloadEnabled: aiDeloadEnabled) },
+            set: { isDeload in
+                phase.setDeload(isDeload, forCycle: cycle)
+                try? context.save()
+            })
+    }
+
+    /// The "Cycle N" bar itself — its own function (not inlined into the
+    /// DisclosureGroup's label closure) to keep `body` simple enough for
+    /// the type-checker now that it also holds the Deload toggle.
+    private func cycleLabel(_ cycle: Int) -> some View {
+        HStack {
+            Text("Cycle \(cycle)").font(.headline)
+            Spacer()
+            Toggle("Deload", isOn: isCycleDeload(cycle))
+                .toggleStyle(.button)
+                .font(.caption)
+                .tint(.orange)
+        }
+    }
+
     /// This exact cycle's session for `day`, if logged — what actually
     /// happened that occurrence, distinct from every other cycle's own
     /// session for the same day.
@@ -203,7 +228,7 @@ struct PhaseDetailView: View {
                             .padding(.top, 2)
                         }
                     } label: {
-                        Text("Cycle \(cycle)").font(.headline)
+                        cycleLabel(cycle)
                     }
                 }
             }

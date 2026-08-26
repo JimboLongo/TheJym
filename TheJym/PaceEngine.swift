@@ -83,6 +83,7 @@ enum PaceEngine {
                             targetReps: [Int],
                             currentWeights: [Double],
                             isBodyweight: Bool = false,
+                            isDeload: Bool = false,
                             allLogs: [ExerciseLog]) -> [ComparisonTarget] {
         let planKey = "\(exerciseName)|\(targetReps.map(String.init).joined(separator: "/"))"
         // For a bodyweight exercise, currentWeights holds ADDED weight, so
@@ -91,8 +92,12 @@ enum PaceEngine {
             ? currentWeights.map { "BW+\(Formatters.trim($0))" }.joined(separator: "/")
             : currentWeights.map { Formatters.trim($0) }.joined(separator: "/")
 
+        // A deload session only ever compares against other deload
+        // sessions, and a normal one only against other normal ones —
+        // cut deload loads would otherwise always look like a huge miss
+        // against full-weight history (or vice versa, an inflated "beat").
         let byName = allLogs
-            .filter { $0.exerciseName == exerciseName && !$0.sets.isEmpty }
+            .filter { $0.exerciseName == exerciseName && !$0.sets.isEmpty && ($0.session?.isDeload ?? false) == isDeload }
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first
@@ -124,7 +129,13 @@ enum PaceEngine {
     /// three targets, exposed here so a plain list of logs (e.g. the
     /// Previous Workouts page) can tag each entry directly.
     static func medalRank(for log: ExerciseLog, allLogs: [ExerciseLog]) -> Int? {
-        let planLogs = allLogs.filter { $0.exerciseName == log.exerciseName && $0.planKey == log.planKey && !$0.sets.isEmpty }
+        // Deload only ranks against deload, normal only against normal —
+        // see comparisons(for:...)'s own doc on why.
+        let isDeload = log.session?.isDeload ?? false
+        let planLogs = allLogs.filter {
+            $0.exerciseName == log.exerciseName && $0.planKey == log.planKey && !$0.sets.isEmpty
+                && ($0.session?.isDeload ?? false) == isDeload
+        }
         let topTotals = Array(Set(planLogs.map(\.totalWeightMoved))).sorted(by: >)
         return medalRank(for: log.totalWeightMoved, among: topTotals)
     }
@@ -134,8 +145,14 @@ enum PaceEngine {
     /// own live total, which isn't a saved ExerciseLog yet so can't use
     /// `medalRank(for:allLogs:)` directly. Same tie-sharing rule: if it
     /// matches an existing historical total exactly, it shares that tier.
-    static func medalRank(forNewTotal total: Double, exerciseName: String, planKey: String, allLogs: [ExerciseLog]) -> Int? {
-        let planLogs = allLogs.filter { $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty }
+    static func medalRank(forNewTotal total: Double, exerciseName: String, planKey: String,
+                          isDeload: Bool = false, allLogs: [ExerciseLog]) -> Int? {
+        // Deload only ranks against deload, normal only against normal —
+        // see comparisons(for:...)'s own doc on why.
+        let planLogs = allLogs.filter {
+            $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty
+                && ($0.session?.isDeload ?? false) == isDeload
+        }
         let topTotals = Array(Set(planLogs.map(\.totalWeightMoved) + [total])).sorted(by: >)
         return medalRank(for: total, among: topTotals)
     }
@@ -144,8 +161,14 @@ enum PaceEngine {
     /// etc. once it's ranked past a medal, instead of nil. Used to show an
     /// ordinal ("4th") in place of a medal once a finished exercise didn't
     /// crack the top 3.
-    static func rank(forNewTotal total: Double, exerciseName: String, planKey: String, allLogs: [ExerciseLog]) -> Int {
-        let planLogs = allLogs.filter { $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty }
+    static func rank(forNewTotal total: Double, exerciseName: String, planKey: String,
+                     isDeload: Bool = false, allLogs: [ExerciseLog]) -> Int {
+        // Deload only ranks against deload, normal only against normal —
+        // see comparisons(for:...)'s own doc on why.
+        let planLogs = allLogs.filter {
+            $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty
+                && ($0.session?.isDeload ?? false) == isDeload
+        }
         let topTotals = Array(Set(planLogs.map(\.totalWeightMoved) + [total])).sorted(by: >)
         return rank(for: total, among: topTotals) ?? topTotals.count
     }
@@ -154,8 +177,14 @@ enum PaceEngine {
     /// highest first — nil entries once history doesn't go that deep yet.
     /// Used to tell the user how many reps they need in their last set to
     /// reach each one (see WorkoutLogView's last-set popup).
-    static func medalThresholds(exerciseName: String, planKey: String, allLogs: [ExerciseLog]) -> (gold: Double?, silver: Double?, bronze: Double?) {
-        let planLogs = allLogs.filter { $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty }
+    static func medalThresholds(exerciseName: String, planKey: String, isDeload: Bool = false,
+                                allLogs: [ExerciseLog]) -> (gold: Double?, silver: Double?, bronze: Double?) {
+        // Deload only ranks against deload, normal only against normal —
+        // see comparisons(for:...)'s own doc on why.
+        let planLogs = allLogs.filter {
+            $0.exerciseName == exerciseName && $0.planKey == planKey && !$0.sets.isEmpty
+                && ($0.session?.isDeload ?? false) == isDeload
+        }
         let topTotals = Array(Set(planLogs.map(\.totalWeightMoved))).sorted(by: >)
         return (topTotals[safe: 0], topTotals[safe: 1], topTotals[safe: 2])
     }
@@ -289,10 +318,13 @@ enum PaceEngine {
     static func repTotalComparisons(for exerciseName: String,
                                     target: Int,
                                     currentWeightsKey: String,
+                                    isDeload: Bool = false,
                                     allLogs: [ExerciseLog]) -> [RepTotalComparisonTarget] {
         let planKey = "\(exerciseName)|\(target) total"
+        // Deload only ranks against deload, normal only against normal —
+        // see comparisons(for:...)'s own doc on why.
         let byName = allLogs
-            .filter { $0.exerciseName == exerciseName && !$0.sets.isEmpty }
+            .filter { $0.exerciseName == exerciseName && !$0.sets.isEmpty && ($0.session?.isDeload ?? false) == isDeload }
             .sorted { ($0.session?.date ?? .distantPast) > ($1.session?.date ?? .distantPast) }
 
         let last = byName.first(where: { $0.planKey == planKey }) ?? byName.first

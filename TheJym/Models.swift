@@ -211,8 +211,21 @@ final class Phase {
     var totalCycles: Int           // e.g. 8
     var startDate: Date
     var isActive: Bool
-    /// Cycle index (1-based) that is a deload cycle, or 0 for none.
+    /// Cycle index (1-based) that is a deload cycle, or 0 for none — the
+    /// single cycle AI auto-schedules per phase (see
+    /// ProgressionEngine.deloadCycle), only honored while Settings'
+    /// "Deload Weeks" toggle is on. See `manualDeloadCycles` for cycles
+    /// toggled deload directly from the Phases tab, and `isDeloadCycle(_:
+    /// aiDeloadEnabled:)` for the combined check everything should
+    /// actually use instead of reading either field alone.
     var deloadCycle: Int
+    /// Cycles (1-based) manually toggled deload from the Phases tab's
+    /// Cycle N bar — always honored regardless of Settings' "Deload
+    /// Weeks" toggle, since it's a direct, explicit per-cycle choice
+    /// rather than the AI's own auto-scheduled one. A phase can have more
+    /// than one (e.g. a mid-block deload on a long phase, in addition to
+    /// one at the end).
+    var manualDeloadCycles: [Int] = []
     /// Grandfather baseline for requiring Rest slots in cycle completion
     /// (see cycleWalk) — the number of cycles this phase already had
     /// training-complete (the old rule, Rest not required) as of the moment
@@ -254,6 +267,33 @@ final class Phase {
 
     /// A short label for badges/headers, e.g. "Pull A · Push A · Legs A · Rest".
     var summary: String { orderedDays.map(\.name).joined(separator: " · ") }
+
+    /// True if `cycle` should train at cut deload loads — either manually
+    /// toggled (always honored) or the single cycle AI auto-schedules
+    /// (only while `aiDeloadEnabled` — i.e. Settings' "Deload Weeks"
+    /// toggle — is on). Every deload check in the app should go through
+    /// this rather than reading `deloadCycle`/`manualDeloadCycles`
+    /// directly, so the two mechanisms never disagree about what's
+    /// actually a deload cycle.
+    func isDeloadCycle(_ cycle: Int, aiDeloadEnabled: Bool) -> Bool {
+        guard cycle > 0 else { return false }
+        return manualDeloadCycles.contains(cycle) || (aiDeloadEnabled && deloadCycle == cycle)
+    }
+
+    /// Turns manual deload on/off for `cycle` — authoritative over both
+    /// mechanisms: turning on adds it to `manualDeloadCycles`; turning off
+    /// removes it AND clears the legacy single AI-auto-scheduled
+    /// `deloadCycle` too, if this happened to be it, so the Phases tab's
+    /// toggle always reflects and fully controls this cycle's actual
+    /// deload status regardless of which mechanism set it.
+    func setDeload(_ isDeload: Bool, forCycle cycle: Int) {
+        if isDeload {
+            if !manualDeloadCycles.contains(cycle) { manualDeloadCycles.append(cycle) }
+        } else {
+            manualDeloadCycles.removeAll { $0 == cycle }
+            if deloadCycle == cycle { deloadCycle = 0 }
+        }
+    }
 
     /// Every planned exercise across every day — used by AI phase planning.
     /// Base template only (see PhaseDay.basePlannedExercises) — a per-cycle
