@@ -87,21 +87,49 @@ struct PhaseDetailView: View {
     let phase: Phase
 
     @State private var showingEdit = false
+    /// Which cycles are expanded — starts with only the current one open
+    /// (displayCurrentCycle, same frozen-for-today value the Train tab
+    /// itself shows) so a long phase doesn't dump every cycle's exercises
+    /// on screen at once; any cycle can still be opened to browse its
+    /// history.
+    @State private var expandedCycles: Set<Int>
+
+    init(phase: Phase) {
+        self.phase = phase
+        _expandedCycles = State(initialValue: [phase.displayCurrentCycle])
+    }
+
+    private func isExpanded(_ cycle: Int) -> Binding<Bool> {
+        Binding(
+            get: { expandedCycles.contains(cycle) },
+            set: { expanded in
+                if expanded { expandedCycles.insert(cycle) } else { expandedCycles.remove(cycle) }
+            })
+    }
 
     var body: some View {
         List {
             ForEach(1...max(phase.totalCycles, 1), id: \.self) { cycle in
-                ForEach(phase.trainingDays, id: \.persistentModelID) { day in
-                    Section("\(day.name) \(cycle)") {
-                        let plan = phase.plan(for: day)
-                        if plan.isEmpty {
-                            Text("No exercises planned for \(day.name).")
-                                .font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            ForEach(plan, id: \.persistentModelID) { pe in
-                                PhaseExerciseRow(day: day, plannedExercise: pe)
+                Section {
+                    DisclosureGroup(isExpanded: isExpanded(cycle)) {
+                        ForEach(phase.trainingDays, id: \.persistentModelID) { day in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(day.name)
+                                    .font(.subheadline.bold())
+                                let plan = phase.plan(for: day)
+                                if plan.isEmpty {
+                                    Text("No exercises planned for \(day.name).")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    ForEach(plan, id: \.persistentModelID) { pe in
+                                        PhaseExerciseRow(day: day, plannedExercise: pe)
+                                    }
+                                }
                             }
+                            .padding(.top, 4)
                         }
+                    } label: {
+                        Text("Cycle \(cycle)").font(.headline)
                     }
                 }
             }
