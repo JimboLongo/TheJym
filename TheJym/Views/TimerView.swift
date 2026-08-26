@@ -119,6 +119,7 @@ struct TimerTemplatesListView: View {
 /// reorder), Continuous, and start/monitor its run.
 struct TimerTemplateDetailView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.editMode) private var editMode
     @Bindable var template: TimerTemplate
     @ObservedObject private var engine = TimerEngine.shared
     @State private var editingPreset: TimerPreset?
@@ -127,6 +128,12 @@ struct TimerTemplateDetailView: View {
     private var isThisTemplateRunning: Bool {
         engine.isActive && engine.templateName == template.name
     }
+
+    /// A row's `.contextMenu` (long-press to duplicate) has to be absent
+    /// entirely while editing, not just empty — SwiftUI keeps its
+    /// UIContextMenuInteraction attached to the row even with no content,
+    /// which was blocking the drag handle from ever starting a reorder.
+    private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
 
     var body: some View {
         List {
@@ -156,35 +163,7 @@ struct TimerTemplateDetailView: View {
 
             Section("Timers") {
                 ForEach(Array(template.orderedPresets.enumerated()), id: \.element.persistentModelID) { index, preset in
-                    Button {
-                        editingPreset = preset
-                    } label: {
-                        HStack {
-                            Text("\(index + 1).")
-                                .foregroundStyle(.secondary)
-                                .fixedSize()
-                                .frame(width: 28, alignment: .leading)
-                            if preset.isRest {
-                                Image(systemName: "figure.cooldown")
-                                    .foregroundStyle(.blue)
-                            }
-                            Text(preset.name)
-                            Spacer()
-                            Text(preset.repeatCount > 1
-                                 ? "\(Formatters.duration(preset.seconds)) × \(preset.repeatCount)"
-                                 : Formatters.duration(preset.seconds))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.primary)
-                    .contextMenu {
-                        Button {
-                            duplicatePreset(preset)
-                        } label: {
-                            Label("Duplicate", systemImage: "plus.square.on.square")
-                        }
-                    }
+                    timerRow(index: index, preset: preset)
                 }
                 .onDelete(perform: deletePresets)
                 .onMove(perform: movePresets)
@@ -216,6 +195,48 @@ struct TimerTemplateDetailView: View {
                 preset.template = template
                 context.insert(preset)
                 try? context.save()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func timerRow(index: Int, preset: TimerPreset) -> some View {
+        let row = Button {
+            editingPreset = preset
+        } label: {
+            HStack {
+                Text("\(index + 1).")
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                    .frame(width: 28, alignment: .leading)
+                if preset.isRest {
+                    Image(systemName: "figure.cooldown")
+                        .foregroundStyle(.blue)
+                }
+                Text(preset.name)
+                Spacer()
+                Text(preset.repeatCount > 1
+                     ? "\(Formatters.duration(preset.seconds)) × \(preset.repeatCount)"
+                     : Formatters.duration(preset.seconds))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+
+        // The context menu has to be absent from the view tree entirely
+        // while editing, not just given empty content — SwiftUI leaves its
+        // UIContextMenuInteraction attached to the row either way, which
+        // was blocking the drag handle from ever starting a reorder.
+        if isEditing {
+            row
+        } else {
+            row.contextMenu {
+                Button {
+                    duplicatePreset(preset)
+                } label: {
+                    Label("Duplicate", systemImage: "plus.square.on.square")
+                }
             }
         }
     }
