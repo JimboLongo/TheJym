@@ -47,7 +47,7 @@ struct PhaseEditView: View {
                                     Button {
                                         editingDayID = day.persistentModelID
                                     } label: {
-                                        Text("\(day.plannedExercises.count) exercise\(day.plannedExercises.count == 1 ? "" : "s")")
+                                        Text("\(day.basePlannedExercises.count) exercise\(day.basePlannedExercises.count == 1 ? "" : "s")")
                                             .font(.subheadline.weight(.semibold))
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 6)
@@ -129,7 +129,7 @@ struct PhaseDayEditView: View {
     @State private var showingAddExercise = false
 
     private var sortedExercises: [PlannedExercise] {
-        day.plannedExercises.sorted { $0.order < $1.order }
+        day.basePlannedExercises
     }
 
     var body: some View {
@@ -140,7 +140,17 @@ struct PhaseDayEditView: View {
                 }
                 .onDelete { idx in
                     let sorted = sortedExercises
-                    for i in idx { context.delete(sorted[i]) }
+                    for i in idx {
+                        let slot = sorted[i]
+                        // A deleted base slot leaves its own per-cycle
+                        // overrides (see PlannedExercise.overriddenSlotID)
+                        // with nothing left to override — drop them too
+                        // rather than leaving orphaned rows behind.
+                        for override in day.plannedExercises where override.overriddenSlotID == slot.slotID {
+                            context.delete(override)
+                        }
+                        context.delete(slot)
+                    }
                 }
                 Button {
                     showingAddExercise = true
@@ -162,10 +172,10 @@ struct PhaseDayEditView: View {
         let pe: PlannedExercise
         switch goalType {
         case .fixedSets:
-            pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
+            pe = PlannedExercise(order: day.basePlannedExercises.count, exerciseName: def.name,
                                  targetReps: reps, isBodyweight: def.isBodyweight)
         case .repTotal(let target):
-            pe = PlannedExercise(order: day.plannedExercises.count, exerciseName: def.name,
+            pe = PlannedExercise(order: day.basePlannedExercises.count, exerciseName: def.name,
                                  targetReps: [], isBodyweight: def.isBodyweight,
                                  goalType: .repTotal(target: target))
         }

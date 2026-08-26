@@ -256,10 +256,34 @@ final class Phase {
     var summary: String { orderedDays.map(\.name).joined(separator: " · ") }
 
     /// Every planned exercise across every day — used by AI phase planning.
-    var plannedExercises: [PlannedExercise] { days.flatMap(\.plannedExercises) }
+    /// Base template only (see PhaseDay.basePlannedExercises) — a per-cycle
+    /// override shouldn't skew what AI planning reasons about as "the
+    /// plan."
+    var plannedExercises: [PlannedExercise] { days.flatMap(\.basePlannedExercises) }
 
     func plan(for day: PhaseDay) -> [PlannedExercise] {
-        day.plannedExercises.sorted { $0.order < $1.order }
+        day.basePlannedExercises
+    }
+
+    /// This day's plan for one specific cycle — the base template with any
+    /// matching per-cycle override substituted in by `slotID`. A day with
+    /// no override for a given cycle is identical to the base template;
+    /// cycle 0 (no real cycle context, e.g. a standalone quick workout)
+    /// always is.
+    func plan(for day: PhaseDay, cycle: Int) -> [PlannedExercise] {
+        let base = day.basePlannedExercises
+        guard cycle > 0 else { return base }
+        // Built with a plain loop (last one wins), not
+        // Dictionary(uniqueKeysWithValues:) — setCycleOverride keeps this
+        // to at most one row per (baseSlot, cycle) going forward, but a
+        // duplicate here should never crash the whole plan lookup.
+        var overridesBySlotID: [UUID: PlannedExercise] = [:]
+        for pe in day.plannedExercises where pe.cycleOverride == cycle {
+            if let slotID = pe.overriddenSlotID {
+                overridesBySlotID[slotID] = pe
+            }
+        }
+        return base.map { overridesBySlotID[$0.slotID] ?? $0 }
     }
 
     /// The number of training days in one full pass of the cycle.
@@ -578,6 +602,58 @@ final class PhaseDay {
         self.name = name
         self.isRest = isRest
     }
+
+    /// Just this day's base template slots (cycleOverride == 0), in order —
+    /// every normal "this day's plan" consumer (PhaseEditView, AI planning,
+    /// a cycle with no override of its own) should read this, not the raw
+    /// `plannedExercises` relationship, which also holds any per-cycle
+    /// override rows mixed in alongside them.
+    var basePlannedExercises: [PlannedExercise] {
+        plannedExercises.filter { $0.cycleOverride == 0 }.sorted { $0.order < $1.order }
+    }
+
+    /// Creates or replaces cycle `cycle`'s override of `baseSlot` — that one
+    /// cycle trains `exerciseName`/`targetReps`/`goalType` instead of the
+    /// base slot's own, every other cycle unaffected. Updates a previous
+    /// override of the same (baseSlot, cycle) pair in place rather than
+    /// delete-then-insert — a delete's effect on `plannedExercises` isn't
+    /// guaranteed visible again until the context is actually saved, so a
+    /// delete right before a fresh insert here risked leaving two override
+    /// rows for the same slot behind (plan(for:cycle:) tolerates that
+    /// without crashing, but it's still bad data).
+    func setCycleOverride(for baseSlot: PlannedExercise, cycle: Int, exerciseName: String,
+                          targetReps: [Int], goalType: GoalType, isBodyweight: Bool,
+                          context: ModelContext) {
+        if let existing = plannedExercises.first(where: {
+            $0.cycleOverride == cycle && $0.overriddenSlotID == baseSlot.slotID
+        }) {
+            existing.exerciseName = exerciseName
+            existing.targetReps = targetReps
+            existing.suggestedWeights = []
+            existing.isBodyweight = isBodyweight
+            existing.goalType = goalType
+        } else {
+            let override = PlannedExercise(order: baseSlot.order, exerciseName: exerciseName,
+                                           targetReps: targetReps, isBodyweight: isBodyweight,
+                                           goalType: goalType, cycleOverride: cycle,
+                                           overriddenSlotID: baseSlot.slotID)
+            override.day = self
+            context.insert(override)
+        }
+    }
+
+    /// Removes cycle `cycle`'s override of `baseSlot`, if any — that cycle
+    /// goes back to training the base slot's own plan. Saves immediately so
+    /// the deletion is actually visible to the next `plannedExercises`
+    /// read/plan(for:cycle:) call, not just eventually once something else
+    /// happens to save the context.
+    func removeCycleOverride(for baseSlot: PlannedExercise, cycle: Int, context: ModelContext) {
+        guard let existing = plannedExercises.first(where: {
+            $0.cycleOverride == cycle && $0.overriddenSlotID == baseSlot.slotID
+        }) else { return }
+        context.delete(existing)
+        try? context.save()
+    }
 }
 
 // MARK: - Goal types
@@ -612,16 +688,37 @@ final class PlannedExercise {
     /// itself.
     var repTotalProgressesReps: Bool = false
 
+    /// Stable identity for this slot, independent of `order` — lets a
+    /// per-cycle override (see `cycleOverride`/`overriddenSlotID`) keep
+    /// pointing at the right base slot even if the day's exercises are ever
+    /// reordered. Every PlannedExercise gets one, base slots and overrides
+    /// alike, though only an override actually uses it as a lookup target.
+    var slotID: UUID = UUID()
+    /// 0 for a normal, every-cycle base template slot. A positive value
+    /// marks this row as a one-cycle-only override of `overriddenSlotID`'s
+    /// base slot — a different exercise, rep scheme, or rep-total target
+    /// than every other cycle, without touching them. Override rows never
+    /// appear in the base template (PhaseEditView, AI planning, a fresh
+    /// cycle with no override of its own) — only `Phase.plan(for:cycle:)`
+    /// substitutes one in, for that one cycle.
+    var cycleOverride: Int = 0
+    /// Which base slot (by `slotID`) this override replaces — nil for a
+    /// base slot itself (cycleOverride == 0).
+    var overriddenSlotID: UUID?
+
     init(order: Int, exerciseName: String,
          targetReps: [Int], suggestedWeights: [Double] = [],
          isBodyweight: Bool = false, goalType: GoalType = .fixedSets,
-         repTotalProgressesReps: Bool = false) {
+         repTotalProgressesReps: Bool = false,
+         cycleOverride: Int = 0, overriddenSlotID: UUID? = nil) {
         self.order = order
         self.exerciseName = exerciseName
         self.targetReps = targetReps
         self.suggestedWeights = suggestedWeights
         self.isBodyweight = isBodyweight
         self.repTotalProgressesReps = repTotalProgressesReps
+        self.cycleOverride = cycleOverride
+        self.overriddenSlotID = overriddenSlotID
         switch goalType {
         case .fixedSets:
             self.goalKindRaw = 0

@@ -91,8 +91,21 @@ private struct DayCycleKey: Hashable {
     let dayID: PersistentIdentifier
 }
 
+/// One (day, cycle, base slot) an override action targets — identifies
+/// which base slot to override/revert and which cycle to do it for.
+private struct OverrideTarget: Identifiable {
+    let id = UUID()
+    let day: PhaseDay
+    let cycle: Int
+    let baseSlot: PlannedExercise
+    let isOverridden: Bool
+}
+
 struct PhaseDetailView: View {
     let phase: Phase
+    @Environment(\.modelContext) private var context
+    @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
+    @Query(sort: \Bar.name) private var bars: [Bar]
 
     @State private var showingEdit = false
     /// Which cycles are expanded — starts with only the current one open
@@ -109,6 +122,11 @@ struct PhaseDetailView: View {
     /// changing a set's weight/reps here goes through the exact same code
     /// path/validation as editing it from History.
     @State private var editingSession: WorkoutSession?
+    /// Showing the "Change Exercise or Set… / Revert to Default" menu for
+    /// this not-yet-logged slot.
+    @State private var overrideTarget: OverrideTarget?
+    /// Picking a replacement exercise/set for this slot's cycle.
+    @State private var pickingReplacementFor: OverrideTarget?
 
     init(phase: Phase) {
         self.phase = phase
@@ -149,14 +167,22 @@ struct PhaseDetailView: View {
                         ForEach(phase.trainingDays, id: \.persistentModelID) { day in
                             let cycleSession = session(cycle: cycle, day: day)
                             DisclosureGroup(isExpanded: isDayExpanded(cycle: cycle, day: day)) {
-                                let plan = phase.plan(for: day)
-                                if plan.isEmpty {
+                                let base = phase.plan(for: day)
+                                if base.isEmpty {
                                     Text("No exercises planned for \(day.name).")
                                         .font(.caption).foregroundStyle(.secondary)
                                 } else {
-                                    ForEach(plan, id: \.persistentModelID) { pe in
-                                        CyclePlannedExerciseRow(plannedExercise: pe, session: cycleSession) {
-                                            editingSession = cycleSession
+                                    let effective = phase.plan(for: day, cycle: cycle)
+                                    ForEach(Array(zip(base, effective)), id: \.0.persistentModelID) { baseSlot, effectiveSlot in
+                                        let log = cycleSession?.exerciseLogs.first { $0.exerciseName == effectiveSlot.exerciseName }
+                                        let isOverridden = effectiveSlot.persistentModelID != baseSlot.persistentModelID
+                                        CyclePlannedExerciseRow(plannedExercise: effectiveSlot, isOverridden: isOverridden, log: log) {
+                                            if let log, !log.sets.isEmpty {
+                                                editingSession = cycleSession
+                                            } else {
+                                                overrideTarget = OverrideTarget(day: day, cycle: cycle, baseSlot: baseSlot,
+                                                                               isOverridden: isOverridden)
+                                            }
                                         }
                                     }
                                 }
@@ -183,29 +209,64 @@ struct PhaseDetailView: View {
         .navigationDestination(item: $editingSession) { session in
             SessionDetailView(session: session)
         }
+        .confirmationDialog(
+            overrideTarget.map { "Cycle \($0.cycle) — \($0.baseSlot.exerciseName)" } ?? "",
+            isPresented: Binding(get: { overrideTarget != nil }, set: { if !$0 { overrideTarget = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Change Exercise or Set…") {
+                pickingReplacementFor = overrideTarget
+                overrideTarget = nil
+            }
+            if overrideTarget?.isOverridden == true {
+                Button("Revert to Default", role: .destructive) {
+                    if let target = overrideTarget {
+                        target.day.removeCycleOverride(for: target.baseSlot, cycle: target.cycle, context: context)
+                        try? context.save()
+                    }
+                    overrideTarget = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { overrideTarget = nil }
+        } message: {
+            Text("Not logged yet — change what this one cycle trains, or edit every cycle's plan instead.")
+        }
+        .sheet(item: $pickingReplacementFor) { target in
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
+                target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
+                                            targetReps: reps, goalType: goalType, isBodyweight: def.isBodyweight,
+                                            context: context)
+                try? context.save()
+            }
+        }
     }
 }
 
 /// One exercise's plan for one specific cycle occurrence of a day — shows
 /// what was actually logged that cycle (not history across every cycle,
-/// since the enclosing Cycle N group already scopes this to just one).
-/// Tapping it, once something's actually logged, opens that exact session
-/// for editing — any exercise's any set, weight or reps — in the same
-/// editor History's own session detail uses.
+/// since the enclosing Cycle N group already scopes this to just one), and
+/// flags when a per-cycle override (see PlannedExercise.cycleOverride)
+/// makes this cycle differ from the base template. Tapping it either opens
+/// that exact session for editing (once something's logged) or the
+/// change/revert menu for this cycle's plan (before it's logged).
 private struct CyclePlannedExerciseRow: View {
     let plannedExercise: PlannedExercise
-    let session: WorkoutSession?
-    let onTapToEdit: () -> Void
-
-    private var log: ExerciseLog? {
-        session?.exerciseLogs.first { $0.exerciseName == plannedExercise.exerciseName }
-    }
+    let isOverridden: Bool
+    let log: ExerciseLog?
+    let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTapToEdit) {
+        Button(action: onTap) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(plannedExercise.exerciseName).font(.subheadline.bold())
+                    HStack(spacing: 4) {
+                        Text(plannedExercise.exerciseName).font(.subheadline.bold())
+                        if isOverridden {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
                     Text(plannedExercise.setsSummaryText)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -219,20 +280,19 @@ private struct CyclePlannedExerciseRow: View {
                     }
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                 } else {
                     Text("Not logged")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
-        .disabled(log?.sets.isEmpty ?? true)
         .padding(.vertical, 2)
     }
 }

@@ -27,7 +27,7 @@ struct QuickWorkoutBuilderView: View {
     init(existingDay: PhaseDay? = nil) {
         self.existingDay = existingDay
         _name = State(initialValue: existingDay?.name ?? "")
-        let sortedExisting = existingDay?.plannedExercises.sorted { $0.order < $1.order } ?? []
+        let sortedExisting = existingDay?.basePlannedExercises ?? []
         _exercises = State(initialValue: sortedExisting.map { pe in
             var draft = PhaseBuilderView.DraftExercise(
                 name: pe.exerciseName,

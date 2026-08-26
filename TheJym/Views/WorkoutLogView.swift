@@ -131,8 +131,12 @@ struct WorkoutLogView: View {
 
     /// This day's planned exercises, in order — works whether or not the day
     /// belongs to a Phase (a standalone "quick workout" day has phase nil).
+    /// Cycle-aware: a per-cycle override set from the Phases tab (swapping
+    /// an exercise or set for just this one cycle) substitutes in here
+    /// automatically once that cycle is the one actually being logged.
     private func plannedExercises(for day: PhaseDay) -> [PlannedExercise] {
-        day.plannedExercises.sorted { $0.order < $1.order }
+        guard let phase else { return day.basePlannedExercises }
+        return phase.plan(for: day, cycle: phase.currentCycle)
     }
 
     /// Most recent BodyWeightEntry on or before `date` — used to resolve a
