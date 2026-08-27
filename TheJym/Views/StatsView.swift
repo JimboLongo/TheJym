@@ -137,10 +137,8 @@ struct StatsView: View {
                 // row in the whole page, so it keeps a real touch target.
                 .frame(minHeight: 44)
             }
-            statGrid([
-                ("Days since start", "\(stats.daysSinceStart)"),
-                ("Days logged", "\(stats.daysLogged)"),
-            ])
+            statRow("Days since start", "\(stats.daysSinceStart)")
+            statRow("Days logged", "\(stats.daysLogged)")
             VStack(alignment: .leading, spacing: 2) {
                 statRow("Current streak", "\(stats.currentStreak) 🔥")
                 if let start = stats.currentStreakStartDate {
@@ -158,13 +156,13 @@ struct StatsView: View {
             statGrid([
                 ("Rest days banked", String(format: "%.1f", stats.bankBalance)),
                 ("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100)),
-                ("Days per week", String(format: "%.2f", stats.daysPerWeek)),
                 // Since-start window — deliberately kept alongside
                 // Milestones' All-time miles rather than merged into it:
                 // Training Start Date can (and here does) postdate a lot of
                 // imported history, so the two numbers genuinely diverge
                 // rather than being the same figure twice.
                 ("Miles walked", milesLabel(stats.milesSinceStart)),
+                ("Days per week", String(format: "%.2f", stats.daysPerWeek)),
             ])
         }
     }
