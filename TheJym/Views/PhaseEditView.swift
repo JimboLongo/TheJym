@@ -169,6 +169,7 @@ struct PhaseDayEditView: View {
                         context.delete(slot)
                     }
                 }
+                .onMove(perform: moveExercises)
                 Button {
                     showingAddExercise = true
                 } label: {
@@ -183,6 +184,17 @@ struct PhaseDayEditView: View {
                 addExercise(def, reps: reps, goalType: goalType)
             }
         }
+    }
+
+    /// Only reorders base template slots (cycleOverride == 0) — an override
+    /// row has no independent position of its own (Phase.plan(for:cycle:)
+    /// substitutes it in by slotID, at the base slot's spot), so rewriting
+    /// its order here would just be dead data that could desync from the
+    /// slotID mapping it actually relies on.
+    private func moveExercises(from source: IndexSet, to destination: Int) {
+        var ordered = sortedExercises
+        ordered.move(fromOffsets: source, toOffset: destination)
+        for (i, pe) in ordered.enumerated() { pe.order = i }
     }
 
     private func addExercise(_ def: ExerciseDef, reps: [Int], goalType: GoalType) {

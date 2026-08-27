@@ -1846,15 +1846,25 @@ struct ExercisePageView: View {
         }
     }
 
+    /// A later set that already has a weight shifts by delta — same load
+    /// change the user just dialed in. A later set with no weight yet (a
+    /// fresh workout with no history, or a repTotal set past the seeded
+    /// first one) has nothing to shift from, so it adopts the new
+    /// absolute value instead of being skipped. Only the shifted sets get
+    /// a cascadeIndicator badge — an adopted set didn't move by delta, so
+    /// showing that delta over it would misstate what happened.
     private func cascadeDelta(_ delta: Double, from index: Int) {
-        guard delta != 0 else { return }
+        guard delta != 0, let newValue = draft.sets[index].weight else { return }
         var affected: [Int] = [index]
         cascadeIndicator[index] = delta
         for k in (index + 1)..<draft.sets.count {
-            guard let existing = draft.sets[k].weight else { continue }
-            draft.sets[k].weightText = Formatters.trim(existing + delta)
-            cascadeIndicator[k] = delta
-            affected.append(k)
+            if let existing = draft.sets[k].weight {
+                draft.sets[k].weightText = Formatters.trim(existing + delta)
+                cascadeIndicator[k] = delta
+                affected.append(k)
+            } else {
+                draft.sets[k].weightText = Formatters.trim(newValue)
+            }
         }
         Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
