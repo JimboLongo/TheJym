@@ -147,6 +147,18 @@ struct StatsView: View {
                         statRow("Best month all-time", "—")
                     }
                 }
+
+                ForEach(stats.completedPhaseSummaries) { summary in
+                    Section("Phase \(summary.number) — Completed") {
+                        statRow("Date range",
+                               "\(Formatters.date.string(from: summary.startDate)) – \(Formatters.date.string(from: summary.endDate))")
+                        let delta = summary.cyclePaceDelta
+                        statRow("Final cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")")
+                        statRow("Adherence", String(format: "%.0f%%", summary.adherencePercent))
+                        statRow("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount) perfect")
+                        statRow("Miles walked", milesLabel(summary.milesWalked))
+                    }
+                }
             }
             .id(refreshTick)
             .refreshable {

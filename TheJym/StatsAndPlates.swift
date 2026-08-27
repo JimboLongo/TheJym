@@ -59,6 +59,12 @@ struct TrainingStats {
     var mtdMiles: Double
     var priorYearMtdMiles: Double
     var allTimeMiles: Double        // unbounded — every "mi" entry in history
+
+    /// Every finished, no-longer-active phase's frozen final numbers,
+    /// newest first. A phase that's complete has no sessions to derive an
+    /// end date from is skipped rather than guessing one — see
+    /// `compute`'s own note on that.
+    var completedPhaseSummaries: [PhaseSummary]
 }
 
 /// The actual calendar range a streak covered, plus its boundary days —
@@ -92,6 +98,22 @@ struct ActivePhaseCycleProgress {
 struct PerfectWeekFallback {
     let lifetimeCount: Int
     let currentStreak: Int
+}
+
+/// A finished, no-longer-active phase's final numbers — frozen at that
+/// phase's own end date (its last session) rather than "now". Unlike the
+/// active-phase stats above, these never change again once computed, since
+/// nothing about a completed phase is still moving.
+struct PhaseSummary: Identifiable {
+    var id: Int { number }
+    let number: Int
+    let startDate: Date
+    let endDate: Date
+    let cyclePaceDelta: Int
+    let adherencePercent: Double
+    let perfectCount: Int
+    let completedCount: Int
+    let milesWalked: Double
 }
 
 enum StatsEngine {
@@ -238,6 +260,34 @@ enum StatsEngine {
         let priorYearMtdMiles = milesSum(from: priorYearMonthStart, through: priorYearToday)
         let allTimeMiles = milesEntries.map(\.miles).reduce(0, +)
 
+        // Completed, no-longer-active phases get their own frozen summary,
+        // anchored to that phase's own end date (its last session) instead
+        // of `now` — cyclePaceDelta/adherencePercent both derive daysElapsed
+        // as startDate -> now, so passing `now` for a finished phase would
+        // make its "final" pace and adherence keep getting worse forever
+        // after the fact. `isComplete && !isActive` (not just `!isActive`
+        // alone) excludes a phase built ahead of time but never started,
+        // which is also inactive but has no sessions to summarize. A phase
+        // that's complete but somehow has no sessions at all is skipped
+        // rather than guessing an end date — shouldn't normally happen
+        // since completing a cycle requires logging into it.
+        let completedPhaseSummaries: [PhaseSummary] = allPhases
+            .filter { $0.isComplete && !$0.isActive }
+            .compactMap { phase -> PhaseSummary? in
+                guard let endDate = phase.sessions.map(\.date).max() else { return nil }
+                let flags = phase.perfectCycleFlags
+                return PhaseSummary(number: phase.number,
+                                    startDate: phase.startDate,
+                                    endDate: endDate,
+                                    cyclePaceDelta: cyclePaceDelta(for: phase, now: endDate),
+                                    adherencePercent: adherencePercent(for: phase, now: endDate),
+                                    perfectCount: flags.filter { $0 }.count,
+                                    completedCount: flags.count,
+                                    milesWalked: milesSum(from: cal.startOfDay(for: phase.startDate),
+                                                          through: cal.startOfDay(for: endDate)))
+            }
+            .sorted { $0.number > $1.number }
+
         // Perfect weeks/months: walk day-by-day again, bucketing
         // scheduled-vs-logged training days by week and by month. Bounded to
         // [start, today] since "scheduled" is only meaningful within the
@@ -328,7 +378,8 @@ enum StatsEngine {
                              priorYearYtdMiles: priorYearYtdMiles,
                              mtdMiles: mtdMiles,
                              priorYearMtdMiles: priorYearMtdMiles,
-                             allTimeMiles: allTimeMiles)
+                             allTimeMiles: allTimeMiles,
+                             completedPhaseSummaries: completedPhaseSummaries)
     }
 
     /// Fallback progress stat for when there's no active phase to judge
