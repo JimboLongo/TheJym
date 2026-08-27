@@ -2584,9 +2584,12 @@ struct LastSetMedalPopupView: View {
                 .buttonStyle(.plain)
             }
             VStack(spacing: 8) {
-                medalRow(emoji: "🥇", label: "Gold", reps: targets.gold, color: .yellow)
-                medalRow(emoji: "🥈", label: "Silver", reps: targets.silver, color: .gray)
-                medalRow(emoji: "🥉", label: "Bronze", reps: targets.bronze, color: .orange)
+                medalRow(emoji: "🥇", label: "Gold", reps: targets.gold, color: .yellow, shadowedBy: nil)
+                medalRow(emoji: "🥈", label: "Silver", reps: targets.silver, color: .gray,
+                        shadowedBy: shadowLabel(for: targets.silver, higherTiers: [("Gold", targets.gold)]))
+                medalRow(emoji: "🥉", label: "Bronze", reps: targets.bronze, color: .orange,
+                        shadowedBy: shadowLabel(for: targets.bronze,
+                                                higherTiers: [("Gold", targets.gold), ("Silver", targets.silver)]))
             }
         }
         .padding()
@@ -2597,13 +2600,33 @@ struct LastSetMedalPopupView: View {
         .transition(.scale(scale: 0.9).combined(with: .opacity))
     }
 
+    /// `repsNeeded`'s rounding-up can make two distinct thresholds land on
+    /// the same integer (e.g. bronze needs 7.2 reps, silver needs 7.6 — both
+    /// round to 8), and separately, once a tier's threshold is already
+    /// cleared (reps == 0) every lower tier is automatically cleared too,
+    /// since thresholds only descend. Either way, hitting that rep count
+    /// only ever earns the HIGHEST tier it satisfies — `PaceEngine.medalRank`
+    /// resolves a tie the same way (`topTotals.firstIndex(of:)` on a
+    /// highest-first list), so a lower tier reporting the identical count as
+    /// its own target would promise something it can't actually award.
+    /// Returns the higher tier's label if `reps` matches one, so that row
+    /// can point at what it really earns instead.
+    private func shadowLabel(for reps: Int?, higherTiers: [(label: String, reps: Int?)]) -> String? {
+        guard let reps else { return nil }
+        return higherTiers.first { $0.reps == reps }?.label
+    }
+
     @ViewBuilder
-    private func medalRow(emoji: String, label: String, reps: Int?, color: Color) -> some View {
+    private func medalRow(emoji: String, label: String, reps: Int?, color: Color, shadowedBy: String?) -> some View {
         HStack {
             Text(emoji).font(.title)
             Text(label).font(.headline)
             Spacer()
-            if let reps {
+            if let shadowedBy, let reps {
+                Text(reps == 0 ? "Already earns \(shadowedBy) 🔥" : "\(reps) rep\(reps == 1 ? "" : "s") earns \(shadowedBy)")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.secondary)
+            } else if let reps {
                 Text(reps == 0 ? "Already locked in! 🔥" : "\(reps) more rep\(reps == 1 ? "" : "s")")
                     .font(.subheadline.bold())
                     .foregroundStyle(reps == 0 ? .green : .primary)
