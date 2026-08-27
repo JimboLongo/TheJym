@@ -83,6 +83,13 @@ struct WorkoutLogView: View {
     @State private var recapWeights: [String: [Double]] = [:]
     @State private var currentPageID: String?
     @State private var showExerciseJumpList = false
+    /// Collapses every row on the Completed summary page at once — hoisted
+    /// here rather than local to CompletedSummaryPageView because that view
+    /// sits inside the outer LazyVStack (see `body` below); a plain local
+    /// @State there is not guaranteed to survive a round trip if the page
+    /// falls out of the lazy container's mounted range, same reasoning as
+    /// `currentPageID` itself.
+    @State private var completedSummaryCollapsed = false
     /// The calendar day this workout will be saved under — defaults to
     /// today, confirmed/changed via a date picker shown when finishing.
     @State private var loggedDate = Date()
@@ -274,6 +281,7 @@ struct WorkoutLogView: View {
                                  pageHeight: pageHeight,
                                  currentPageID: $currentPageID,
                                  isDeloadCycle: isDeloadCycle,
+                                 isCollapsed: $completedSummaryCollapsed,
                                  onFinish: { showDatePicker = true })
     }
 
@@ -3006,6 +3014,9 @@ struct CompletedSummaryPageView: View {
     @Binding var currentPageID: String?
     /// See ExercisePageView's own doc — same deload-matched comparisons.
     let isDeloadCycle: Bool
+    /// Collapses every row's historical comparison lines at once — hoisted
+    /// to WorkoutLogView, see its own doc on `completedSummaryCollapsed`.
+    @Binding var isCollapsed: Bool
     /// Called when the finish button here is tapped — starts the date
     /// confirmation step in the parent.
     var onFinish: () -> Void
@@ -3024,8 +3035,19 @@ struct CompletedSummaryPageView: View {
         // to a page that simply ended.
         ScrollView(showsIndicators: true) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Completed")
-                    .font(.title2.bold())
+                HStack(spacing: 8) {
+                    if !completedIndices.isEmpty {
+                        Button {
+                            withAnimation { isCollapsed.toggle() }
+                        } label: {
+                            Image(systemName: isCollapsed ? "rectangle.expand.vertical" : "rectangle.compress.vertical")
+                                .font(.title2.bold())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text("Completed")
+                        .font(.title2.bold())
+                }
                 if completedIndices.isEmpty {
                     Text("Nothing checked off yet — swipe back to an exercise and finish it, or save now to end the workout early.")
                         .font(.subheadline)
@@ -3160,23 +3182,25 @@ struct CompletedSummaryPageView: View {
             }
             SetsGrid(weightLabels: weightLabels, repLabels: repLabels)
 
-            switch draft.goalType {
-            case .fixedSets:
-                ForEach(comparisons(for: draft)) { c in
-                    let result = fixedSetsResult(c, draft: draft)
-                    (labelText(c.label, medalRank: c.medalRank, baseFont: .caption2, baseColor: .secondary)
-                     + Text(": ").foregroundStyle(.secondary)
-                     + Text(result.text).foregroundStyle(result.color))
-                        .font(.caption2)
-                }
-            case .repTotal(let target):
-                ForEach(repTotalComparisons(for: draft, target: target)) { c in
-                    let result = repTotalResult(c, setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
-                                                loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
-                    (labelText(c.label, medalRank: c.medalRank, baseFont: .caption2, baseColor: .secondary)
-                     + Text(": ").foregroundStyle(.secondary)
-                     + Text(result.text).foregroundStyle(result.color))
-                        .font(.caption2)
+            if !isCollapsed {
+                switch draft.goalType {
+                case .fixedSets:
+                    ForEach(comparisons(for: draft)) { c in
+                        let result = fixedSetsResult(c, draft: draft)
+                        (labelText(c.label, medalRank: c.medalRank, baseFont: .caption2, baseColor: .secondary)
+                         + Text(": ").foregroundStyle(.secondary)
+                         + Text(result.text).foregroundStyle(result.color))
+                            .font(.caption2)
+                    }
+                case .repTotal(let target):
+                    ForEach(repTotalComparisons(for: draft, target: target)) { c in
+                        let result = repTotalResult(c, setsLoggedSoFar: draft.sets.filter(\.isLogged).count,
+                                                    loggedTotal: draft.loggedTotal(bodyweight: currentBodyweight))
+                        (labelText(c.label, medalRank: c.medalRank, baseFont: .caption2, baseColor: .secondary)
+                         + Text(": ").foregroundStyle(.secondary)
+                         + Text(result.text).foregroundStyle(result.color))
+                            .font(.caption2)
+                    }
                 }
             }
         }
