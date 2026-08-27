@@ -469,11 +469,28 @@ struct TodayView: View {
     /// featured slot stays put all day (however it's completed, it just
     /// shows as done — see featuredDayRow) and only actually rotates at the
     /// next real midnight, once today's own log is no longer "today."
+    ///
+    /// That exclusion alone isn't enough on a phase's first day: with no
+    /// session before today, the pre-today branch falls through to
+    /// `phase.nextDay ?? ordered.first`, and `phase.nextDay` is the next
+    /// unfilled TRAINING slot — which today's own log may have just filled,
+    /// rotating the featured day immediately instead of holding until
+    /// midnight. So check for a session dated today FIRST, before either
+    /// branch, and feature that day directly if one exists (latest, if more
+    /// than one). A Rest day completed only via ActiveRecovery has no
+    /// session and isn't matched here — that case still resolves through
+    /// the pre-today branch below, same as it always has.
     private func templateNextDay(_ phase: Phase) -> PhaseDay? {
         let ordered = phase.orderedDays
         guard !ordered.isEmpty else { return nil }
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
+        if let todaysDay = phase.sessions
+            .filter({ $0.day != nil && cal.startOfDay(for: $0.date) == today })
+            .sorted(by: { $0.date < $1.date })
+            .last?.day {
+            return todaysDay
+        }
         let lastLoggedDay = phase.sessions
             .filter { $0.day != nil && cal.startOfDay(for: $0.date) < today }
             .sorted { $0.date < $1.date }
