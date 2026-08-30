@@ -20,6 +20,7 @@ struct StatsView: View {
     @Query(sort: \ActiveRecovery.date) private var activeRecoveries: [ActiveRecovery]
     @Query(sort: \TrainingDaysPerWeekChange.date) private var tdpwChanges: [TrainingDaysPerWeekChange]
     @Query private var phases: [Phase]
+    @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
 
     // @Query already keeps every stat live against real data changes (e.g.
     // edits made in History) — this just forces stats to also recompute
@@ -60,7 +61,9 @@ struct StatsView: View {
                             activePhase: activePhase,
                             restActivities: restActivities,
                             trainingDaysPerWeekChanges: tdpwChanges.map { (date: $0.date, value: $0.trainingDaysPerWeek) },
-                            defaultTrainingDaysPerWeek: settings?.trainingDaysPerWeek ?? 3)
+                            defaultTrainingDaysPerWeek: settings?.trainingDaysPerWeek ?? 3,
+                            allSessions: sessions,
+                            bigLiftNames: exerciseDefs.filter(\.isBigLift).map(\.name))
     }
 
     private func milesLabel(_ miles: Double) -> String {
@@ -80,6 +83,9 @@ struct StatsView: View {
                 }
                 yearMonthSection
                 milestonesSection
+                if !stats.allTimeBigLifts.isEmpty {
+                    allTimeBigLiftSection
+                }
                 ForEach(Array(stats.completedPhaseSummaries.enumerated()), id: \.element.id) { index, summary in
                     completedPhaseSection(summary, isMostRecent: index == 0)
                 }
@@ -188,6 +194,9 @@ struct StatsView: View {
         }
         return Section("Current Phase — Phase \(activePhase.number)") {
             statGrid(pairs)
+            if !stats.activePhaseBigLifts.isEmpty {
+                BigLiftTable(lifts: stats.activePhaseBigLifts)
+            }
         }
     }
 
@@ -255,6 +264,17 @@ struct StatsView: View {
                 ("All-time miles", milesLabel(stats.allTimeMiles)),
                 ("Best month all-time", stats.bestMonthLabel.map { "\($0) (\(stats.bestMonthWorkouts))" } ?? "—"),
             ])
+        }
+    }
+
+    /// Every flagged exercise's Heaviest/Est. 1RM across ALL logged history,
+    /// regardless of phase — spans phases the exercise was never flagged in
+    /// at the time (the flag is retroactive) and any session with no phase
+    /// attached at all. Placed alongside Milestones (also all-time/unbounded)
+    /// rather than inside a specific phase's own section.
+    private var allTimeBigLiftSection: some View {
+        Section("Big Lifts — All-Time") {
+            BigLiftTable(lifts: stats.allTimeBigLifts)
         }
     }
 
@@ -348,8 +368,16 @@ struct BigLiftTable: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let lifts: [BigLiftResult]
 
-    private func heaviestLabel(_ lift: BigLiftResult) -> String {
-        "\(Formatters.trim(lift.heaviestWeight)) x \(lift.heaviestReps)"
+    /// "170 x 5" in bold monospaced, plus the date that set was logged in a
+    /// smaller secondary weight, e.g. "170 x 5 (1/5/26)" — Formatters.shortDate
+    /// is the same compact numeric format History already uses in its own
+    /// tight date column, chosen here so the parenthetical doesn't force a
+    /// wrap at normal Dynamic Type sizes.
+    private func heaviestValue(_ lift: BigLiftResult) -> Text {
+        Text("\(Formatters.trim(lift.heaviestWeight)) x \(lift.heaviestReps) ")
+            .font(.system(.subheadline, design: .monospaced)).bold()
+        + Text("(\(Formatters.shortDate.string(from: lift.heaviestDate)))")
+            .font(.caption2).foregroundStyle(.secondary)
     }
 
     /// Est. 1RM rounded to the nearest 2.5 — the smallest common plate
@@ -359,19 +387,24 @@ struct BigLiftTable: View {
     /// PaceEngine.epley1RM and needs the precise value for its own
     /// session-to-session record detection — quantizing the stored number
     /// would let two genuinely different sessions round to the same value
-    /// and stop registering as a new record.
-    private func roundedEstimateLabel(_ lift: BigLiftResult) -> String {
-        Formatters.trim((lift.estimatedOneRepMax / 2.5).rounded() * 2.5)
+    /// and stop registering as a new record. Dated the same way as
+    /// heaviestValue — often a different date, since the two numbers aren't
+    /// necessarily won by the same set.
+    private func estimateValue(_ lift: BigLiftResult) -> Text {
+        Text("\(Formatters.trim((lift.estimatedOneRepMax / 2.5).rounded() * 2.5)) ")
+            .font(.system(.subheadline, design: .monospaced)).bold()
+        + Text("(\(Formatters.shortDate.string(from: lift.estimatedOneRepMaxDate)))")
+            .font(.caption2).foregroundStyle(.secondary)
     }
 
     var body: some View {
         if dynamicTypeSize.isAccessibilitySize {
             ForEach(lifts) { lift in
                 LabeledContent("\(lift.name) — Heaviest") {
-                    Text(heaviestLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                    heaviestValue(lift)
                 }
                 LabeledContent("\(lift.name) — Est. 1RM") {
-                    Text(roundedEstimateLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                    estimateValue(lift)
                 }
             }
         } else {
@@ -386,9 +419,16 @@ struct BigLiftTable: View {
                 ForEach(lifts) { lift in
                     GridRow {
                         Text(lift.name).font(.caption).foregroundStyle(.secondary)
-                        Text(heaviestLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                        // fixedSize keeps the number+date on one line by
+                        // refusing to compress — a long exercise name in the
+                        // first column wraps to fill the space that frees up
+                        // instead, rather than the date wrapping onto its
+                        // own line under the number.
+                        heaviestValue(lift)
+                            .fixedSize()
                             .gridColumnAlignment(.center)
-                        Text(roundedEstimateLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                        estimateValue(lift)
+                            .fixedSize()
                             .gridColumnAlignment(.center)
                     }
                 }

@@ -242,6 +242,7 @@ struct ExerciseEditView: View {
     @State private var notes = ""
     @State private var equipmentID: PersistentIdentifier?
     @State private var isBodyweight = false
+    @State private var isBigLift = false
 
     private var reps: [Int] {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -269,6 +270,7 @@ struct ExerciseEditView: View {
                             .font(.caption).foregroundStyle(.orange)
                     }
                     Toggle("Bodyweight Exercise", isOn: $isBodyweight)
+                    Toggle("Big Lift", isOn: $isBigLift)
                 }
                 Section("Equipment") {
                     Picker("Equipment", selection: $equipmentID) {
@@ -301,6 +303,7 @@ struct ExerciseEditView: View {
                 notes = def.notes
                 equipmentID = def.equipment?.persistentModelID
                 isBodyweight = def.isBodyweight
+                isBigLift = def.isBigLift
             }
         }
     }
@@ -315,11 +318,12 @@ struct ExerciseEditView: View {
             def.notes = notes
             def.equipment = equipment
             def.isBodyweight = isBodyweight
+            def.isBigLift = isBigLift
             saved = def
         } else {
             guard !reps.isEmpty else { return }
             let newDef = ExerciseDef(name: trimmedName, notes: notes, equipment: equipment,
-                                     repSchemes: [reps], isBodyweight: isBodyweight)
+                                     repSchemes: [reps], isBodyweight: isBodyweight, isBigLift: isBigLift)
             context.insert(newDef)
             saved = newDef
         }

@@ -125,7 +125,6 @@ struct ContentView: View {
             WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
-            migrateBigLiftFlagsToExerciseDef()
             repairDuplicatePlannedExerciseSlotIDs()
             ensureBandsBarExists()
             repairDanglingEquipmentReferences()
@@ -576,41 +575,6 @@ struct ContentView: View {
             changed = true
         }
         if changed { try? context.save() }
-    }
-
-    /// ONE-TIME migration for the Big Lift flag's move off PlannedExercise
-    /// (289beb9) onto ExerciseDef, keyed by name instead of by slot — see
-    /// ExerciseDef.isBigLift's own doc for why. Copies every already-flagged
-    /// PlannedExercise's flag forward onto the matching ExerciseDef (by
-    /// name) before PlannedExercise.isBigLift is removed from the schema —
-    /// idempotent like every other repair here (no persisted "already ran"
-    /// marker): once no PlannedExercise carries the old flag anymore
-    /// (either because none ever did, or because this has already copied
-    /// them all forward), it's a no-op every subsequent launch. Logs what it
-    /// found so a real-device run can be confirmed from the console.
-    private func migrateBigLiftFlagsToExerciseDef() {
-        guard let flaggedSlots = try? context.fetch(FetchDescriptor<PlannedExercise>()) else { return }
-        let flagged = flaggedSlots.filter(\.isBigLift)
-        guard !flagged.isEmpty else { return }
-        let defsByName = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
-        var matchedNames: Set<String> = []
-        var unmatchedNames: Set<String> = []
-        var changed = false
-        for pe in flagged {
-            guard let def = defsByName[pe.exerciseName] else {
-                unmatchedNames.insert(pe.exerciseName)
-                continue
-            }
-            matchedNames.insert(pe.exerciseName)
-            guard !def.isBigLift else { continue }
-            def.isBigLift = true
-            changed = true
-        }
-        if changed { try? context.save() }
-        print("Big Lift migration: \(flagged.count) flagged PlannedExercise row(s) found, "
-              + "\(matchedNames.count) distinct ExerciseDef(s) flagged (\(matchedNames.sorted().joined(separator: ", "))), "
-              + "\(unmatchedNames.count) with no matching ExerciseDef"
-              + (unmatchedNames.isEmpty ? "." : ": \(unmatchedNames.sorted().joined(separator: ", "))."))
     }
 
     /// One-time repair for a bug where every PlannedExercise ended up with

@@ -65,6 +65,17 @@ struct TrainingStats {
     /// end date from is skipped rather than guessing one — see
     /// `compute`'s own note on that.
     var completedPhaseSummaries: [PhaseSummary]
+
+    /// Big Lifts (ExerciseDef.isBigLift) logged so far in the active phase —
+    /// empty with no active phase, or if nothing flagged has been logged in
+    /// it yet. Unlike completedPhaseSummaries' bigLifts, this keeps moving
+    /// as the phase progresses rather than being frozen.
+    var activePhaseBigLifts: [BigLiftResult]
+    /// Big Lifts across EVERY logged session regardless of phase — spans
+    /// phases the exercise was never flagged in at the time (the flag is
+    /// retroactive, same as a completed phase's own bigLifts can be), and
+    /// sessions with no phase attached at all (manual/imported entries).
+    var allTimeBigLifts: [BigLiftResult]
 }
 
 /// The actual calendar range a streak covered, plus its boundary days —
@@ -114,29 +125,37 @@ struct PhaseSummary: Identifiable {
     let perfectCount: Int
     let completedCount: Int
     let milesWalked: Double
-    /// One entry per exercise flagged `isBigLift` on one of this phase's own
-    /// base planned slots (see PlannedExercise.isBigLift) that actually has
-    /// a performed set logged within the phase — order matches the flagged
-    /// slots' own day/order position. A flagged exercise never logged in
-    /// this phase is omitted entirely rather than showing a 0.
+    /// One entry per exercise flagged `ExerciseDef.isBigLift` that actually
+    /// has a performed set logged within the phase — order matches
+    /// StatsEngine.compute's own flaggedBigLiftNames order. A flagged
+    /// exercise never logged in this phase is omitted entirely rather than
+    /// showing a 0.
     let bigLifts: [BigLiftResult]
 }
 
-/// One flagged exercise's two headline numbers within one completed phase —
-/// see StatsEngine.bigLiftResult's own doc for exactly which sets qualify.
+/// One flagged exercise's two headline numbers within one phase, or across
+/// all of history — see StatsEngine.bigLiftResult's own doc for exactly
+/// which sets qualify.
 struct BigLiftResult: Identifiable {
     var id: String { name }
     let name: String
     /// The heaviest single set actually performed, and the reps it was done
     /// for (e.g. "170 x 5") — NOT a 1-rep-max estimate, just the biggest
-    /// per-rep load outright. Ties on weight prefer the higher rep count.
+    /// per-rep load outright. Ties on weight prefer the higher rep count,
+    /// then the earliest date (when the number was FIRST achieved).
     let heaviestWeight: Double
     let heaviestReps: Int
+    /// The session date of the set that produced heaviestWeight/heaviestReps.
+    let heaviestDate: Date
     /// The highest Epley-formula estimate (PaceEngine.epley1RM) across
     /// every qualifying set in the phase — not necessarily the heaviest
     /// set's own estimate, since a lighter set done for more reps can imply
     /// a bigger 1RM (e.g. 160x8 estimates higher than 170x5).
     let estimatedOneRepMax: Double
+    /// The session date of the set that produced estimatedOneRepMax — often
+    /// a different set (and date) than heaviestDate, since the two numbers
+    /// aren't necessarily won by the same set.
+    let estimatedOneRepMaxDate: Date
 }
 
 enum StatsEngine {
@@ -173,6 +192,8 @@ enum StatsEngine {
                         restActivities: [RestDayActivity] = [],
                         trainingDaysPerWeekChanges: [(date: Date, value: Int)] = [],
                         defaultTrainingDaysPerWeek: Int = 3,
+                        allSessions: [WorkoutSession] = [],
+                        bigLiftNames: [String] = [],
                         now: Date = .now) -> TrainingStats {
         let cal = Calendar.current
         let start = cal.startOfDay(for: startDate)
@@ -299,12 +320,6 @@ enum StatsEngine {
             .compactMap { phase -> PhaseSummary? in
                 guard let endDate = phase.sessions.map(\.date).max() else { return nil }
                 let flags = phase.perfectCycleFlags
-                var seenBigLiftNames = Set<String>()
-                let bigLiftNames = phase.orderedDays.flatMap(\.basePlannedExercises)
-                    .filter(\.isBigLift)
-                    .map(\.exerciseName)
-                    .filter { seenBigLiftNames.insert($0).inserted }
-                let bigLifts = bigLiftNames.compactMap { name in bigLiftResult(named: name, in: phase) }
                 return PhaseSummary(number: phase.number,
                                     startDate: phase.startDate,
                                     endDate: endDate,
@@ -314,9 +329,20 @@ enum StatsEngine {
                                     completedCount: flags.count,
                                     milesWalked: milesSum(from: cal.startOfDay(for: phase.startDate),
                                                           through: cal.startOfDay(for: endDate)),
-                                    bigLifts: bigLifts)
+                                    bigLifts: bigLifts(flaggedNames: bigLiftNames, in: phase))
             }
             .sorted { $0.number > $1.number }
+
+        // Active phase's own Big Lifts — unlike completedPhaseSummaries'
+        // (frozen at the phase's end date), this keeps moving as the phase
+        // progresses, same as every other active-phase stat.
+        let activePhaseBigLifts = activePhase.map { bigLifts(flaggedNames: bigLiftNames, in: $0) } ?? []
+
+        // All-time — every session regardless of phase, so it also covers
+        // sessions with no phase attached (manual/imported entries) and any
+        // phase whose bigLifts above got skipped (still in progress and not
+        // active, or complete-but-no-sessions).
+        let allTimeBigLifts = bigLiftNames.compactMap { name in bigLiftResult(named: name, in: allSessions) }
 
         // Perfect weeks/months: walk day-by-day again, bucketing
         // scheduled-vs-logged training days by week and by month. Bounded to
@@ -409,7 +435,9 @@ enum StatsEngine {
                              mtdMiles: mtdMiles,
                              priorYearMtdMiles: priorYearMtdMiles,
                              allTimeMiles: allTimeMiles,
-                             completedPhaseSummaries: completedPhaseSummaries)
+                             completedPhaseSummaries: completedPhaseSummaries,
+                             activePhaseBigLifts: activePhaseBigLifts,
+                             allTimeBigLifts: allTimeBigLifts)
     }
 
     /// Fallback progress stat for when there's no active phase to judge
@@ -674,45 +702,69 @@ enum StatsEngine {
         return Double(phase.filledSlotCount) / Double(daysElapsed) * 100
     }
 
-    /// Every performed set on `name` within `phase`'s own logged sessions
-    /// that qualifies for a Big Lift stat. Excludes: a rest-day-activity log
-    /// (its one "set" stores distance, not weight); a never-filled-in set
-    /// (reps == 0, e.g. History's "Add Set" placeholder, or a draft set
-    /// never actually logged); and, for a bodyweight exercise specifically,
-    /// a set with no `bodyweightAtLog` on record (logged before that field
-    /// existed, or imported with no weigh-in to resolve against) — SetLog's
-    /// own doc confirms `weight` is already the resolved bodyweight-inclusive
-    /// total for a bodyweight set, but when no bodyweight was on record at
-    /// log time that resolution silently fell back to treating it as 0, so
-    /// `weight` on such a set understates the real number. Skipped rather
-    /// than trusted, since there's no way to tell the difference after the
-    /// fact between "really was ~0 bodyweight" and "bodyweight just wasn't
-    /// known yet". The final `weight > 0` filter is a backstop against any
-    /// set that still nets out non-positive some other way.
-    private static func bigLiftQualifyingSets(named name: String, in phase: Phase) -> [(weight: Double, reps: Int)] {
-        phase.sessions
+    /// Every performed set on `name` within `sessions` that qualifies for a
+    /// Big Lift stat, each dated to its own session. Excludes: a
+    /// rest-day-activity log (its one "set" stores distance, not weight); a
+    /// never-filled-in set (reps == 0, e.g. History's "Add Set" placeholder,
+    /// or a draft set never actually logged); and, for a bodyweight exercise
+    /// specifically, a set with no `bodyweightAtLog` on record (logged
+    /// before that field existed, or imported with no weigh-in to resolve
+    /// against) — SetLog's own doc confirms `weight` is already the resolved
+    /// bodyweight-inclusive total for a bodyweight set, but when no
+    /// bodyweight was on record at log time that resolution silently fell
+    /// back to treating it as 0, so `weight` on such a set understates the
+    /// real number. Skipped rather than trusted, since there's no way to
+    /// tell the difference after the fact between "really was ~0 bodyweight"
+    /// and "bodyweight just wasn't known yet". The final `weight > 0` filter
+    /// is a backstop against any set that still nets out non-positive some
+    /// other way. A log with no session (shouldn't normally happen) is
+    /// skipped too — every qualifying set needs a real date.
+    private static func bigLiftQualifyingSets(named name: String,
+                                              in sessions: [WorkoutSession]) -> [(weight: Double, reps: Int, date: Date)] {
+        sessions
             .flatMap(\.exerciseLogs)
             .filter { $0.exerciseName == name && $0.restDayActivity == nil }
-            .flatMap { log -> [(weight: Double, reps: Int)] in
-                log.sets
+            .flatMap { log -> [(weight: Double, reps: Int, date: Date)] in
+                guard let date = log.session?.date else { return [] }
+                return log.sets
                     .filter { $0.reps > 0 }
                     .filter { !log.isBodyweight || $0.bodyweightAtLog != nil }
-                    .map { (weight: $0.weight, reps: $0.reps) }
+                    .map { (weight: $0.weight, reps: $0.reps, date: date) }
             }
             .filter { $0.weight > 0 }
     }
 
-    /// One flagged exercise's Big Lift summary for `phase` — nil if it has
-    /// no qualifying set (see bigLiftQualifyingSets) logged in the phase at
-    /// all, rather than a result with a 0 in it.
-    static func bigLiftResult(named name: String, in phase: Phase) -> BigLiftResult? {
-        let sets = bigLiftQualifyingSets(named: name, in: phase)
+    /// One flagged exercise's Big Lift summary within `sessions` — nil if it
+    /// has no qualifying set (see bigLiftQualifyingSets) among them at all,
+    /// rather than a result with a 0 in it. Heaviest and Est. 1RM are each
+    /// resolved independently (often different sets, different dates) — a
+    /// tie on either uses the earliest date, since that's when the number
+    /// was first achieved.
+    static func bigLiftResult(named name: String, in sessions: [WorkoutSession]) -> BigLiftResult? {
+        let sets = bigLiftQualifyingSets(named: name, in: sessions)
         guard let heaviest = sets.max(by: { a, b in
-            a.weight != b.weight ? a.weight < b.weight : a.reps < b.reps
+            if a.weight != b.weight { return a.weight < b.weight }
+            if a.reps != b.reps { return a.reps < b.reps }
+            return a.date > b.date
         }) else { return nil }
-        let estimatedOneRepMax = sets.map { PaceEngine.epley1RM(weight: $0.weight, reps: $0.reps) }.max() ?? 0
+        guard let bestEstimate = sets.max(by: { a, b in
+            let estimateA = PaceEngine.epley1RM(weight: a.weight, reps: a.reps)
+            let estimateB = PaceEngine.epley1RM(weight: b.weight, reps: b.reps)
+            if estimateA != estimateB { return estimateA < estimateB }
+            return a.date > b.date
+        }) else { return nil }
         return BigLiftResult(name: name, heaviestWeight: heaviest.weight, heaviestReps: heaviest.reps,
-                             estimatedOneRepMax: estimatedOneRepMax)
+                             heaviestDate: heaviest.date,
+                             estimatedOneRepMax: PaceEngine.epley1RM(weight: bestEstimate.weight, reps: bestEstimate.reps),
+                             estimatedOneRepMaxDate: bestEstimate.date)
+    }
+
+    /// One phase's Big Lift table: every name in `flaggedNames` that has a
+    /// qualifying set within `phase.sessions`, in the same order as
+    /// `flaggedNames`. A flagged exercise never logged in this phase is
+    /// omitted entirely.
+    static func bigLifts(flaggedNames: [String], in phase: Phase) -> [BigLiftResult] {
+        flaggedNames.compactMap { name in bigLiftResult(named: name, in: phase.sessions) }
     }
 }
 

@@ -251,21 +251,42 @@ struct PlannedExerciseRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Small, plain-style tap target deliberately, not a full-width
-            // Toggle — this row sits inside a ForEach with .onDelete/.onMove,
-            // and a switch's large gesture area fights drag-to-reorder.
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Exercise name", text: $pe.exerciseName)
+                .font(.headline)
+
+            // Tap to switch between this exercise's saved sets/rep-totals,
+            // or add a new one — handled exactly like a normal set, just
+            // based on a running total instead of a fixed scheme.
             Button {
-                pe.isBigLift.toggle()
+                showingSetPicker = true
             } label: {
-                Image(systemName: pe.isBigLift ? "star.fill" : "star")
-                    .foregroundStyle(pe.isBigLift ? .yellow : .secondary)
+                HStack {
+                    Text(planSummary)
+                        .font(.system(.subheadline, design: .monospaced))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
-            .padding(.top, 2)
 
-            exerciseFields
+            if isRepTotal {
+                Toggle("AI progresses rep total instead of weight", isOn: $pe.repTotalProgressesReps)
+                    .font(.caption)
+            }
+
+            if let libraryMismatchMessage {
+                Label(libraryMismatchMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
+        .padding(.vertical, 2)
         .confirmationDialog(pe.exerciseName, isPresented: $showingSetPicker, titleVisibility: .visible) {
             if let def {
                 ForEach(def.repSchemes, id: \.self) { reps in
@@ -307,44 +328,5 @@ struct PlannedExerciseRow: View {
                 showingAddSet = false
             }
         }
-    }
-
-    private var exerciseFields: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("Exercise name", text: $pe.exerciseName)
-                .font(.headline)
-
-            // Tap to switch between this exercise's saved sets/rep-totals,
-            // or add a new one — handled exactly like a normal set, just
-            // based on a running total instead of a fixed scheme.
-            Button {
-                showingSetPicker = true
-            } label: {
-                HStack {
-                    Text(planSummary)
-                        .font(.system(.subheadline, design: .monospaced))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 8).padding(.vertical, 6)
-                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-
-            if isRepTotal {
-                Toggle("AI progresses rep total instead of weight", isOn: $pe.repTotalProgressesReps)
-                    .font(.caption)
-            }
-
-            if let libraryMismatchMessage {
-                Label(libraryMismatchMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-        }
-        .padding(.vertical, 2)
     }
 }
