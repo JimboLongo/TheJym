@@ -273,7 +273,10 @@ struct StatsView: View {
                     ("Adherence", String(format: "%.0f%%", summary.adherencePercent)),
                     ("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount) perfect"),
                     ("Miles walked", milesLabel(summary.milesWalked)),
-                ] + summary.bigLifts.map { ($0.name, "\(Formatters.trim($0.weight)) lb") })
+                ])
+                if !summary.bigLifts.isEmpty {
+                    bigLiftGrid(summary.bigLifts)
+                }
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Phase \(summary.number)").font(.headline)
@@ -299,6 +302,15 @@ struct StatsView: View {
         }
     }
 
+    /// Two per row normally, one per row at an accessibility Dynamic Type
+    /// size so a wide value never truncates against a cramped column —
+    /// shared by statGrid and bigLiftGrid so they can't drift apart.
+    private var statGridColumns: [GridItem] {
+        dynamicTypeSize.isAccessibilitySize
+            ? [GridItem(.flexible())]
+            : [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)]
+    }
+
     /// Short label/value pairs, two per row (one per row at an
     /// accessibility Dynamic Type size, so a wide value never truncates
     /// against a cramped column). One List row per call — trimmed insets
@@ -307,10 +319,7 @@ struct StatsView: View {
     /// helps unless the grid's own row doesn't ask for touch-target height.
     @ViewBuilder
     private func statGrid(_ pairs: [(String, String)]) -> some View {
-        let columns: [GridItem] = dynamicTypeSize.isAccessibilitySize
-            ? [GridItem(.flexible())]
-            : [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)]
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+        LazyVGrid(columns: statGridColumns, alignment: .leading, spacing: 10) {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(pair.0)
@@ -319,6 +328,35 @@ struct StatsView: View {
                     Text(pair.1)
                         .font(.system(.subheadline, design: .monospaced))
                         .bold()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+    }
+
+    /// One cell per flagged Big Lift, same two-column layout as statGrid
+    /// (and the same one-column accessibility fallback via
+    /// statGridColumns), but each cell stacks THREE lines instead of a
+    /// plain label/value pair — the lift's name, its Heaviest Single Rep,
+    /// and its Est. 1RM — since every lift now carries two numbers instead
+    /// of one. None of the three lines are given a lineLimit, matching
+    /// statGrid's own cells, so a long exercise name wraps at large Dynamic
+    /// Type sizes instead of truncating.
+    @ViewBuilder
+    private func bigLiftGrid(_ lifts: [BigLiftResult]) -> some View {
+        LazyVGrid(columns: statGridColumns, alignment: .leading, spacing: 10) {
+            ForEach(lifts) { lift in
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(lift.name)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("\(Formatters.trim(lift.heaviestWeight)) x \(lift.heaviestReps)")
+                        .font(.system(.subheadline, design: .monospaced))
+                        .bold()
+                    Text("Est. 1RM \(Formatters.trim(lift.estimatedOneRepMax))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

@@ -449,4 +449,12 @@ enum PaceEngine {
         guard avg > 0 else { return nil }
         return (wtRemain / avg / Double(setsRemain)).rounded(.up)
     }
+
+    /// Epley-formula estimated 1-rep max for one set: weight × (1 + reps/30).
+    /// The one shared spot for this — WorkoutLogView's oneRepMaxOverTime
+    /// chart and StatsEngine's completed-phase Big Lift summary both call
+    /// through here rather than each carrying their own copy of the formula.
+    static func epley1RM(weight: Double, reps: Int) -> Double {
+        weight * (1 + Double(reps) / 30.0)
+    }
 }

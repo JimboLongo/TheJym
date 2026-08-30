@@ -1040,7 +1040,7 @@ struct ExercisePageView: View {
     /// for whether it was a new record at the time.
     private var oneRepMaxOverTime: [(date: Date, value: Double, isRecord: Bool)] {
         valuesWithRecordFlags { log in
-            let best = log.sortedSets.map { $0.weight * (1 + Double($0.reps) / 30.0) }.max() ?? 0
+            let best = log.sortedSets.map { PaceEngine.epley1RM(weight: $0.weight, reps: $0.reps) }.max() ?? 0
             return best > 0 ? best : nil
         }
     }

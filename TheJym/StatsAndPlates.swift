@@ -122,14 +122,21 @@ struct PhaseSummary: Identifiable {
     let bigLifts: [BigLiftResult]
 }
 
-/// One flagged exercise's max single-set weight within one completed phase.
-/// For a bodyweight exercise this is the ADDED weight (e.g. a weighted
-/// pull-up's plate/vest load), not the bodyweight-inclusive resolved total —
-/// see StatsEngine.bigLiftMax's own doc for why.
+/// One flagged exercise's two headline numbers within one completed phase —
+/// see StatsEngine.bigLiftResult's own doc for exactly which sets qualify.
 struct BigLiftResult: Identifiable {
     var id: String { name }
     let name: String
-    let weight: Double
+    /// The heaviest single set actually performed, and the reps it was done
+    /// for (e.g. "170 x 5") — NOT a 1-rep-max estimate, just the biggest
+    /// per-rep load outright. Ties on weight prefer the higher rep count.
+    let heaviestWeight: Double
+    let heaviestReps: Int
+    /// The highest Epley-formula estimate (PaceEngine.epley1RM) across
+    /// every qualifying set in the phase — not necessarily the heaviest
+    /// set's own estimate, since a lighter set done for more reps can imply
+    /// a bigger 1RM (e.g. 160x8 estimates higher than 170x5).
+    let estimatedOneRepMax: Double
 }
 
 enum StatsEngine {
@@ -297,9 +304,7 @@ enum StatsEngine {
                     .filter(\.isBigLift)
                     .map(\.exerciseName)
                     .filter { seenBigLiftNames.insert($0).inserted }
-                let bigLifts = bigLiftNames.compactMap { name -> BigLiftResult? in
-                    bigLiftMax(named: name, in: phase).map { BigLiftResult(name: name, weight: $0) }
-                }
+                let bigLifts = bigLiftNames.compactMap { name in bigLiftResult(named: name, in: phase) }
                 return PhaseSummary(number: phase.number,
                                     startDate: phase.startDate,
                                     endDate: endDate,
@@ -669,29 +674,45 @@ enum StatsEngine {
         return Double(phase.filledSlotCount) / Double(daysElapsed) * 100
     }
 
-    /// The heaviest single SET actually performed on `name` within `phase`'s
-    /// own logged sessions, or nil if it was never logged there. Excludes a
-    /// rest-day-activity log (its one "set" stores distance, not weight —
-    /// same exclusion completedPhaseSummaries' miles math applies) and a
-    /// never-filled-in set (reps == 0, e.g. History's "Add Set" placeholder,
-    /// or a draft set never actually logged) rather than letting either
-    /// masquerade as a real max.
-    ///
-    /// For a bodyweight exercise, uses each set's ADDED weight
-    /// (SetLog.addedWeight) rather than SetLog.weight's bodyweight-inclusive
-    /// resolved total — a bodyweight-only lift moving 0 added should still
-    /// be trackable as a real max (e.g. 0), and mixing in bodyweight would
-    /// make this number rise or fall with bodyweight itself rather than
-    /// with training progress, exactly what ExerciseLog.weightsKey's own
-    /// ADDED-weight convention already exists to avoid.
-    static func bigLiftMax(named name: String, in phase: Phase) -> Double? {
+    /// Every performed set on `name` within `phase`'s own logged sessions
+    /// that qualifies for a Big Lift stat. Excludes: a rest-day-activity log
+    /// (its one "set" stores distance, not weight); a never-filled-in set
+    /// (reps == 0, e.g. History's "Add Set" placeholder, or a draft set
+    /// never actually logged); and, for a bodyweight exercise specifically,
+    /// a set with no `bodyweightAtLog` on record (logged before that field
+    /// existed, or imported with no weigh-in to resolve against) — SetLog's
+    /// own doc confirms `weight` is already the resolved bodyweight-inclusive
+    /// total for a bodyweight set, but when no bodyweight was on record at
+    /// log time that resolution silently fell back to treating it as 0, so
+    /// `weight` on such a set understates the real number. Skipped rather
+    /// than trusted, since there's no way to tell the difference after the
+    /// fact between "really was ~0 bodyweight" and "bodyweight just wasn't
+    /// known yet". The final `weight > 0` filter is a backstop against any
+    /// set that still nets out non-positive some other way.
+    private static func bigLiftQualifyingSets(named name: String, in phase: Phase) -> [(weight: Double, reps: Int)] {
         phase.sessions
             .flatMap(\.exerciseLogs)
             .filter { $0.exerciseName == name && $0.restDayActivity == nil }
-            .flatMap { log -> [Double] in
-                log.sets.filter { $0.reps > 0 }.map { log.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+            .flatMap { log -> [(weight: Double, reps: Int)] in
+                log.sets
+                    .filter { $0.reps > 0 }
+                    .filter { !log.isBodyweight || $0.bodyweightAtLog != nil }
+                    .map { (weight: $0.weight, reps: $0.reps) }
             }
-            .max()
+            .filter { $0.weight > 0 }
+    }
+
+    /// One flagged exercise's Big Lift summary for `phase` — nil if it has
+    /// no qualifying set (see bigLiftQualifyingSets) logged in the phase at
+    /// all, rather than a result with a 0 in it.
+    static func bigLiftResult(named name: String, in phase: Phase) -> BigLiftResult? {
+        let sets = bigLiftQualifyingSets(named: name, in: phase)
+        guard let heaviest = sets.max(by: { a, b in
+            a.weight != b.weight ? a.weight < b.weight : a.reps < b.reps
+        }) else { return nil }
+        let estimatedOneRepMax = sets.map { PaceEngine.epley1RM(weight: $0.weight, reps: $0.reps) }.max() ?? 0
+        return BigLiftResult(name: name, heaviestWeight: heaviest.weight, heaviestReps: heaviest.reps,
+                             estimatedOneRepMax: estimatedOneRepMax)
     }
 }
 
