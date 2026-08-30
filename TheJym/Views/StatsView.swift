@@ -275,7 +275,7 @@ struct StatsView: View {
                     ("Miles walked", milesLabel(summary.milesWalked)),
                 ])
                 if !summary.bigLifts.isEmpty {
-                    bigLiftGrid(summary.bigLifts)
+                    BigLiftTable(lifts: summary.bigLifts)
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
@@ -334,33 +334,62 @@ struct StatsView: View {
         }
         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
     }
+}
 
-    /// One cell per flagged Big Lift, same two-column layout as statGrid
-    /// (and the same one-column accessibility fallback via
-    /// statGridColumns), but each cell stacks THREE lines instead of a
-    /// plain label/value pair — the lift's name, its Heaviest Single Rep,
-    /// and its Est. 1RM — since every lift now carries two numbers instead
-    /// of one. None of the three lines are given a lineLimit, matching
-    /// statGrid's own cells, so a long exercise name wraps at large Dynamic
-    /// Type sizes instead of truncating.
-    @ViewBuilder
-    private func bigLiftGrid(_ lifts: [BigLiftResult]) -> some View {
-        LazyVGrid(columns: statGridColumns, alignment: .leading, spacing: 10) {
+/// The Big Lifts table inside one completed phase's summary: Exercise x
+/// Heaviest x Est. 1RM, one row per flagged lift plus a header row — same
+/// Grid/GridRow structure and accessibility fallback as yearMonthSection's
+/// YTD/MTD table (see its own doc for why: a 3-column table has no room to
+/// stay readable at an accessibility Dynamic Type size, so it falls back to
+/// one label/value row per lift per metric instead of letting values
+/// truncate). Its own `struct` (not a private StatsView method) so a test
+/// can render it directly with synthetic data.
+struct BigLiftTable: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let lifts: [BigLiftResult]
+
+    private func heaviestLabel(_ lift: BigLiftResult) -> String {
+        "\(Formatters.trim(lift.heaviestWeight)) x \(lift.heaviestReps)"
+    }
+
+    /// Est. 1RM rounded to the nearest 2.5 — the smallest common plate
+    /// pair — for DISPLAY ONLY, so it reads as a weight that could
+    /// actually be loaded on a bar. BigLiftResult.estimatedOneRepMax
+    /// itself stays exact: WorkoutLogView's oneRepMaxOverTime chart shares
+    /// PaceEngine.epley1RM and needs the precise value for its own
+    /// session-to-session record detection — quantizing the stored number
+    /// would let two genuinely different sessions round to the same value
+    /// and stop registering as a new record.
+    private func roundedEstimateLabel(_ lift: BigLiftResult) -> String {
+        Formatters.trim((lift.estimatedOneRepMax / 2.5).rounded() * 2.5)
+    }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
             ForEach(lifts) { lift in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(lift.name)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text("\(Formatters.trim(lift.heaviestWeight)) x \(lift.heaviestReps)")
-                        .font(.system(.subheadline, design: .monospaced))
-                        .bold()
-                    Text("Est. 1RM \(Formatters.trim(lift.estimatedOneRepMax))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                LabeledContent("\(lift.name) — Heaviest") {
+                    Text(heaviestLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                LabeledContent("\(lift.name) — Est. 1RM") {
+                    Text(roundedEstimateLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                }
             }
+        } else {
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    Text("Exercise").font(.caption2.bold()).foregroundStyle(.secondary)
+                    Text("Heaviest").font(.caption2.bold()).foregroundStyle(.secondary)
+                    Text("Est. 1RM").font(.caption2.bold()).foregroundStyle(.secondary)
+                }
+                ForEach(lifts) { lift in
+                    GridRow {
+                        Text(lift.name).font(.caption).foregroundStyle(.secondary)
+                        Text(heaviestLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                        Text(roundedEstimateLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                    }
+                }
+            }
+            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
         }
-        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
     }
 }
