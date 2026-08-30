@@ -78,23 +78,39 @@ struct ExercisesView: View {
                     ContentUnavailableView.search(text: searchText)
                 }
                 ForEach(filteredDefs, id: \.persistentModelID) { def in
-                    Button {
-                        selectedDef = def
-                    } label: {
-                        HStack {
-                            Text(def.name).font(.headline)
-                            Spacer()
-                            if def.isBodyweight {
-                                Text("Bodyweight").font(.caption).foregroundStyle(.secondary)
-                            }
-                            if let eq = def.equipment {
-                                Text(eq.name).font(.caption).foregroundStyle(.secondary)
-                            }
+                    HStack(spacing: 8) {
+                        // Sibling to the row's own Button, not nested inside
+                        // it — a Button nested in a Button fights the outer
+                        // one for taps. Same small-plain-target pattern as
+                        // PhaseEditView's star used before the flag moved
+                        // here (289beb9).
+                        Button {
+                            def.isBigLift.toggle()
+                            try? context.save()
+                        } label: {
+                            Image(systemName: def.isBigLift ? "star.fill" : "star")
+                                .foregroundStyle(def.isBigLift ? .yellow : .secondary)
                         }
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+
+                        Button {
+                            selectedDef = def
+                        } label: {
+                            HStack {
+                                Text(def.name).font(.headline)
+                                Spacer()
+                                if def.isBodyweight {
+                                    Text("Bodyweight").font(.caption).foregroundStyle(.secondary)
+                                }
+                                if let eq = def.equipment {
+                                    Text(eq.name).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.primary)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.primary)
                 }
                 .onDelete { idx in
                     for i in idx { context.delete(filteredDefs[i]) }
@@ -242,7 +258,6 @@ struct ExerciseEditView: View {
     @State private var notes = ""
     @State private var equipmentID: PersistentIdentifier?
     @State private var isBodyweight = false
-    @State private var isBigLift = false
 
     private var reps: [Int] {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -270,7 +285,6 @@ struct ExerciseEditView: View {
                             .font(.caption).foregroundStyle(.orange)
                     }
                     Toggle("Bodyweight Exercise", isOn: $isBodyweight)
-                    Toggle("Big Lift", isOn: $isBigLift)
                 }
                 Section("Equipment") {
                     Picker("Equipment", selection: $equipmentID) {
@@ -303,7 +317,6 @@ struct ExerciseEditView: View {
                 notes = def.notes
                 equipmentID = def.equipment?.persistentModelID
                 isBodyweight = def.isBodyweight
-                isBigLift = def.isBigLift
             }
         }
     }
@@ -318,12 +331,11 @@ struct ExerciseEditView: View {
             def.notes = notes
             def.equipment = equipment
             def.isBodyweight = isBodyweight
-            def.isBigLift = isBigLift
             saved = def
         } else {
             guard !reps.isEmpty else { return }
             let newDef = ExerciseDef(name: trimmedName, notes: notes, equipment: equipment,
-                                     repSchemes: [reps], isBodyweight: isBodyweight, isBigLift: isBigLift)
+                                     repSchemes: [reps], isBodyweight: isBodyweight)
             context.insert(newDef)
             saved = newDef
         }
