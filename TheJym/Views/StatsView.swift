@@ -83,8 +83,8 @@ struct StatsView: View {
                 }
                 yearMonthSection
                 milestonesSection
-                if !stats.allTimeBigLifts.isEmpty {
-                    allTimeBigLiftSection
+                if !stats.bigLiftGroups.isEmpty {
+                    bigLiftsSection
                 }
                 ForEach(Array(stats.completedPhaseSummaries.enumerated()), id: \.element.id) { index, summary in
                     completedPhaseSection(summary, isMostRecent: index == 0)
@@ -194,9 +194,6 @@ struct StatsView: View {
         }
         return Section("Current Phase — Phase \(activePhase.number)") {
             statGrid(pairs)
-            if !stats.activePhaseBigLifts.isEmpty {
-                BigLiftTable(lifts: stats.activePhaseBigLifts)
-            }
         }
     }
 
@@ -267,14 +264,17 @@ struct StatsView: View {
         }
     }
 
-    /// Every flagged exercise's Heaviest/Est. 1RM across ALL logged history,
-    /// regardless of phase — spans phases the exercise was never flagged in
-    /// at the time (the flag is retroactive) and any session with no phase
-    /// attached at all. Placed alongside Milestones (also all-time/unbounded)
-    /// rather than inside a specific phase's own section.
-    private var allTimeBigLiftSection: some View {
-        Section("Big Lifts — All-Time") {
-            BigLiftTable(lifts: stats.allTimeBigLifts)
+    /// One group per flagged exercise, each its own All-Time row plus one
+    /// row per phase (including the active one) that has a qualifying set —
+    /// see StatsEngine.compute's own note on exactly how a group's rows are
+    /// built. A single section for every flagged exercise, rather than a
+    /// table scattered across each phase's own section, so phase-over-phase
+    /// progress on the same lift reads top-to-bottom in one place.
+    private var bigLiftsSection: some View {
+        Section("Big Lifts") {
+            ForEach(stats.bigLiftGroups) { group in
+                BigLiftGroupTable(group: group)
+            }
         }
     }
 
@@ -294,9 +294,6 @@ struct StatsView: View {
                     ("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount) perfect"),
                     ("Miles walked", milesLabel(summary.milesWalked)),
                 ])
-                if !summary.bigLifts.isEmpty {
-                    BigLiftTable(lifts: summary.bigLifts)
-                }
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Phase \(summary.number)").font(.headline)
@@ -361,22 +358,25 @@ struct StatsView: View {
 /// Grid/GridRow structure and accessibility fallback as yearMonthSection's
 /// YTD/MTD table (see its own doc for why: a 3-column table has no room to
 /// stay readable at an accessibility Dynamic Type size, so it falls back to
-/// one label/value row per lift per metric instead of letting values
-/// truncate). Its own `struct` (not a private StatsView method) so a test
-/// can render it directly with synthetic data.
-struct BigLiftTable: View {
+/// one label/value row per scope per metric instead of letting values
+/// truncate) — Scope x Heaviest x Est. 1RM instead of Exercise x Heaviest x
+/// Est. 1RM, with the exercise name promoted to a header above the table
+/// instead of a row's own first column, since one group is already scoped
+/// to a single exercise. Its own `struct` (not a private StatsView method)
+/// so a test can render it directly with synthetic data.
+struct BigLiftGroupTable: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    let lifts: [BigLiftResult]
+    let group: BigLiftGroup
 
     /// "170 x 5" in bold monospaced, plus the date that set was logged in a
     /// smaller secondary weight, e.g. "170 x 5 (1/5/26)" — Formatters.shortDate
     /// is the same compact numeric format History already uses in its own
     /// tight date column, chosen here so the parenthetical doesn't force a
     /// wrap at normal Dynamic Type sizes.
-    private func heaviestValue(_ lift: BigLiftResult) -> Text {
-        Text("\(Formatters.trim(lift.heaviestWeight)) x \(lift.heaviestReps) ")
+    private func heaviestValue(_ result: BigLiftResult) -> Text {
+        Text("\(Formatters.trim(result.heaviestWeight)) x \(result.heaviestReps) ")
             .font(.system(.subheadline, design: .monospaced)).bold()
-        + Text("(\(Formatters.shortDate.string(from: lift.heaviestDate)))")
+        + Text("(\(Formatters.shortDate.string(from: result.heaviestDate)))")
             .font(.caption2).foregroundStyle(.secondary)
     }
 
@@ -390,50 +390,54 @@ struct BigLiftTable: View {
     /// and stop registering as a new record. Dated the same way as
     /// heaviestValue — often a different date, since the two numbers aren't
     /// necessarily won by the same set.
-    private func estimateValue(_ lift: BigLiftResult) -> Text {
-        Text("\(Formatters.trim((lift.estimatedOneRepMax / 2.5).rounded() * 2.5)) ")
+    private func estimateValue(_ result: BigLiftResult) -> Text {
+        Text("\(Formatters.trim((result.estimatedOneRepMax / 2.5).rounded() * 2.5)) ")
             .font(.system(.subheadline, design: .monospaced)).bold()
-        + Text("(\(Formatters.shortDate.string(from: lift.estimatedOneRepMaxDate)))")
+        + Text("(\(Formatters.shortDate.string(from: result.estimatedOneRepMaxDate)))")
             .font(.caption2).foregroundStyle(.secondary)
     }
 
     var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            ForEach(lifts) { lift in
-                LabeledContent("\(lift.name) — Heaviest") {
-                    heaviestValue(lift)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(group.exerciseName).font(.subheadline.bold())
+            if dynamicTypeSize.isAccessibilitySize {
+                ForEach(group.rows) { row in
+                    LabeledContent("\(row.scopeLabel) — Heaviest") {
+                        heaviestValue(row.result)
+                    }
+                    LabeledContent("\(row.scopeLabel) — Est. 1RM") {
+                        estimateValue(row.result)
+                    }
                 }
-                LabeledContent("\(lift.name) — Est. 1RM") {
-                    estimateValue(lift)
-                }
-            }
-        } else {
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                GridRow {
-                    Text("Exercise").font(.caption2.bold()).foregroundStyle(.secondary)
-                    Text("Heaviest").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.center)
-                    Text("Est. 1RM").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.center)
-                }
-                ForEach(lifts) { lift in
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                     GridRow {
-                        Text(lift.name).font(.caption).foregroundStyle(.secondary)
-                        // fixedSize keeps the number+date on one line by
-                        // refusing to compress — a long exercise name in the
-                        // first column wraps to fill the space that frees up
-                        // instead, rather than the date wrapping onto its
-                        // own line under the number.
-                        heaviestValue(lift)
-                            .fixedSize()
+                        Text("Scope").font(.caption2.bold()).foregroundStyle(.secondary)
+                        Text("Heaviest").font(.caption2.bold()).foregroundStyle(.secondary)
                             .gridColumnAlignment(.center)
-                        estimateValue(lift)
-                            .fixedSize()
+                        Text("Est. 1RM").font(.caption2.bold()).foregroundStyle(.secondary)
                             .gridColumnAlignment(.center)
+                    }
+                    ForEach(group.rows) { row in
+                        GridRow {
+                            Text(row.scopeLabel).font(.caption).foregroundStyle(.secondary)
+                            // fixedSize keeps the number+date on one line by
+                            // refusing to compress — the Scope column is
+                            // short ("All-Time"/"Phase N"), but this still
+                            // guards against it wrapping the date under the
+                            // number if a row's Scope text were ever wider.
+                            heaviestValue(row.result)
+                                .fixedSize()
+                                .gridColumnAlignment(.center)
+                            estimateValue(row.result)
+                                .fixedSize()
+                                .gridColumnAlignment(.center)
+                        }
                     }
                 }
             }
-            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
         }
+        .padding(.vertical, 4)
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
     }
 }

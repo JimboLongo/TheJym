@@ -66,16 +66,10 @@ struct TrainingStats {
     /// `compute`'s own note on that.
     var completedPhaseSummaries: [PhaseSummary]
 
-    /// Big Lifts (ExerciseDef.isBigLift) logged so far in the active phase —
-    /// empty with no active phase, or if nothing flagged has been logged in
-    /// it yet. Unlike completedPhaseSummaries' bigLifts, this keeps moving
-    /// as the phase progresses rather than being frozen.
-    var activePhaseBigLifts: [BigLiftResult]
-    /// Big Lifts across EVERY logged session regardless of phase — spans
-    /// phases the exercise was never flagged in at the time (the flag is
-    /// retroactive, same as a completed phase's own bigLifts can be), and
-    /// sessions with no phase attached at all (manual/imported entries).
-    var allTimeBigLifts: [BigLiftResult]
+    /// One group per flagged exercise (ExerciseDef.isBigLift) with at least
+    /// one qualifying set anywhere in history — see StatsEngine.compute's
+    /// own note on exactly how each group's rows are built.
+    var bigLiftGroups: [BigLiftGroup]
 }
 
 /// The actual calendar range a streak covered, plus its boundary days —
@@ -125,12 +119,28 @@ struct PhaseSummary: Identifiable {
     let perfectCount: Int
     let completedCount: Int
     let milesWalked: Double
-    /// One entry per exercise flagged `ExerciseDef.isBigLift` that actually
-    /// has a performed set logged within the phase — order matches
-    /// StatsEngine.compute's own flaggedBigLiftNames order. A flagged
-    /// exercise never logged in this phase is omitted entirely rather than
-    /// showing a 0.
-    let bigLifts: [BigLiftResult]
+}
+
+/// One exercise-grouped block in the Stats page's single "Big Lifts"
+/// section — the exercise name is the group's own header (see
+/// StatsView.BigLiftGroupSection), not a row.
+struct BigLiftGroup: Identifiable {
+    var id: String { exerciseName }
+    let exerciseName: String
+    /// All-Time first, then each phase with a qualifying set (including the
+    /// active one), descending by phase number. The All-Time row's numbers
+    /// will often duplicate whichever phase row actually set them — that's
+    /// intended: it's what lets a phase's own numbers be read against the
+    /// lifetime best sitting right above them.
+    let rows: [BigLiftScopeRow]
+}
+
+/// One row within a BigLiftGroup: "All-Time" or "Phase N" paired with that
+/// scope's own Heaviest/Est. 1RM.
+struct BigLiftScopeRow: Identifiable {
+    var id: String { scopeLabel }
+    let scopeLabel: String
+    let result: BigLiftResult
 }
 
 /// One flagged exercise's two headline numbers within one phase, or across
@@ -328,21 +338,30 @@ enum StatsEngine {
                                     perfectCount: flags.filter { $0 }.count,
                                     completedCount: flags.count,
                                     milesWalked: milesSum(from: cal.startOfDay(for: phase.startDate),
-                                                          through: cal.startOfDay(for: endDate)),
-                                    bigLifts: bigLifts(flaggedNames: bigLiftNames, in: phase))
+                                                          through: cal.startOfDay(for: endDate)))
             }
             .sorted { $0.number > $1.number }
 
-        // Active phase's own Big Lifts — unlike completedPhaseSummaries'
-        // (frozen at the phase's end date), this keeps moving as the phase
-        // progresses, same as every other active-phase stat.
-        let activePhaseBigLifts = activePhase.map { bigLifts(flaggedNames: bigLiftNames, in: $0) } ?? []
-
-        // All-time — every session regardless of phase, so it also covers
-        // sessions with no phase attached (manual/imported entries) and any
-        // phase whose bigLifts above got skipped (still in progress and not
-        // active, or complete-but-no-sessions).
-        let allTimeBigLifts = bigLiftNames.compactMap { name in bigLiftResult(named: name, in: allSessions) }
+        // Big Lifts — one group per flagged exercise with a qualifying set
+        // ANYWHERE (all-time), each an All-Time row plus one row per phase
+        // that itself has a qualifying set for that exercise — completed
+        // phases (same criterion as completedPhaseSummaries above) PLUS the
+        // active one, so a lift still being trained this phase shows up
+        // too, not just phases already wrapped up. Sessions with no phase
+        // attached (manual/imported entries) only ever surface through the
+        // All-Time row, same as they always have.
+        let bigLiftPhases = allPhases
+            .filter { $0.isActive || ($0.isComplete && !$0.isActive) }
+            .sorted { $0.number > $1.number }
+        let bigLiftGroups: [BigLiftGroup] = bigLiftNames.compactMap { name -> BigLiftGroup? in
+            guard let allTime = bigLiftResult(named: name, in: allSessions) else { return nil }
+            var rows = [BigLiftScopeRow(scopeLabel: "All-Time", result: allTime)]
+            for phase in bigLiftPhases {
+                guard let result = bigLiftResult(named: name, in: phase.sessions) else { continue }
+                rows.append(BigLiftScopeRow(scopeLabel: "Phase \(phase.number)", result: result))
+            }
+            return BigLiftGroup(exerciseName: name, rows: rows)
+        }
 
         // Perfect weeks/months: walk day-by-day again, bucketing
         // scheduled-vs-logged training days by week and by month. Bounded to
@@ -436,8 +455,7 @@ enum StatsEngine {
                              priorYearMtdMiles: priorYearMtdMiles,
                              allTimeMiles: allTimeMiles,
                              completedPhaseSummaries: completedPhaseSummaries,
-                             activePhaseBigLifts: activePhaseBigLifts,
-                             allTimeBigLifts: allTimeBigLifts)
+                             bigLiftGroups: bigLiftGroups)
     }
 
     /// Fallback progress stat for when there's no active phase to judge
@@ -759,13 +777,6 @@ enum StatsEngine {
                              estimatedOneRepMaxDate: bestEstimate.date)
     }
 
-    /// One phase's Big Lift table: every name in `flaggedNames` that has a
-    /// qualifying set within `phase.sessions`, in the same order as
-    /// `flaggedNames`. A flagged exercise never logged in this phase is
-    /// omitted entirely.
-    static func bigLifts(flaggedNames: [String], in phase: Phase) -> [BigLiftResult] {
-        flaggedNames.compactMap { name in bigLiftResult(named: name, in: phase.sessions) }
-    }
 }
 
 // MARK: - Plate Calculator
