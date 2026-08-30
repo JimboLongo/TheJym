@@ -273,7 +273,7 @@ struct StatsView: View {
                     ("Adherence", String(format: "%.0f%%", summary.adherencePercent)),
                     ("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount) perfect"),
                     ("Miles walked", milesLabel(summary.milesWalked)),
-                ])
+                ] + summary.bigLifts.map { ($0.name, "\(Formatters.trim($0.weight)) lb") })
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Phase \(summary.number)").font(.headline)

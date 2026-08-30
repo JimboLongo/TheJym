@@ -720,6 +720,7 @@ final class PhaseDay {
         } else {
             let override = PlannedExercise(order: baseSlot.order, exerciseName: exerciseName,
                                            targetReps: targetReps, isBodyweight: isBodyweight,
+                                           isBigLift: baseSlot.isBigLift,
                                            goalType: goalType, cycleOverride: cycle,
                                            overriddenSlotID: baseSlot.slotID)
             override.day = self
@@ -766,6 +767,15 @@ final class PlannedExercise {
     var suggestedWeights: [Double] // per-set suggestion (AI or manual); empty = none yet. For a
                                     // bodyweight exercise these represent ADDED weight, not total load.
     var isBodyweight: Bool = false
+    /// True if this slot should be tracked as a "Big Lift" in the Stats
+    /// tab's completed-phase summaries — the explicit flag itself decides
+    /// what counts, not any name-matching heuristic. BASE SLOTS ONLY
+    /// (cycleOverride == 0), exactly like `order`: an override row has no
+    /// independent identity (see `cycleOverride`'s own doc) and just
+    /// inherits its base slot's flag at creation time rather than carrying
+    /// a meaningfully independent one — same reasoning moveExercises
+    /// documents for why it never rewrites an override's `order` either.
+    var isBigLift: Bool = false
     var goalKindRaw: Int = 0       // 0 = fixedSets, 1 = repTotal
     var repTotalTarget: Int = 0    // meaningful only when goalKindRaw == 1
     /// repTotal only: which direction AI progression bumps when the target
@@ -793,7 +803,7 @@ final class PlannedExercise {
 
     init(order: Int, exerciseName: String,
          targetReps: [Int], suggestedWeights: [Double] = [],
-         isBodyweight: Bool = false, goalType: GoalType = .fixedSets,
+         isBodyweight: Bool = false, isBigLift: Bool = false, goalType: GoalType = .fixedSets,
          repTotalProgressesReps: Bool = false,
          cycleOverride: Int = 0, overriddenSlotID: UUID? = nil) {
         self.order = order
@@ -801,6 +811,7 @@ final class PlannedExercise {
         self.targetReps = targetReps
         self.suggestedWeights = suggestedWeights
         self.isBodyweight = isBodyweight
+        self.isBigLift = isBigLift
         self.repTotalProgressesReps = repTotalProgressesReps
         // Explicit, not relying on the property's own `= UUID()` default —
         // SwiftData's @Model macro doesn't reliably re-run a stored

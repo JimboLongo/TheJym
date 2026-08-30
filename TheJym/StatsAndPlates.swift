@@ -114,6 +114,22 @@ struct PhaseSummary: Identifiable {
     let perfectCount: Int
     let completedCount: Int
     let milesWalked: Double
+    /// One entry per exercise flagged `isBigLift` on one of this phase's own
+    /// base planned slots (see PlannedExercise.isBigLift) that actually has
+    /// a performed set logged within the phase — order matches the flagged
+    /// slots' own day/order position. A flagged exercise never logged in
+    /// this phase is omitted entirely rather than showing a 0.
+    let bigLifts: [BigLiftResult]
+}
+
+/// One flagged exercise's max single-set weight within one completed phase.
+/// For a bodyweight exercise this is the ADDED weight (e.g. a weighted
+/// pull-up's plate/vest load), not the bodyweight-inclusive resolved total —
+/// see StatsEngine.bigLiftMax's own doc for why.
+struct BigLiftResult: Identifiable {
+    var id: String { name }
+    let name: String
+    let weight: Double
 }
 
 enum StatsEngine {
@@ -276,6 +292,14 @@ enum StatsEngine {
             .compactMap { phase -> PhaseSummary? in
                 guard let endDate = phase.sessions.map(\.date).max() else { return nil }
                 let flags = phase.perfectCycleFlags
+                var seenBigLiftNames = Set<String>()
+                let bigLiftNames = phase.orderedDays.flatMap(\.basePlannedExercises)
+                    .filter(\.isBigLift)
+                    .map(\.exerciseName)
+                    .filter { seenBigLiftNames.insert($0).inserted }
+                let bigLifts = bigLiftNames.compactMap { name -> BigLiftResult? in
+                    bigLiftMax(named: name, in: phase).map { BigLiftResult(name: name, weight: $0) }
+                }
                 return PhaseSummary(number: phase.number,
                                     startDate: phase.startDate,
                                     endDate: endDate,
@@ -284,7 +308,8 @@ enum StatsEngine {
                                     perfectCount: flags.filter { $0 }.count,
                                     completedCount: flags.count,
                                     milesWalked: milesSum(from: cal.startOfDay(for: phase.startDate),
-                                                          through: cal.startOfDay(for: endDate)))
+                                                          through: cal.startOfDay(for: endDate)),
+                                    bigLifts: bigLifts)
             }
             .sorted { $0.number > $1.number }
 
@@ -642,6 +667,31 @@ enum StatsEngine {
         let daysElapsed = max(1, (cal.dateComponents([.day],
             from: cal.startOfDay(for: phase.startDate), to: cal.startOfDay(for: now)).day ?? 0) + 1)
         return Double(phase.filledSlotCount) / Double(daysElapsed) * 100
+    }
+
+    /// The heaviest single SET actually performed on `name` within `phase`'s
+    /// own logged sessions, or nil if it was never logged there. Excludes a
+    /// rest-day-activity log (its one "set" stores distance, not weight —
+    /// same exclusion completedPhaseSummaries' miles math applies) and a
+    /// never-filled-in set (reps == 0, e.g. History's "Add Set" placeholder,
+    /// or a draft set never actually logged) rather than letting either
+    /// masquerade as a real max.
+    ///
+    /// For a bodyweight exercise, uses each set's ADDED weight
+    /// (SetLog.addedWeight) rather than SetLog.weight's bodyweight-inclusive
+    /// resolved total — a bodyweight-only lift moving 0 added should still
+    /// be trackable as a real max (e.g. 0), and mixing in bodyweight would
+    /// make this number rise or fall with bodyweight itself rather than
+    /// with training progress, exactly what ExerciseLog.weightsKey's own
+    /// ADDED-weight convention already exists to avoid.
+    static func bigLiftMax(named name: String, in phase: Phase) -> Double? {
+        phase.sessions
+            .flatMap(\.exerciseLogs)
+            .filter { $0.exerciseName == name && $0.restDayActivity == nil }
+            .flatMap { log -> [Double] in
+                log.sets.filter { $0.reps > 0 }.map { log.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+            }
+            .max()
     }
 }
 
