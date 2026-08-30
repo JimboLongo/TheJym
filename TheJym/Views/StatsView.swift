@@ -379,13 +379,17 @@ struct BigLiftTable: View {
                 GridRow {
                     Text("Exercise").font(.caption2.bold()).foregroundStyle(.secondary)
                     Text("Heaviest").font(.caption2.bold()).foregroundStyle(.secondary)
+                        .gridColumnAlignment(.center)
                     Text("Est. 1RM").font(.caption2.bold()).foregroundStyle(.secondary)
+                        .gridColumnAlignment(.center)
                 }
                 ForEach(lifts) { lift in
                     GridRow {
                         Text(lift.name).font(.caption).foregroundStyle(.secondary)
                         Text(heaviestLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                            .gridColumnAlignment(.center)
                         Text(roundedEstimateLabel(lift)).font(.system(.subheadline, design: .monospaced)).bold()
+                            .gridColumnAlignment(.center)
                     }
                 }
             }
