@@ -148,6 +148,14 @@ final class ExerciseDef {
     /// Default for new plan slots created from this exercise (e.g. Pull-Up,
     /// Dip) — still overridable per PlannedExercise.
     var isBodyweight: Bool = false
+    /// True if this exercise should be tracked as a "Big Lift" in the Stats
+    /// tab's per-phase and all-time summaries. Lives here (not on
+    /// PlannedExercise, where it started in 289beb9) because `name` is
+    /// already the join key StatsEngine's Big Lift math uses to gather sets
+    /// across sessions/phases — one flag here covers every phase and
+    /// all-time at once, instead of needing to be re-set on every slot this
+    /// exercise is ever placed into.
+    var isBigLift: Bool = false
     /// When this exercise was added to the library — powers the Exercises
     /// tab's "date added" sort. The `= .now` default here only backfills a
     /// value for rows that predate this field (via lightweight migration);
@@ -158,13 +166,14 @@ final class ExerciseDef {
 
     init(name: String, notes: String = "",
          equipment: Bar? = nil, repSchemes: [[Int]] = [], repTotalTargets: [Int] = [],
-         isBodyweight: Bool = false, dateAdded: Date = Date.now) {
+         isBodyweight: Bool = false, isBigLift: Bool = false, dateAdded: Date = Date.now) {
         self.name = name
         self.notes = notes
         self.equipment = equipment
         self.repSchemes = repSchemes
         self.repTotalTargets = repTotalTargets
         self.isBodyweight = isBodyweight
+        self.isBigLift = isBigLift
         self.dateAdded = dateAdded
     }
 
