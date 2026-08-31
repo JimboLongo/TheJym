@@ -411,9 +411,10 @@ struct BigLiftGroupTable: View {
                             estimateValue(result)
                         }
                     } else {
-                        // One combined row, not split Heaviest/Est. 1RM —
-                        // there's nothing set-specific to say twice.
-                        LabeledContent(row.scopeLabel) {
+                        LabeledContent("\(row.scopeLabel) — Heaviest") {
+                            Text("No Data").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        LabeledContent("\(row.scopeLabel) — Est. 1RM") {
                             Text("No Data").font(.subheadline).foregroundStyle(.secondary)
                         }
                     }
@@ -444,15 +445,18 @@ struct BigLiftGroupTable: View {
                                     .fixedSize()
                                     .gridColumnAlignment(.center)
                             } else {
-                                // Spans both value columns — a single gap
-                                // reads better than two separate "No Data"
-                                // cells, and it's the point of the row:
-                                // showing where this lift wasn't trained.
+                                // Repeated under each value column rather
+                                // than spanning both — matches the shape of
+                                // a data row (one value per column) instead
+                                // of reading as one merged cell.
                                 Text("No Data")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                    .gridCellColumns(2)
+                                    .gridColumnAlignment(.center)
+                                Text("No Data")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .gridColumnAlignment(.center)
                             }
                         }
                     }
