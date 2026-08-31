@@ -156,13 +156,13 @@ struct BigLiftScopeRow: Identifiable {
 struct BigLiftResult: Identifiable {
     var id: String { name }
     let name: String
-    /// The heaviest single set actually performed, and the reps it was done
-    /// for (e.g. "170 x 5") — NOT a 1-rep-max estimate, just the biggest
-    /// per-rep load outright. Ties on weight prefer the higher rep count,
-    /// then the LATER date (the most recent time the number was hit).
+    /// The weight of the heaviest single set actually performed — NOT a
+    /// 1-rep-max estimate, just the biggest load outright, regardless of
+    /// reps. Reps aren't tracked here — they were only ever for display and
+    /// aren't shown — so a weight tie is broken purely by the LATER date
+    /// (the most recent time the number was hit).
     let heaviestWeight: Double
-    let heaviestReps: Int
-    /// The session date of the set that produced heaviestWeight/heaviestReps.
+    /// The session date of the set that produced heaviestWeight.
     let heaviestDate: Date
     /// The highest Epley-formula estimate (PaceEngine.epley1RM) across
     /// every qualifying set in the phase — not necessarily the heaviest
@@ -772,7 +772,6 @@ enum StatsEngine {
         let sets = bigLiftQualifyingSets(named: name, in: sessions)
         guard let heaviest = sets.max(by: { a, b in
             if a.weight != b.weight { return a.weight < b.weight }
-            if a.reps != b.reps { return a.reps < b.reps }
             return a.date < b.date
         }) else { return nil }
         guard let bestEstimate = sets.max(by: { a, b in
@@ -781,8 +780,7 @@ enum StatsEngine {
             if estimateA != estimateB { return estimateA < estimateB }
             return a.date < b.date
         }) else { return nil }
-        return BigLiftResult(name: name, heaviestWeight: heaviest.weight, heaviestReps: heaviest.reps,
-                             heaviestDate: heaviest.date,
+        return BigLiftResult(name: name, heaviestWeight: heaviest.weight, heaviestDate: heaviest.date,
                              estimatedOneRepMax: PaceEngine.epley1RM(weight: bestEstimate.weight, reps: bestEstimate.reps),
                              estimatedOneRepMaxDate: bestEstimate.date)
     }

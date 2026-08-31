@@ -368,13 +368,14 @@ struct BigLiftGroupTable: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let group: BigLiftGroup
 
-    /// "170 x 5" in bold monospaced, plus the date that set was logged in a
-    /// smaller secondary weight, e.g. "170 x 5 (1/5/26)" — Formatters.shortDate
-    /// is the same compact numeric format History already uses in its own
-    /// tight date column, chosen here so the parenthetical doesn't force a
-    /// wrap at normal Dynamic Type sizes.
+    /// "170" in bold monospaced (weight only, no reps — see BigLiftResult's
+    /// own doc), plus the date that set was logged in a smaller secondary
+    /// weight, e.g. "170 (1/5/26)" — Formatters.shortDate is the same
+    /// compact numeric format History already uses in its own tight date
+    /// column, chosen here so the parenthetical doesn't force a wrap at
+    /// normal Dynamic Type sizes.
     private func heaviestValue(_ result: BigLiftResult) -> Text {
-        Text("\(Formatters.trim(result.heaviestWeight)) x \(result.heaviestReps) ")
+        Text("\(Formatters.trim(result.heaviestWeight)) ")
             .font(.system(.subheadline, design: .monospaced)).bold()
         + Text("(\(Formatters.shortDate.string(from: result.heaviestDate)))")
             .font(.caption2).foregroundStyle(.secondary)
