@@ -127,20 +127,27 @@ struct PhaseSummary: Identifiable {
 struct BigLiftGroup: Identifiable {
     var id: String { exerciseName }
     let exerciseName: String
-    /// All-Time first, then each phase with a qualifying set (including the
-    /// active one), descending by phase number. The All-Time row's numbers
-    /// will often duplicate whichever phase row actually set them — that's
-    /// intended: it's what lets a phase's own numbers be read against the
-    /// lifetime best sitting right above them.
+    /// All-Time first, then EVERY phase (completed or active — same set
+    /// completedPhaseSummaries and the active-phase stats already use),
+    /// descending by phase number, so the column reads consistently down
+    /// the page regardless of which phases this exercise actually has
+    /// history in. A phase with no qualifying set gets a row with `result
+    /// == nil` (rendered as "No Data") rather than being skipped — a
+    /// visible gap is the point, since it shows where the lift wasn't
+    /// being trained. The All-Time row's numbers will often duplicate
+    /// whichever phase row actually set them — that's intended: it's what
+    /// lets a phase's own numbers be read against the lifetime best
+    /// sitting right above them.
     let rows: [BigLiftScopeRow]
 }
 
 /// One row within a BigLiftGroup: "All-Time" or "Phase N" paired with that
-/// scope's own Heaviest/Est. 1RM.
+/// scope's own Heaviest/Est. 1RM — nil if the phase has no qualifying set
+/// for this exercise at all ("No Data").
 struct BigLiftScopeRow: Identifiable {
     var id: String { scopeLabel }
     let scopeLabel: String
-    let result: BigLiftResult
+    let result: BigLiftResult?
 }
 
 /// One flagged exercise's two headline numbers within one phase, or across
@@ -152,7 +159,7 @@ struct BigLiftResult: Identifiable {
     /// The heaviest single set actually performed, and the reps it was done
     /// for (e.g. "170 x 5") — NOT a 1-rep-max estimate, just the biggest
     /// per-rep load outright. Ties on weight prefer the higher rep count,
-    /// then the earliest date (when the number was FIRST achieved).
+    /// then the LATER date (the most recent time the number was hit).
     let heaviestWeight: Double
     let heaviestReps: Int
     /// The session date of the set that produced heaviestWeight/heaviestReps.
@@ -343,13 +350,16 @@ enum StatsEngine {
             .sorted { $0.number > $1.number }
 
         // Big Lifts — one group per flagged exercise with a qualifying set
-        // ANYWHERE (all-time), each an All-Time row plus one row per phase
-        // that itself has a qualifying set for that exercise — completed
-        // phases (same criterion as completedPhaseSummaries above) PLUS the
-        // active one, so a lift still being trained this phase shows up
-        // too, not just phases already wrapped up. Sessions with no phase
-        // attached (manual/imported entries) only ever surface through the
-        // All-Time row, same as they always have.
+        // ANYWHERE (all-time; a name with none anywhere is omitted
+        // entirely), each an All-Time row plus one row for EVERY phase —
+        // completed phases (same criterion as completedPhaseSummaries
+        // above) PLUS the active one, so a lift still being trained this
+        // phase shows up too, not just phases already wrapped up. Every
+        // phase gets a row regardless of whether IT has a qualifying set,
+        // so the column reads consistently down the page — a phase with
+        // none shows "No Data" (see BigLiftScopeRow) rather than being
+        // skipped. Sessions with no phase attached (manual/imported
+        // entries) only ever surface through the All-Time row.
         let bigLiftPhases = allPhases
             .filter { $0.isActive || ($0.isComplete && !$0.isActive) }
             .sorted { $0.number > $1.number }
@@ -357,8 +367,8 @@ enum StatsEngine {
             guard let allTime = bigLiftResult(named: name, in: allSessions) else { return nil }
             var rows = [BigLiftScopeRow(scopeLabel: "All-Time", result: allTime)]
             for phase in bigLiftPhases {
-                guard let result = bigLiftResult(named: name, in: phase.sessions) else { continue }
-                rows.append(BigLiftScopeRow(scopeLabel: "Phase \(phase.number)", result: result))
+                rows.append(BigLiftScopeRow(scopeLabel: "Phase \(phase.number)",
+                                            result: bigLiftResult(named: name, in: phase.sessions)))
             }
             return BigLiftGroup(exerciseName: name, rows: rows)
         }
@@ -756,20 +766,20 @@ enum StatsEngine {
     /// has no qualifying set (see bigLiftQualifyingSets) among them at all,
     /// rather than a result with a 0 in it. Heaviest and Est. 1RM are each
     /// resolved independently (often different sets, different dates) — a
-    /// tie on either uses the earliest date, since that's when the number
-    /// was first achieved.
+    /// tie on either uses the LATER date, the most recent time the number
+    /// was hit.
     static func bigLiftResult(named name: String, in sessions: [WorkoutSession]) -> BigLiftResult? {
         let sets = bigLiftQualifyingSets(named: name, in: sessions)
         guard let heaviest = sets.max(by: { a, b in
             if a.weight != b.weight { return a.weight < b.weight }
             if a.reps != b.reps { return a.reps < b.reps }
-            return a.date > b.date
+            return a.date < b.date
         }) else { return nil }
         guard let bestEstimate = sets.max(by: { a, b in
             let estimateA = PaceEngine.epley1RM(weight: a.weight, reps: a.reps)
             let estimateB = PaceEngine.epley1RM(weight: b.weight, reps: b.reps)
             if estimateA != estimateB { return estimateA < estimateB }
-            return a.date > b.date
+            return a.date < b.date
         }) else { return nil }
         return BigLiftResult(name: name, heaviestWeight: heaviest.weight, heaviestReps: heaviest.reps,
                              heaviestDate: heaviest.date,

@@ -402,11 +402,19 @@ struct BigLiftGroupTable: View {
             Text(group.exerciseName).font(.subheadline.bold())
             if dynamicTypeSize.isAccessibilitySize {
                 ForEach(group.rows) { row in
-                    LabeledContent("\(row.scopeLabel) — Heaviest") {
-                        heaviestValue(row.result)
-                    }
-                    LabeledContent("\(row.scopeLabel) — Est. 1RM") {
-                        estimateValue(row.result)
+                    if let result = row.result {
+                        LabeledContent("\(row.scopeLabel) — Heaviest") {
+                            heaviestValue(result)
+                        }
+                        LabeledContent("\(row.scopeLabel) — Est. 1RM") {
+                            estimateValue(result)
+                        }
+                    } else {
+                        // One combined row, not split Heaviest/Est. 1RM —
+                        // there's nothing set-specific to say twice.
+                        LabeledContent(row.scopeLabel) {
+                            Text("No Data").font(.subheadline).foregroundStyle(.secondary)
+                        }
                     }
                 }
             } else {
@@ -421,17 +429,30 @@ struct BigLiftGroupTable: View {
                     ForEach(group.rows) { row in
                         GridRow {
                             Text(row.scopeLabel).font(.caption).foregroundStyle(.secondary)
-                            // fixedSize keeps the number+date on one line by
-                            // refusing to compress — the Scope column is
-                            // short ("All-Time"/"Phase N"), but this still
-                            // guards against it wrapping the date under the
-                            // number if a row's Scope text were ever wider.
-                            heaviestValue(row.result)
-                                .fixedSize()
-                                .gridColumnAlignment(.center)
-                            estimateValue(row.result)
-                                .fixedSize()
-                                .gridColumnAlignment(.center)
+                            if let result = row.result {
+                                // fixedSize keeps the number+date on one
+                                // line by refusing to compress — the Scope
+                                // column is short ("All-Time"/"Phase N"),
+                                // but this still guards against it wrapping
+                                // the date under the number if a row's
+                                // Scope text were ever wider.
+                                heaviestValue(result)
+                                    .fixedSize()
+                                    .gridColumnAlignment(.center)
+                                estimateValue(result)
+                                    .fixedSize()
+                                    .gridColumnAlignment(.center)
+                            } else {
+                                // Spans both value columns — a single gap
+                                // reads better than two separate "No Data"
+                                // cells, and it's the point of the row:
+                                // showing where this lift wasn't trained.
+                                Text("No Data")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .gridCellColumns(2)
+                            }
                         }
                     }
                 }
