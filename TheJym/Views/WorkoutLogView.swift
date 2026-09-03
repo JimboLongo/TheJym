@@ -1651,16 +1651,28 @@ struct ExercisePageView: View {
         .padding(.bottom, 4)
     }
 
+    /// Exercise name (bold) plus, if set, this exercise's notes right after
+    /// it on the same line (small, secondary) — one combined Text so the
+    /// header's own lineLimit/minimumScaleFactor shrinks both together
+    /// instead of the two competing separately for HStack space.
+    private var nameWithNotes: Text {
+        let name = Text(draft.name).font(.title2.bold())
+        guard let notes = exerciseDef?.notes, !notes.isEmpty else { return name }
+        return name + Text("  " + notes).font(.caption2).foregroundStyle(.secondary)
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                // lineLimit + minimumScaleFactor auto-shrinks a long name
-                // (rather than letting it push the rep-total badge/button
-                // off the trailing edge or wrap the row taller) — same
-                // shrink-to-fit pattern already used for the bodyweight
-                // prefix label below.
-                Text(draft.name)
-                    .font(.title2.bold())
+                // Name + notes as ONE Text (not two separate views) so
+                // lineLimit/minimumScaleFactor shrink them together
+                // proportionally, rather than two flexible HStack children
+                // fighting over space — same per-segment-styled-Text
+                // concatenation pattern the Big Lift table's date labels
+                // use. Auto-shrinks (down to 70%) instead of letting a long
+                // name push the rep-total badge/button off the trailing
+                // edge or wrap the row taller.
+                nameWithNotes
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if case .repTotal(let target) = draft.goalType {
@@ -1689,12 +1701,6 @@ struct ExercisePageView: View {
                     .buttonStyle(.plain)
                     .font(.caption)
                 }
-            }
-            if let notes = exerciseDef?.notes, !notes.isEmpty {
-                Text(notes)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
             if draft.isExpanded {
                 VStack(alignment: .leading, spacing: 2) {
