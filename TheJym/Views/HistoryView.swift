@@ -569,8 +569,11 @@ struct SessionDetailView: View {
     @Environment(\.modelContext) private var context
     @Bindable var session: WorkoutSession
     @Query(sort: \Phase.number) private var phases: [Phase]
+    @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
+    @Query(sort: \Bar.name) private var bars: [Bar]
 
     @State private var dayReattachmentNote: String?
+    @State private var showingAddExercise = false
 
     private var sortedLogs: [ExerciseLog] {
         session.exerciseLogs.sorted { $0.order < $1.order }
@@ -645,8 +648,35 @@ struct SessionDetailView: View {
                     }
                 }
             }
+            Section {
+                Button("Add Exercise") { showingAddExercise = true }
+            }
         }
         .navigationTitle(Formatters.date.string(from: session.date))
+        .sheet(isPresented: $showingAddExercise) {
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
+                addExercise(def, reps: reps, goalType: goalType)
+            }
+        }
+    }
+
+    /// Appended after every already-logged exercise (order = current count),
+    /// same as adding to a live workout — but with no sets yet, since this
+    /// is filling in history rather than actively training: use each log's
+    /// own "Add Set" button (right above) to enter what was actually done.
+    private func addExercise(_ def: ExerciseDef, reps: [Int], goalType: GoalType) {
+        let log: ExerciseLog
+        switch goalType {
+        case .fixedSets:
+            log = ExerciseLog(exerciseName: def.name, targetReps: reps, order: sortedLogs.count,
+                              isBodyweight: def.isBodyweight)
+        case .repTotal(let target):
+            log = ExerciseLog(exerciseName: def.name, targetReps: [], order: sortedLogs.count,
+                              isBodyweight: def.isBodyweight, goalType: .repTotal(target: target))
+        }
+        log.session = session
+        context.insert(log)
+        try? context.save()
     }
 
     private func addSet(to log: ExerciseLog) {
