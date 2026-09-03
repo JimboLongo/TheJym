@@ -1160,6 +1160,9 @@ struct ExercisePageView: View {
                 }
             }
             if let def = exerciseDef {
+                // The notes text itself now shows under the exercise name in
+                // the header instead of repeating here — this row is just
+                // the quick-edit entry point.
                 Divider()
                 HStack {
                     Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
@@ -1170,9 +1173,6 @@ struct ExercisePageView: View {
                         Label(def.notes.isEmpty ? "Add" : "Edit", systemImage: "pencil")
                             .font(.caption2)
                     }
-                }
-                if !def.notes.isEmpty {
-                    Text(def.notes).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
         }
@@ -1654,8 +1654,15 @@ struct ExercisePageView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
+                // lineLimit + minimumScaleFactor auto-shrinks a long name
+                // (rather than letting it push the rep-total badge/button
+                // off the trailing edge or wrap the row taller) — same
+                // shrink-to-fit pattern already used for the bodyweight
+                // prefix label below.
                 Text(draft.name)
                     .font(.title2.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 if case .repTotal(let target) = draft.goalType {
                     Text("\(draft.repTotalSoFar)/\(target)")
                         .font(.title3.bold())
@@ -1682,6 +1689,12 @@ struct ExercisePageView: View {
                     .buttonStyle(.plain)
                     .font(.caption)
                 }
+            }
+            if let notes = exerciseDef?.notes, !notes.isEmpty {
+                Text(notes)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             if draft.isExpanded {
                 VStack(alignment: .leading, spacing: 2) {
