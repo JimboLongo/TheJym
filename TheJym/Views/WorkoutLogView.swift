@@ -120,6 +120,12 @@ struct WorkoutLogView: View {
     /// onChange doesn't push that restore back onto the stack as if it
     /// were a new input.
     @State private var isUndoing = false
+    /// Time-since-last-completed-set stopwatch — hoisted here (not local to
+    /// ExercisePageView) for the same reason as completedSummaryCollapsed:
+    /// a page's own @State can be torn down when it scrolls out of the
+    /// LazyVStack's mounted range, and this needs to survive swiping
+    /// between exercises.
+    @StateObject private var restStopwatch = RestStopwatch()
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -272,7 +278,8 @@ struct WorkoutLogView: View {
                          plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement,
                          pageHeight: pageHeight, currentBodyweight: currentBodyweight,
                          currentPageID: $currentPageID, allDrafts: drafts,
-                         isDeloadCycle: isDeloadCycle)
+                         isDeloadCycle: isDeloadCycle,
+                         onSetLogged: { restStopwatch.resetAndStart() })
     }
 
     private func completedSummaryPage(pageHeight: CGFloat) -> some View {
@@ -317,6 +324,15 @@ struct WorkoutLogView: View {
             .refreshable {
                 refreshDrafts()
             }
+        }
+        // Outside the GeometryReader/LazyVStack entirely (like the top inset
+        // right below) rather than inside any one page, so it shows on every
+        // page — exercise or Completed summary alike — without being reset
+        // or torn down by a swipe, and so every page's own pageHeight
+        // shrinks to leave room for it instead of it overlapping navBar or
+        // the Completed page's own Finish button.
+        .safeAreaInset(edge: .bottom) {
+            RestStopwatchBar(stopwatch: restStopwatch)
         }
         .safeAreaInset(edge: .top) {
             if isDeloadCycle {
@@ -838,6 +854,42 @@ struct WorkoutLogView: View {
     }
 }
 
+// MARK: - Rest stopwatch bar
+
+/// Compact single-row bar: elapsed time since the last completed set, plus
+/// Stop/Resume/Reset — visible for the whole workout (see WorkoutLogView's
+/// safeAreaInset), not per-exercise. Its own struct (not private/nested)
+/// so a test can render it directly with a synthetic RestStopwatch.
+struct RestStopwatchBar: View {
+    @ObservedObject var stopwatch: RestStopwatch
+
+    private var elapsedLabel: String {
+        let total = max(0, Int(stopwatch.elapsed.rounded()))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Label(elapsedLabel, systemImage: "stopwatch")
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Spacer()
+            if stopwatch.isRunning {
+                Button("Stop") { stopwatch.stop() }
+            } else {
+                Button("Resume") { stopwatch.resume() }
+            }
+            Button("Reset") { stopwatch.reset() }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .font(.footnote)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+}
+
 // MARK: - One exercise's logging card + pace panel
 
 struct ExercisePageView: View {
@@ -874,6 +926,12 @@ struct ExercisePageView: View {
     /// and vice versa (see PaceEngine.comparisons's own doc), so every
     /// pace/rank call below passes this through.
     let isDeloadCycle: Bool
+    /// Called every time a set's reps are committed (fixed-scheme wheel,
+    /// rep-total wheel, or the target-badge quick-fill drag) — resets the
+    /// workout-wide rest stopwatch, hoisted up in WorkoutLogView. Fires on
+    /// every commit, including correcting an already-logged set's reps, not
+    /// just a set's first completion.
+    var onSetLogged: () -> Void = {}
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1798,6 +1856,7 @@ struct ExercisePageView: View {
                                         let oldReps = draft.sets[i].reps ?? 0
                                         draft.sets[i].repsText = String(goal)
                                         checkAutoCollapse()
+                                        onSetLogged()
                                         let delta = goal - oldReps
                                         if delta != 0 { repsDeltaIndicator[i] = delta }
                                         repsExplosion[i] = true
@@ -1826,6 +1885,7 @@ struct ExercisePageView: View {
                             set: { newValue in
                                 draft.sets[i].repsText = String(newValue)
                                 checkAutoCollapse()
+                                onSetLogged()
                             })) {
                             ForEach(0...50, id: \.self) { v in
                                 Text("\(v)")
@@ -2172,6 +2232,7 @@ struct ExercisePageView: View {
                             set: { newValue in
                                 draft.sets[i].repsText = String(newValue)
                                 checkAutoCollapse()
+                                onSetLogged()
                             })) {
                             ForEach(0...50, id: \.self) { v in
                                 Text("\(v)")
