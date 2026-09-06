@@ -55,6 +55,7 @@ final class PhaseCycleOverrideTests: XCTestCase {
 
         day.setCycleOverride(for: base, cycle: 3, exerciseName: "Incline Press",
                              targetReps: [8, 8, 8], goalType: .fixedSets, isBodyweight: false,
+                             restTimeSeconds: nil,
                              context: context)
 
         XCTAssertEqual(phase.plan(for: day, cycle: 2).map(\.exerciseName), ["Bench Press"])
@@ -70,6 +71,7 @@ final class PhaseCycleOverrideTests: XCTestCase {
 
         day.setCycleOverride(for: base, cycle: 3, exerciseName: "Incline Press",
                              targetReps: [8, 8, 8], goalType: .fixedSets, isBodyweight: false,
+                             restTimeSeconds: nil,
                              context: context)
 
         XCTAssertEqual(phase.plan(for: day).map(\.exerciseName), ["Bench Press"])
@@ -84,9 +86,11 @@ final class PhaseCycleOverrideTests: XCTestCase {
 
         day.setCycleOverride(for: base, cycle: 3, exerciseName: "Incline Press",
                              targetReps: [8, 8, 8], goalType: .fixedSets, isBodyweight: false,
+                             restTimeSeconds: nil,
                              context: context)
         day.setCycleOverride(for: base, cycle: 3, exerciseName: "Overhead Press",
                              targetReps: [5, 5, 5], goalType: .fixedSets, isBodyweight: false,
+                             restTimeSeconds: nil,
                              context: context)
 
         let overridesInStore = day.plannedExercises.filter { $0.cycleOverride == 3 }
@@ -101,6 +105,7 @@ final class PhaseCycleOverrideTests: XCTestCase {
 
         day.setCycleOverride(for: base, cycle: 3, exerciseName: "Incline Press",
                              targetReps: [8, 8, 8], goalType: .fixedSets, isBodyweight: false,
+                             restTimeSeconds: nil,
                              context: context)
         XCTAssertEqual(phase.plan(for: day, cycle: 3).map(\.exerciseName), ["Incline Press"])
 
@@ -116,6 +121,7 @@ final class PhaseCycleOverrideTests: XCTestCase {
 
         day.setCycleOverride(for: base, cycle: 5, exerciseName: "Pull-Up",
                              targetReps: [], goalType: .repTotal(target: 40), isBodyweight: true,
+                             restTimeSeconds: nil,
                              context: context)
 
         let overridden = phase.plan(for: day, cycle: 5).first
@@ -149,6 +155,7 @@ final class PhaseCycleOverrideTests: XCTestCase {
 
         day.setCycleOverride(for: benchPress, cycle: 3, exerciseName: "Incline Press",
                              targetReps: [8, 8, 8], goalType: .fixedSets, isBodyweight: false,
+                             restTimeSeconds: nil,
                              context: context)
 
         let plan = phase.plan(for: day, cycle: 3)

@@ -719,6 +719,65 @@ struct AddSetSheet: View {
     }
 }
 
+/// Sets one exercise slot's rest time (PlannedExercise.restTimeSeconds) —
+/// independent minutes/seconds wheels, same pattern as TimerView's own
+/// TimerPresetEditSheet, plus a Clear action back to nil ("no rest time
+/// set", distinct from an explicit 0:00). Shared by the base-template editor
+/// (PhaseEditView) and the per-cycle override picker (PhasesView).
+struct RestTimePickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let exerciseName: String
+    var onSet: (Int?) -> Void
+
+    @State private var minutes: Int
+    @State private var seconds: Int
+
+    /// Short enough to keep the sheet compact — SwiftUI's default wheel
+    /// height is much taller than this control needs.
+    private let wheelHeight: CGFloat = 100
+
+    init(exerciseName: String, initialSeconds: Int?, onSet: @escaping (Int?) -> Void) {
+        self.exerciseName = exerciseName
+        self.onSet = onSet
+        let total = initialSeconds ?? 90
+        _minutes = State(initialValue: total / 60)
+        _seconds = State(initialValue: total % 60)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                HStack(spacing: 0) {
+                    Picker("Minutes", selection: $minutes) {
+                        ForEach(0..<60, id: \.self) { m in Text("\(m) min").tag(m) }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(maxWidth: .infinity, maxHeight: wheelHeight)
+                    .clipped()
+
+                    Picker("Seconds", selection: $seconds) {
+                        ForEach(0..<60, id: \.self) { s in Text("\(s) sec").tag(s) }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(maxWidth: .infinity, maxHeight: wheelHeight)
+                    .clipped()
+                }
+            }
+            .navigationTitle("Rest Time for \(exerciseName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .destructiveAction) {
+                    Button("Clear") { onSet(nil); dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Set") { onSet(minutes * 60 + seconds); dismiss() }
+                }
+            }
+        }
+    }
+}
+
 struct DraftExerciseRow: View {
     @Binding var item: PhaseBuilderView.DraftExercise
 

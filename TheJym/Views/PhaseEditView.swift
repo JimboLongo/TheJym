@@ -220,6 +220,7 @@ struct PlannedExerciseRow: View {
 
     @State private var showingSetPicker = false
     @State private var showingAddSet = false
+    @State private var showingRestTimePicker = false
 
     private var def: ExerciseDef? {
         exerciseDefs.first { $0.name == pe.exerciseName }
@@ -255,25 +256,46 @@ struct PlannedExerciseRow: View {
             TextField("Exercise name", text: $pe.exerciseName)
                 .font(.headline)
 
-            // Tap to switch between this exercise's saved sets/rep-totals,
-            // or add a new one — handled exactly like a normal set, just
-            // based on a running total instead of a fixed scheme.
-            Button {
-                showingSetPicker = true
-            } label: {
-                HStack {
-                    Text(planSummary)
-                        .font(.system(.subheadline, design: .monospaced))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                // Tap to switch between this exercise's saved sets/rep-totals,
+                // or add a new one — handled exactly like a normal set, just
+                // based on a running total instead of a fixed scheme.
+                Button {
+                    showingSetPicker = true
+                } label: {
+                    HStack {
+                        Text(planSummary)
+                            .font(.system(.subheadline, design: .monospaced))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
                 }
-                .padding(.horizontal, 8).padding(.vertical, 6)
-                .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                .buttonStyle(.plain)
+
+                // Compact tappable field, not a full-width stepper — this
+                // row sits inside a ForEach with .onDelete/.onMove, and
+                // anything with a large gesture target fights drag-to-
+                // reorder.
+                Button {
+                    showingRestTimePicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "timer")
+                        Text(pe.restTimeSeconds.map { Formatters.duration(Double($0)) } ?? "–")
+                    }
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
             }
-            .buttonStyle(.plain)
 
             if isRepTotal {
                 Toggle("AI progresses rep total instead of weight", isOn: $pe.repTotalProgressesReps)
@@ -326,6 +348,12 @@ struct PlannedExerciseRow: View {
                 }
                 try? context.save()
                 showingAddSet = false
+            }
+        }
+        .sheet(isPresented: $showingRestTimePicker) {
+            RestTimePickerSheet(exerciseName: pe.exerciseName, initialSeconds: pe.restTimeSeconds) { newValue in
+                pe.restTimeSeconds = newValue
+                try? context.save()
             }
         }
     }

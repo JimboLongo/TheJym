@@ -707,17 +707,26 @@ final class PhaseDay {
     }
 
     /// Creates or replaces cycle `cycle`'s override of `baseSlot` — that one
-    /// cycle trains `exerciseName`/`targetReps`/`goalType` instead of the
-    /// base slot's own, every other cycle unaffected. Updates a previous
-    /// override of the same (baseSlot, cycle) pair in place rather than
-    /// delete-then-insert — a delete's effect on `plannedExercises` isn't
-    /// guaranteed visible again until the context is actually saved, so a
-    /// delete right before a fresh insert here risked leaving two override
-    /// rows for the same slot behind (plan(for:cycle:) tolerates that
-    /// without crashing, but it's still bad data).
+    /// cycle trains `exerciseName`/`targetReps`/`goalType`/`restTimeSeconds`
+    /// instead of the base slot's own, every other cycle unaffected. Updates
+    /// a previous override of the same (baseSlot, cycle) pair in place
+    /// rather than delete-then-insert — a delete's effect on
+    /// `plannedExercises` isn't guaranteed visible again until the context
+    /// is actually saved, so a delete right before a fresh insert here
+    /// risked leaving two override rows for the same slot behind
+    /// (plan(for:cycle:) tolerates that without crashing, but it's still bad
+    /// data).
+    ///
+    /// `restTimeSeconds` is fully resolved by the CALLER, same as every
+    /// other parameter here — there's no fallback-to-base logic in this
+    /// function itself. A caller changing exercise/set but not rest time
+    /// should pass through whatever's currently effective (the override's
+    /// own value if one already exists, or the base slot's own value if
+    /// this is the first override ever created for this cycle) so an
+    /// unrelated edit doesn't silently clear a previously-set rest time.
     func setCycleOverride(for baseSlot: PlannedExercise, cycle: Int, exerciseName: String,
                           targetReps: [Int], goalType: GoalType, isBodyweight: Bool,
-                          context: ModelContext) {
+                          restTimeSeconds: Int?, context: ModelContext) {
         if let existing = plannedExercises.first(where: {
             $0.cycleOverride == cycle && $0.overriddenSlotID == baseSlot.slotID
         }) {
@@ -726,11 +735,12 @@ final class PhaseDay {
             existing.suggestedWeights = []
             existing.isBodyweight = isBodyweight
             existing.goalType = goalType
+            existing.restTimeSeconds = restTimeSeconds
         } else {
             let override = PlannedExercise(order: baseSlot.order, exerciseName: exerciseName,
                                            targetReps: targetReps, isBodyweight: isBodyweight,
-                                           goalType: goalType, cycleOverride: cycle,
-                                           overriddenSlotID: baseSlot.slotID)
+                                           goalType: goalType, restTimeSeconds: restTimeSeconds,
+                                           cycleOverride: cycle, overriddenSlotID: baseSlot.slotID)
             override.day = self
             context.insert(override)
         }
@@ -781,6 +791,15 @@ final class PlannedExercise {
     /// is reached quickly enough — added weight (default) or the rep total
     /// itself.
     var repTotalProgressesReps: Bool = false
+    /// How long to rest after a set of this exercise, in seconds — shown
+    /// during the workout and drives the rest countdown there. nil means no
+    /// rest time has been set at all (shown as a dash), deliberately
+    /// distinct from an explicit 0. Behaves like `targetReps`, not like
+    /// ExerciseDef.isBigLift: rest time CAN meaningfully vary by cycle (a
+    /// deload might rest longer or shorter), so a per-cycle override
+    /// carries its own real value here rather than only ever reading the
+    /// base slot's — see `setCycleOverride`'s own doc.
+    var restTimeSeconds: Int?
 
     /// Stable identity for this slot, independent of `order` — lets a
     /// per-cycle override (see `cycleOverride`/`overriddenSlotID`) keep
@@ -803,7 +822,7 @@ final class PlannedExercise {
     init(order: Int, exerciseName: String,
          targetReps: [Int], suggestedWeights: [Double] = [],
          isBodyweight: Bool = false, goalType: GoalType = .fixedSets,
-         repTotalProgressesReps: Bool = false,
+         repTotalProgressesReps: Bool = false, restTimeSeconds: Int? = nil,
          cycleOverride: Int = 0, overriddenSlotID: UUID? = nil) {
         self.order = order
         self.exerciseName = exerciseName
@@ -811,6 +830,7 @@ final class PlannedExercise {
         self.suggestedWeights = suggestedWeights
         self.isBodyweight = isBodyweight
         self.repTotalProgressesReps = repTotalProgressesReps
+        self.restTimeSeconds = restTimeSeconds
         // Explicit, not relying on the property's own `= UUID()` default —
         // SwiftData's @Model macro doesn't reliably re-run a stored
         // property's default-value expression inside a hand-written init,

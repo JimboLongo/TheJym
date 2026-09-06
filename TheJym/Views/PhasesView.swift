@@ -140,6 +140,9 @@ struct PhaseDetailView: View {
     /// Adding a brand new set (for `pickingSetFor`'s exercise) not already
     /// saved on it.
     @State private var addingNewSetFor: OverrideTarget?
+    /// Picking a rest-time-only override for this slot's cycle — exercise
+    /// and set stay whatever's currently effective.
+    @State private var pickingRestTimeFor: OverrideTarget?
 
     init(phase: Phase) {
         self.phase = phase
@@ -273,6 +276,10 @@ struct PhaseDetailView: View {
                 pickingSetFor = overrideTarget
                 overrideTarget = nil
             }
+            Button("Change Rest Time…") {
+                pickingRestTimeFor = overrideTarget
+                overrideTarget = nil
+            }
             if overrideTarget?.isOverridden == true {
                 Button("Revert to Default", role: .destructive) {
                     if let target = overrideTarget {
@@ -289,7 +296,19 @@ struct PhaseDetailView: View {
             AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
                 target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
                                             targetReps: reps, goalType: goalType, isBodyweight: def.isBodyweight,
-                                            context: context)
+                                            restTimeSeconds: target.effective.restTimeSeconds, context: context)
+                try? context.save()
+            }
+        }
+        .sheet(item: $pickingRestTimeFor) { target in
+            RestTimePickerSheet(exerciseName: target.effective.exerciseName,
+                                initialSeconds: target.effective.restTimeSeconds) { newValue in
+                target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle,
+                                            exerciseName: target.effective.exerciseName,
+                                            targetReps: target.effective.targetReps,
+                                            goalType: target.effective.goalType,
+                                            isBodyweight: target.effective.isBodyweight,
+                                            restTimeSeconds: newValue, context: context)
                 try? context.save()
             }
         }
@@ -304,7 +323,7 @@ struct PhaseDetailView: View {
                     Button(reps.map(String.init).joined(separator: "/")) {
                         target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
                                                     targetReps: reps, goalType: .fixedSets, isBodyweight: def.isBodyweight,
-                                                    context: context)
+                                                    restTimeSeconds: target.effective.restTimeSeconds, context: context)
                         try? context.save()
                         pickingSetFor = nil
                     }
@@ -313,7 +332,7 @@ struct PhaseDetailView: View {
                     Button("\(total) total reps") {
                         target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
                                                     targetReps: [], goalType: .repTotal(target: total), isBodyweight: def.isBodyweight,
-                                                    context: context)
+                                                    restTimeSeconds: target.effective.restTimeSeconds, context: context)
                         try? context.save()
                         pickingSetFor = nil
                     }
@@ -336,7 +355,7 @@ struct PhaseDetailView: View {
                 }
                 target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
                                             targetReps: reps, goalType: goalType, isBodyweight: def.isBodyweight,
-                                            context: context)
+                                            restTimeSeconds: target.effective.restTimeSeconds, context: context)
                 try? context.save()
                 addingNewSetFor = nil
             }
@@ -375,7 +394,7 @@ private struct CyclePlannedExerciseRow: View {
                                 .foregroundStyle(.orange)
                         }
                     }
-                    Text(plannedExercise.setsSummaryText)
+                    Text("\(plannedExercise.setsSummaryText) · Rest \(plannedExercise.restTimeSeconds.map { Formatters.duration(Double($0)) } ?? "–")")
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                     if hasLibraryMismatch {
