@@ -279,7 +279,8 @@ struct WorkoutLogView: View {
                          pageHeight: pageHeight, currentBodyweight: currentBodyweight,
                          currentPageID: $currentPageID, allDrafts: drafts,
                          isDeloadCycle: isDeloadCycle,
-                         onSetLogged: { restStopwatch.resetAndStart() })
+                         restTimeSeconds: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }?.restTimeSeconds,
+                         onSetLogged: { restTimeSeconds in restStopwatch.resetAndStart(targetSeconds: restTimeSeconds) })
     }
 
     private func completedSummaryPage(pageHeight: CGFloat) -> some View {
@@ -856,23 +857,34 @@ struct WorkoutLogView: View {
 
 // MARK: - Rest stopwatch bar
 
-/// Compact single-row bar: elapsed time since the last completed set, plus
-/// Stop/Resume/Reset — visible for the whole workout (see WorkoutLogView's
-/// safeAreaInset), not per-exercise. Its own struct (not private/nested)
-/// so a test can render it directly with a synthetic RestStopwatch.
+/// Compact single-row bar: time remaining until (or since, with no rest time
+/// set) the last completed set, plus Stop/Resume/Reset — visible for the
+/// whole workout (see WorkoutLogView's safeAreaInset), not per-exercise.
+/// Its own struct (not private/nested) so a test can render it directly
+/// with a synthetic RestStopwatch.
 struct RestStopwatchBar: View {
     @ObservedObject var stopwatch: RestStopwatch
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Drives the blink via a repeating animation once `isUrgent` — plain
+    /// state, not tied to the 1-second tick, so the pulse is smooth rather
+    /// than stepping once a second.
+    @State private var blinkedOut = false
 
-    private var elapsedLabel: String {
-        let total = max(0, Int(stopwatch.elapsed.rounded()))
+    private var displayLabel: String {
+        let total = max(0, Int(stopwatch.displaySeconds.rounded()))
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     var body: some View {
         HStack(spacing: 16) {
-            Label(elapsedLabel, systemImage: "stopwatch")
+            Label(displayLabel, systemImage: stopwatch.targetSeconds == nil ? "stopwatch" : "timer")
                 .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(stopwatch.isUrgent ? .red : .secondary)
+                // Reduce Motion substitutes a steady red for the blink — a
+                // rhythmically flashing element for the length of an entire
+                // workout is a real problem for some users, not just a
+                // preference.
+                .opacity(stopwatch.isUrgent && !reduceMotion && blinkedOut ? 0.35 : 1)
             Spacer()
             if stopwatch.isRunning {
                 Button("Stop") { stopwatch.stop() }
@@ -887,6 +899,15 @@ struct RestStopwatchBar: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.bar)
+        .onChange(of: stopwatch.isUrgent) { _, isUrgent in
+            guard isUrgent, !reduceMotion else {
+                blinkedOut = false
+                return
+            }
+            withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
+                blinkedOut = true
+            }
+        }
     }
 }
 
@@ -926,12 +947,18 @@ struct ExercisePageView: View {
     /// and vice versa (see PaceEngine.comparisons's own doc), so every
     /// pace/rank call below passes this through.
     let isDeloadCycle: Bool
+    /// This exercise's own effective rest time (PlannedExercise.restTimeSeconds,
+    /// already resolved for the active cycle) — nil if none is set. Shown
+    /// next to the name/notes, and handed to `onSetLogged` as the workout-
+    /// wide rest timer's new target every time a set here is committed.
+    let restTimeSeconds: Int?
     /// Called every time a set's reps are committed (fixed-scheme wheel,
-    /// rep-total wheel, or the target-badge quick-fill drag) — resets the
-    /// workout-wide rest stopwatch, hoisted up in WorkoutLogView. Fires on
-    /// every commit, including correcting an already-logged set's reps, not
-    /// just a set's first completion.
-    var onSetLogged: () -> Void = {}
+    /// rep-total wheel, or the target-badge quick-fill drag) — retargets and
+    /// restarts the workout-wide rest timer, hoisted up in WorkoutLogView,
+    /// at this exercise's own restTimeSeconds (nil falls back to counting
+    /// up). Fires on every commit, including correcting an already-logged
+    /// set's reps, not just a set's first completion.
+    var onSetLogged: (Int?) -> Void = { _ in }
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1709,14 +1736,23 @@ struct ExercisePageView: View {
         .padding(.bottom, 4)
     }
 
-    /// Exercise name (bold) plus, if set, this exercise's notes right after
-    /// it on the same line (small, secondary) — one combined Text so the
-    /// header's own lineLimit/minimumScaleFactor shrinks both together
-    /// instead of the two competing separately for HStack space.
+    /// Exercise name (bold) plus, if set, this exercise's notes and rest
+    /// time right after it on the same line (small, secondary) — one
+    /// combined Text so the header's own lineLimit/minimumScaleFactor
+    /// shrinks all of it together instead of separate HStack children
+    /// competing for space.
     private var nameWithNotes: Text {
-        let name = Text(draft.name).font(.title2.bold())
-        guard let notes = exerciseDef?.notes, !notes.isEmpty else { return name }
-        return name + Text("  " + notes).font(.caption2).foregroundStyle(.secondary)
+        var result = Text(draft.name).font(.title2.bold())
+        if let notes = exerciseDef?.notes, !notes.isEmpty {
+            result = result + Text("  " + notes).font(.caption2).foregroundStyle(.secondary)
+        }
+        if let restTimeSeconds {
+            result = result
+                + Text("  ")
+                + Text(Image(systemName: "timer")).font(.caption2).foregroundStyle(.secondary)
+                + Text(" " + Formatters.duration(Double(restTimeSeconds))).font(.caption2).foregroundStyle(.secondary)
+        }
+        return result
     }
 
     private var header: some View {
@@ -1856,7 +1892,7 @@ struct ExercisePageView: View {
                                         let oldReps = draft.sets[i].reps ?? 0
                                         draft.sets[i].repsText = String(goal)
                                         checkAutoCollapse()
-                                        onSetLogged()
+                                        onSetLogged(restTimeSeconds)
                                         let delta = goal - oldReps
                                         if delta != 0 { repsDeltaIndicator[i] = delta }
                                         repsExplosion[i] = true
@@ -1885,7 +1921,7 @@ struct ExercisePageView: View {
                             set: { newValue in
                                 draft.sets[i].repsText = String(newValue)
                                 checkAutoCollapse()
-                                onSetLogged()
+                                onSetLogged(restTimeSeconds)
                             })) {
                             ForEach(0...50, id: \.self) { v in
                                 Text("\(v)")
@@ -2232,7 +2268,7 @@ struct ExercisePageView: View {
                             set: { newValue in
                                 draft.sets[i].repsText = String(newValue)
                                 checkAutoCollapse()
-                                onSetLogged()
+                                onSetLogged(restTimeSeconds)
                             })) {
                             ForEach(0...50, id: \.self) { v in
                                 Text("\(v)")
