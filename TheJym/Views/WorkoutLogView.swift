@@ -126,6 +126,12 @@ struct WorkoutLogView: View {
     /// LazyVStack's mounted range, and this needs to survive swiping
     /// between exercises.
     @StateObject private var restStopwatch = RestStopwatch()
+    /// Total session duration — a SEPARATE object from restStopwatch (see
+    /// WorkoutStopwatch's own doc): different lifetime (spans the whole
+    /// workout, not reset per set) and different purpose. Same hoisting
+    /// reasoning as restStopwatch/completedSummaryCollapsed — its own page
+    /// lives in the paging LazyVStack.
+    @StateObject private var workoutStopwatch = WorkoutStopwatch()
 
     private var settings: AppSettings? { settingsList.first }
     private var isDeloadCycle: Bool {
@@ -246,21 +252,25 @@ struct WorkoutLogView: View {
     private enum WorkoutPage: Identifiable {
         case exercise(Int)
         case completedSummary
+        case workoutStopwatch
         var id: String {
             switch self {
             case .exercise(let i): return "exercise-\(i)"
             case .completedSummary: return "summary"
+            case .workoutStopwatch: return "stopwatch"
             }
         }
     }
 
     /// Active (still-expanded) exercises each get their own page, in plan
-    /// order; the completed-exercises summary is always the trailing page
-    /// (even with nothing completed yet), so the workout's finish/save
-    /// action always has a permanent home to swipe to.
+    /// order; the completed-exercises summary is always the second-to-last
+    /// page (even with nothing completed yet, so the workout's finish/save
+    /// action always has a permanent home to swipe to), and the workout
+    /// stopwatch is always the very last.
     private var pages: [WorkoutPage] {
         var result: [WorkoutPage] = drafts.indices.filter { drafts[$0].isExpanded }.map { .exercise($0) }
         result.append(.completedSummary)
+        result.append(.workoutStopwatch)
         return result
     }
 
@@ -293,6 +303,11 @@ struct WorkoutLogView: View {
                                  onFinish: { showDatePicker = true })
     }
 
+    private func workoutStopwatchPage(pageHeight: CGFloat) -> some View {
+        WorkoutStopwatchPageView(stopwatch: workoutStopwatch, pageHeight: pageHeight,
+                                 onChange: saveWorkoutStopwatchToDisk)
+    }
+
     var body: some View {
         let plateSizes = settings?.availablePlateSizes ?? PlateCalculator.defaultPlates
         let dumbbellIncrement = settings?.dumbbellRoundingIncrement ?? 5
@@ -309,6 +324,9 @@ struct WorkoutLogView: View {
                             case .completedSummary:
                                 completedSummaryPage(pageHeight: geo.size.height)
                                     .id("summary")
+                            case .workoutStopwatch:
+                                workoutStopwatchPage(pageHeight: geo.size.height)
+                                    .id("stopwatch")
                             }
                         }
                         .frame(height: geo.size.height)
@@ -468,6 +486,8 @@ struct WorkoutLogView: View {
         .confirmationDialog("Are you sure you want to start fresh?", isPresented: $showStartFreshConfirm, titleVisibility: .visible) {
             Button("Start Fresh", role: .destructive) {
                 clearSavedDraft()
+                workoutStopwatch.clear()
+                clearSavedWorkoutStopwatch()
                 showResumePrompt = false
                 buildDrafts()
             }
@@ -527,6 +547,29 @@ struct WorkoutLogView: View {
                                     }
                                     .buttonStyle(.plain)
                                 }
+                                Divider()
+                                // Always last, after every exercise (and
+                                // after a Completed entry if this list ever
+                                // grows one — it doesn't today, since this
+                                // ForEach iterates `drafts` only). Live
+                                // elapsed time as its own label, same as the
+                                // stopwatch page itself.
+                                Button {
+                                    withAnimation { currentPageID = WorkoutPage.workoutStopwatch.id }
+                                    showExerciseJumpList = false
+                                } label: {
+                                    HStack {
+                                        Text("Workout Timer")
+                                        Spacer()
+                                        Text(Formatters.duration(workoutStopwatch.elapsed))
+                                            .font(.system(.subheadline, design: .monospaced))
+                                    }
+                                    .font(.subheadline)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 6)
+                                }
+                                .buttonStyle(.plain)
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
@@ -540,6 +583,9 @@ struct WorkoutLogView: View {
             }
         }
         .onAppear {
+            if !workoutStopwatch.hasStarted {
+                loadWorkoutStopwatchFromDisk()
+            }
             if drafts.isEmpty {
                 if let saved = loadDraftFromDisk(), saved.contains(where: { $0.sets.contains(where: \.isLogged) }) {
                     showResumePrompt = true
@@ -715,6 +761,34 @@ struct WorkoutLogView: View {
         UserDefaults.standard.removeObject(forKey: draftStorageKey)
     }
 
+    // MARK: Workout stopwatch persistence
+    //
+    // Same reasoning as draft persistence right above — a workout can be
+    // backgrounded, and even fully killed by the OS, and resumed later from
+    // its saved disk draft, and "how long this workout took" should keep
+    // reflecting real elapsed wall-clock time across that (recommended
+    // behavior; see WorkoutStopwatch's own doc) rather than silently
+    // resetting to 0 because the in-memory object didn't survive. Keyed off
+    // the same per-workout draftStorageKey so it's scoped to this exact
+    // workout instance, not shared across different days/cycles.
+
+    private var workoutStopwatchStorageKey: String { draftStorageKey + "_stopwatch" }
+
+    private func saveWorkoutStopwatchToDisk() {
+        guard let data = try? JSONEncoder().encode(workoutStopwatch.snapshot) else { return }
+        UserDefaults.standard.set(data, forKey: workoutStopwatchStorageKey)
+    }
+
+    private func loadWorkoutStopwatchFromDisk() {
+        guard let data = UserDefaults.standard.data(forKey: workoutStopwatchStorageKey),
+              let snapshot = try? JSONDecoder().decode(WorkoutStopwatch.Snapshot.self, from: data) else { return }
+        workoutStopwatch.restore(snapshot)
+    }
+
+    private func clearSavedWorkoutStopwatch() {
+        UserDefaults.standard.removeObject(forKey: workoutStopwatchStorageKey)
+    }
+
     /// Steps `drafts` back to the snapshot from right before the most
     /// recent change — undoes the last input (a logged set, a collapse,
     /// whatever changed last), one step at a time.
@@ -828,6 +902,12 @@ struct WorkoutLogView: View {
         }
         try? context.save()
         clearSavedDraft()
+        // The workout is done — stop counting (see WorkoutStopwatch.pause's
+        // own doc) and drop its persisted state, matching the draft's own
+        // cleanup, so the next workout in this same slot starts from a
+        // genuinely fresh stopwatch.
+        workoutStopwatch.pause()
+        clearSavedWorkoutStopwatch()
 
         if !entries.isEmpty {
             recapEntries = entries
@@ -908,6 +988,59 @@ struct RestStopwatchBar: View {
                 blinkedOut = true
             }
         }
+    }
+}
+
+// MARK: - Workout stopwatch page
+
+/// Trailing page (after Completed) tracking total session duration — a big
+/// monospaced elapsed display plus Start (before it's ever been started) or
+/// Pause/Resume/Reset (after). Its own struct (not private/nested) so a test
+/// can render it directly with a synthetic WorkoutStopwatch.
+struct WorkoutStopwatchPageView: View {
+    @ObservedObject var stopwatch: WorkoutStopwatch
+    let pageHeight: CGFloat
+    /// Called after every Start/Pause/Resume/Reset so WorkoutLogView can
+    /// persist the new state — see WorkoutStopwatch's own doc on why this
+    /// one (unlike RestStopwatch) survives a backgrounded-and-killed app.
+    var onChange: () -> Void
+
+    private var displayLabel: String {
+        Formatters.duration(stopwatch.elapsed)
+    }
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            Text("Workout Duration")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text(displayLabel)
+                .font(.system(size: 64, weight: .bold, design: .monospaced))
+                .minimumScaleFactor(0.4)
+                .lineLimit(1)
+                .padding(.horizontal)
+            if stopwatch.hasStarted {
+                HStack(spacing: 16) {
+                    if stopwatch.isRunning {
+                        Button("Pause") { stopwatch.pause(); onChange() }
+                    } else {
+                        Button("Resume") { stopwatch.resume(); onChange() }
+                    }
+                    Button("Reset") { stopwatch.reset(); onChange() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            } else {
+                Button("Start") { stopwatch.start(); onChange() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: pageHeight, alignment: .top)
+        .padding()
     }
 }
 
