@@ -676,6 +676,16 @@ struct WorkoutLogView: View {
             for i in saved.indices {
                 guard let pe = plannedExercises(for: day).first(where: { $0.exerciseName == saved[i].name }) else { continue }
                 saved[i].isBodyweight = pe.isBodyweight
+                // A bodyweight exercise with no added weight ever suggested
+                // (weightsText left blank in the plan) seeds every set's
+                // weightText to "" below — a draft saved before that fix
+                // shipped can still be sitting on disk with that blank, so
+                // backfill it here too rather than only on fresh creation.
+                // Never touches a set that already has a real value typed in.
+                guard pe.isBodyweight else { continue }
+                for j in saved[i].sets.indices where saved[i].sets[j].weightText.isEmpty {
+                    saved[i].sets[j].weightText = "0"
+                }
             }
             drafts = saved
             return
@@ -695,8 +705,17 @@ struct WorkoutLogView: View {
                                                                  customIncreaseStreak: customIncreaseStreak,
                                                                  customIncreaseAmount: customIncreaseAmount,
                                                                  isDeloadCycle: isDeloadCycle)
+                // A bodyweight exercise with nothing ever suggested for
+                // added weight (no history yet, and the plan itself has no
+                // weightsText for it) leaves `weights` completely empty —
+                // defaulting to "0" here rather than "" is what lets
+                // SetDraft.isLogged (weight != nil && reps != nil) resolve
+                // once reps alone are entered, matching how there's no
+                // added-weight field for these exercises to begin with.
+                // Left as "" for a non-bodyweight exercise, where a missing
+                // weight is a real gap the user still needs to fill in.
                 let sets = pe.targetReps.enumerated().map { i, _ in
-                    SetDraft(weightText: i < weights.count ? Formatters.trim(weights[i]) : "",
+                    SetDraft(weightText: i < weights.count ? Formatters.trim(weights[i]) : (pe.isBodyweight ? "0" : ""),
                              repsText: "")
                 }
                 drafts.append(ExerciseDraft(name: pe.exerciseName,
@@ -745,8 +764,15 @@ struct WorkoutLogView: View {
                                                                  customIncreaseStreak: customIncreaseStreak,
                                                                  customIncreaseAmount: customIncreaseAmount,
                                                                  isDeloadCycle: isDeloadCycle)
-                for i in drafts[idx].sets.indices where i < weights.count {
-                    drafts[idx].sets[i].weightText = Formatters.trim(weights[i])
+                // Same empty-`weights` gap as buildDrafts: a bodyweight
+                // exercise with nothing suggested yet gets "0", not "",
+                // for any set `weights` doesn't cover.
+                for i in drafts[idx].sets.indices {
+                    if i < weights.count {
+                        drafts[idx].sets[i].weightText = Formatters.trim(weights[i])
+                    } else if pe.isBodyweight, drafts[idx].sets[i].weightText.isEmpty {
+                        drafts[idx].sets[i].weightText = "0"
+                    }
                 }
 
             case .repTotal:
