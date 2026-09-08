@@ -194,8 +194,6 @@ struct StatsView: View {
                               ? "No completed cycles yet"
                               : "\(progress.perfectCount) of \(progress.completedCount) perfect"))
         }
-        pairs.append(("Lifetime perfect cycles", "\(stats.perfectCycleLifetimeCount ?? 0)"))
-        pairs.append(("Current perfect-cycle streak", "\(stats.perfectCycleCurrentStreak ?? 0)"))
         if let miles = stats.milesThisPhase {
             pairs.append(("Miles walked", milesLabel(miles)))
         }
