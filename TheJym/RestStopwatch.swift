@@ -11,10 +11,10 @@
 //  swipe between exercise pages.
 //
 //  Counts DOWN from a target duration (an exercise's own rest time) when one
-//  is known, floored at 0 rather than going negative or flipping to
-//  counting up. Falls back to counting UP from 0 with no target when the
-//  current exercise has no rest time set (nil), so the display is always
-//  useful either way.
+//  is known, continuing past 0 into negative numbers (how far overdue the
+//  next set is) rather than freezing there. Falls back to counting UP from 0
+//  with no target when the current exercise has no rest time set (nil), so
+//  the display is always useful either way.
 //
 //  Same wall-clock-anchored approach as TimerEngine (segmentEndDate/
 //  catchUpAndStartTicking): displaySeconds is always DERIVED from a stored
@@ -61,22 +61,23 @@ final class RestStopwatch: ObservableObject {
     }
 
     /// What the UI shows: elapsed time counting up with no target, or
-    /// remaining time counting down to 0 and holding there — never negative.
+    /// remaining time counting down through 0 and on into negative numbers —
+    /// how overdue the next set is, rather than freezing at 0.
     var displaySeconds: Double {
         guard let targetSeconds else { return elapsed }
-        return max(0, Double(targetSeconds) - elapsed)
+        return Double(targetSeconds) - elapsed
     }
 
-    /// True once a countdown has reached (and is holding at) 0 — always
-    /// false in count-up mode, which has no floor to hit.
+    /// True once a countdown has reached (and passed) 0 — always false in
+    /// count-up mode, which has no zero to reach.
     var isAtZero: Bool {
         guard let targetSeconds else { return false }
         return Double(targetSeconds) - elapsed <= 0
     }
 
-    /// True in the last 10 seconds of a countdown (including while holding
-    /// at 0) — irrelevant in count-up mode. 10s is the threshold "approaching
-    /// zero" turns red and blinks at.
+    /// True in the last 10 seconds of a countdown (including once past 0) —
+    /// irrelevant in count-up mode. 10s is the threshold "approaching zero"
+    /// turns red and blinks at.
     var isUrgent: Bool {
         guard let targetSeconds else { return false }
         return Double(targetSeconds) - elapsed <= 10

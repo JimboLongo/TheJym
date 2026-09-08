@@ -107,13 +107,13 @@ final class RestStopwatchTests: XCTestCase {
         XCTAssertEqual(sw.displaySeconds, 89.8, accuracy: 0.1)
     }
 
-    func testCountdownFloorsAtZeroRatherThanGoingNegative() {
+    func testCountdownContinuesNegativePastZeroRatherThanFlooring() {
         let sw = makeStopwatch()
         sw.resetAndStart(targetSeconds: 0)
         Thread.sleep(forTimeInterval: 0.3)
-        XCTAssertEqual(sw.displaySeconds, 0, accuracy: 0.001)
+        XCTAssertEqual(sw.displaySeconds, -0.3, accuracy: 0.1, "Should keep counting down past 0, not hold at it")
         XCTAssertTrue(sw.isAtZero)
-        XCTAssertTrue(sw.isRunning, "Holding at zero, not stopped, until the next set is logged")
+        XCTAssertTrue(sw.isRunning, "Still running, not stopped, until the next set is logged")
     }
 
     func testResetOnACountdownReturnsToTheFullTargetNotZero() {

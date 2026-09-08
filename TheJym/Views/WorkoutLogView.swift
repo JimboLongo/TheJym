@@ -973,8 +973,10 @@ struct RestStopwatchBar: View {
     @State private var blinkedOut = false
 
     private var displayLabel: String {
-        let total = max(0, Int(stopwatch.displaySeconds.rounded()))
-        return String(format: "%d:%02d", total / 60, total % 60)
+        let total = Int(stopwatch.displaySeconds.rounded())
+        let sign = total < 0 ? "-" : ""
+        let magnitude = abs(total)
+        return String(format: "%@%d:%02d", sign, magnitude / 60, magnitude % 60)
     }
 
     var body: some View {
