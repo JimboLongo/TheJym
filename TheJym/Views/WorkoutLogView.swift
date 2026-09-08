@@ -300,7 +300,16 @@ struct WorkoutLogView: View {
                          currentPageID: $currentPageID, allDrafts: drafts,
                          isDeloadCycle: isDeloadCycle,
                          restTimeSeconds: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }?.restTimeSeconds,
-                         onSetLogged: { restTimeSeconds in restStopwatch.resetAndStart(targetSeconds: restTimeSeconds) })
+                         onSetLogged: { restTimeSeconds in
+                             restStopwatch.resetAndStart(targetSeconds: restTimeSeconds)
+                             // The first logged rep of the whole workout — not
+                             // opening the screen — is the only "start" moment
+                             // session duration has. start() already no-ops
+                             // once hasStarted is true (covers both an
+                             // already-running and a since-paused stopwatch),
+                             // so this never overrides or restarts either.
+                             if !workoutStopwatch.hasStarted { workoutStopwatch.start() }
+                         })
     }
 
     private func completedSummaryPage(pageHeight: CGFloat) -> some View {
@@ -947,6 +956,14 @@ struct WorkoutLogView: View {
                     }
                 }
             }
+        }
+        // Captured before pause()/clearSavedWorkoutStopwatch() below, and
+        // before this same save, rather than relying on the later
+        // conditional save in applyRecapChoices() (never runs when there's
+        // no recap to show). Left nil — not 0 — if the stopwatch was never
+        // started this session (see WorkoutSession.durationSeconds' own doc).
+        if workoutStopwatch.hasStarted {
+            session.durationSeconds = Int(workoutStopwatch.elapsed.rounded())
         }
         try? context.save()
         clearSavedDraft()

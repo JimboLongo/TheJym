@@ -965,6 +965,14 @@ final class WorkoutSession {
     /// Cycle math itself never trusts this after the fact (Phase.cycleWalk
     /// always recomputes from scratch); this is a display-only snapshot.
     var isBonusSession: Bool = false
+    /// Total session length from the workout stopwatch (Start/Pause/Reset —
+    /// NOT the per-set rest countdown, which resets constantly and has
+    /// nothing to do with session duration), captured once at
+    /// finishWorkout(). Nil for a session where the stopwatch was never
+    /// started, or logged before this field existed — deliberately distinct
+    /// from a real 0, so History/Stats can omit it rather than show a false
+    /// number.
+    var durationSeconds: Int?
 
     @Relationship(deleteRule: .cascade, inverse: \ExerciseLog.session)
     var exerciseLogs: [ExerciseLog] = []

@@ -59,6 +59,12 @@ struct TrainingStats {
     var mtdMiles: Double
     var priorYearMtdMiles: Double
     var allTimeMiles: Double        // unbounded — every "mi" entry in history
+    /// Hours across every session with a recorded durationSeconds — a
+    /// session logged before duration tracking existed (or one where the
+    /// workout stopwatch was never started) is excluded from this sum
+    /// entirely, not counted as 0. StatsView states this scope explicitly
+    /// rather than let the number look complete when it isn't.
+    var allTimeHoursTrained: Double
 
     /// Every finished, no-longer-active phase's frozen final numbers,
     /// newest first. A phase that's complete has no sessions to derive an
@@ -70,6 +76,12 @@ struct TrainingStats {
     /// one qualifying set anywhere in history — see StatsEngine.compute's
     /// own note on exactly how each group's rows are built.
     var bigLiftGroups: [BigLiftGroup]
+
+    /// One group per workout day template (e.g. "Lower Day 1") with at
+    /// least one session anywhere that has a recorded duration — see
+    /// StatsEngine.compute's own note on exactly how each group's rows are
+    /// built.
+    var dayDurationGroups: [DayDurationGroup]
 }
 
 /// The actual calendar range a streak covered, plus its boundary days —
@@ -173,6 +185,37 @@ struct BigLiftResult: Identifiable {
     /// a different set (and date) than heaviestDate, since the two numbers
     /// aren't necessarily won by the same set.
     let estimatedOneRepMaxDate: Date
+}
+
+/// One day-template-grouped block in the Stats page's "Workout Duration"
+/// section — the day name is the group's own header, same shape as
+/// BigLiftGroup with the exercise name promoted to a header.
+struct DayDurationGroup: Identifiable {
+    var id: String { dayName }
+    let dayName: String
+    /// All-Time first, then every phase (completed or active), descending
+    /// by phase number — same convention as BigLiftGroup.rows, including a
+    /// "No Data" row (`result == nil`) for a phase with no qualifying
+    /// session for this day, rather than skipping it.
+    let rows: [DayDurationScopeRow]
+}
+
+/// One row within a DayDurationGroup: "All-Time" or "Phase N" paired with
+/// that scope's own Shortest/Average/Longest — nil if the phase has no
+/// session with a recorded duration for this day at all ("No Data").
+struct DayDurationScopeRow: Identifiable {
+    var id: String { scopeLabel }
+    let scopeLabel: String
+    let result: DayDurationResult?
+}
+
+/// One day template's duration spread within one phase, or across all of
+/// history — see StatsEngine.dayDurationResult's own doc for exactly which
+/// sessions qualify.
+struct DayDurationResult {
+    let shortestSeconds: Int
+    let averageSeconds: Double
+    let longestSeconds: Int
 }
 
 enum StatsEngine {
@@ -321,6 +364,16 @@ enum StatsEngine {
         let priorYearMtdMiles = milesSum(from: priorYearMonthStart, through: priorYearToday)
         let allTimeMiles = milesEntries.map(\.miles).reduce(0, +)
 
+        // Hours trained — sum of durationSeconds across every session that
+        // has one. A session predating duration tracking (or one where the
+        // workout stopwatch was never started) has durationSeconds == nil
+        // and is excluded from the sum entirely, not counted as 0 — same
+        // "omit rather than show a false number" rule as everywhere else
+        // here. allSessions, not just realSessionDates' filtered set, since
+        // a genuine (non-rest-placeholder) session with no exerciseLogs
+        // shouldn't happen once it has a duration anyway.
+        let allTimeHoursTrained = Double(allSessions.compactMap(\.durationSeconds).reduce(0, +)) / 3600
+
         // Completed, no-longer-active phases get their own frozen summary,
         // anchored to that phase's own end date (its last session) instead
         // of `now` — cyclePaceDelta/adherencePercent both derive daysElapsed
@@ -371,6 +424,34 @@ enum StatsEngine {
                                             result: bigLiftResult(named: name, in: phase.sessions)))
             }
             return BigLiftGroup(exerciseName: name, rows: rows)
+        }
+
+        // Workout duration per day template — same All-Time-then-phases
+        // shape as Big Lifts, reusing bigLiftPhases' own active+completed
+        // scope for the phase rows. Grouped by dayLabel (a String snapshot,
+        // not the `day` relationship): each phase builds its own distinct
+        // PhaseDay rows even when reusing the same template name (e.g.
+        // "Lower Day 1" in Phase 1 and Phase 2 are two different PhaseDay
+        // objects), so grouping by the relationship would split the same
+        // split's history across phases instead of tracking it across
+        // them — dayLabel is the one identity that's already meant to
+        // survive exactly that (see its own doc: "survives the day being
+        // renamed/deleted"). Day names are enumerated from bigLiftPhases'
+        // own templates (most-recent phase first), not from what happens to
+        // appear in session history, mirroring how bigLiftNames itself
+        // comes from the exercise library rather than logged history.
+        var seenDayNames = Set<String>()
+        let dayNames: [String] = bigLiftPhases
+            .flatMap { phase in phase.orderedDays.filter { !$0.isRest }.map(\.name) }
+            .filter { seenDayNames.insert($0).inserted }
+        let dayDurationGroups: [DayDurationGroup] = dayNames.compactMap { name -> DayDurationGroup? in
+            guard let allTime = dayDurationResult(named: name, in: allSessions) else { return nil }
+            var rows = [DayDurationScopeRow(scopeLabel: "All-Time", result: allTime)]
+            for phase in bigLiftPhases {
+                rows.append(DayDurationScopeRow(scopeLabel: "Phase \(phase.number)",
+                                                result: dayDurationResult(named: name, in: phase.sessions)))
+            }
+            return DayDurationGroup(dayName: name, rows: rows)
         }
 
         // Perfect weeks/months: walk day-by-day again, bucketing
@@ -464,8 +545,10 @@ enum StatsEngine {
                              mtdMiles: mtdMiles,
                              priorYearMtdMiles: priorYearMtdMiles,
                              allTimeMiles: allTimeMiles,
+                             allTimeHoursTrained: allTimeHoursTrained,
                              completedPhaseSummaries: completedPhaseSummaries,
-                             bigLiftGroups: bigLiftGroups)
+                             bigLiftGroups: bigLiftGroups,
+                             dayDurationGroups: dayDurationGroups)
     }
 
     /// Fallback progress stat for when there's no active phase to judge
@@ -785,6 +868,25 @@ enum StatsEngine {
                              estimatedOneRepMaxDate: bestEstimate.date)
     }
 
+    /// Every session logged against day template `name` (matched by
+    /// dayLabel — see dayDurationGroups' own note on why) within `sessions`
+    /// that has a recorded duration — a session with durationSeconds == nil
+    /// (predates duration tracking, or the stopwatch was never started that
+    /// day) is skipped rather than treated as 0.
+    private static func dayDurationQualifyingSessions(named name: String,
+                                                       in sessions: [WorkoutSession]) -> [Int] {
+        sessions.filter { $0.dayLabel == name }.compactMap(\.durationSeconds)
+    }
+
+    /// One day template's duration spread within `sessions` — nil if none
+    /// of them has a recorded duration for this day at all, rather than a
+    /// result with a 0 in it.
+    static func dayDurationResult(named name: String, in sessions: [WorkoutSession]) -> DayDurationResult? {
+        let durations = dayDurationQualifyingSessions(named: name, in: sessions)
+        guard !durations.isEmpty, let shortest = durations.min(), let longest = durations.max() else { return nil }
+        let average = Double(durations.reduce(0, +)) / Double(durations.count)
+        return DayDurationResult(shortestSeconds: shortest, averageSeconds: average, longestSeconds: longest)
+    }
 }
 
 // MARK: - Plate Calculator

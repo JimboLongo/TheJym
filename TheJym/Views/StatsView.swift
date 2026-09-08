@@ -70,6 +70,10 @@ struct StatsView: View {
         "\(Formatters.trim(miles)) mi"
     }
 
+    private func hoursLabel(_ hours: Double) -> String {
+        String(format: "%.1f hr", hours)
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -85,6 +89,9 @@ struct StatsView: View {
                 milestonesSection
                 if !stats.bigLiftGroups.isEmpty {
                     bigLiftsSection
+                }
+                if !stats.dayDurationGroups.isEmpty {
+                    dayDurationSection
                 }
                 ForEach(Array(stats.completedPhaseSummaries.enumerated()), id: \.element.id) { index, summary in
                     completedPhaseSection(summary, isMostRecent: index == 0)
@@ -251,7 +258,7 @@ struct StatsView: View {
     }
 
     private var milestonesSection: some View {
-        Section("Milestones") {
+        Section {
             statGrid([
                 ("Perfect weeks", "\(stats.perfectWeeks)"),
                 ("Perfect months", "\(stats.perfectMonths)"),
@@ -260,7 +267,17 @@ struct StatsView: View {
                 // (since-start) rather than merged into it.
                 ("All-time miles", milesLabel(stats.allTimeMiles)),
                 ("Best month all-time", stats.bestMonthLabel.map { "\($0) (\(stats.bestMonthWorkouts))" } ?? "—"),
+                ("All-time hours trained", hoursLabel(stats.allTimeHoursTrained)),
             ])
+        } header: {
+            Text("Milestones")
+        } footer: {
+            // Same "omit rather than show a false number" rule as
+            // everywhere else — a session logged before duration tracking
+            // existed has no recorded duration and is excluded from this
+            // sum, not counted as 0, so the total understates true
+            // lifetime training time until enough history accumulates.
+            Text("Hours trained only counts sessions logged after duration tracking began.")
         }
     }
 
@@ -274,6 +291,20 @@ struct StatsView: View {
         Section("Big Lifts") {
             ForEach(stats.bigLiftGroups) { group in
                 BigLiftGroupTable(group: group)
+            }
+        }
+    }
+
+    /// One group per workout day template, each its own All-Time row plus
+    /// one row per phase (including the active one) that has a session with
+    /// a recorded duration — see StatsEngine.compute's own note on exactly
+    /// how a group's rows are built. Same single-section-per-flagged-thing
+    /// shape as bigLiftsSection, grouped by day name instead of exercise
+    /// name.
+    private var dayDurationSection: some View {
+        Section("Workout Duration") {
+            ForEach(stats.dayDurationGroups) { group in
+                DayDurationGroupTable(group: group)
             }
         }
     }
@@ -449,6 +480,103 @@ struct BigLiftGroupTable: View {
                                 // than spanning both — matches the shape of
                                 // a data row (one value per column) instead
                                 // of reading as one merged cell.
+                                Text("No Data")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .gridColumnAlignment(.center)
+                                Text("No Data")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .gridColumnAlignment(.center)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+    }
+}
+
+/// The Workout Duration table inside the Stats page's "Workout Duration"
+/// section: Scope x Shortest x Average x Longest, one row per scope plus a
+/// header row — same Grid/GridRow structure and accessibility fallback as
+/// BigLiftGroupTable (see its own doc for why a 3-value-column table falls
+/// back to one label/value row per scope per metric at an accessibility
+/// Dynamic Type size), with a third value column since there's no date to
+/// pair with each number here — just a plain duration. Its own `struct`
+/// (not a private StatsView method) so a test can render it directly with
+/// synthetic data.
+struct DayDurationGroupTable: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let group: DayDurationGroup
+
+    private func durationText(_ seconds: Double) -> Text {
+        Text(Formatters.duration(seconds))
+            .font(.system(.subheadline, design: .monospaced)).bold()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(group.dayName).font(.subheadline.bold())
+            if dynamicTypeSize.isAccessibilitySize {
+                ForEach(group.rows) { row in
+                    if let result = row.result {
+                        LabeledContent("\(row.scopeLabel) — Shortest") {
+                            durationText(Double(result.shortestSeconds))
+                        }
+                        LabeledContent("\(row.scopeLabel) — Average") {
+                            durationText(result.averageSeconds)
+                        }
+                        LabeledContent("\(row.scopeLabel) — Longest") {
+                            durationText(Double(result.longestSeconds))
+                        }
+                    } else {
+                        LabeledContent("\(row.scopeLabel) — Shortest") {
+                            Text("No Data").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        LabeledContent("\(row.scopeLabel) — Average") {
+                            Text("No Data").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        LabeledContent("\(row.scopeLabel) — Longest") {
+                            Text("No Data").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                    GridRow {
+                        Text("Scope").font(.caption2.bold()).foregroundStyle(.secondary)
+                        Text("Shortest").font(.caption2.bold()).foregroundStyle(.secondary)
+                            .gridColumnAlignment(.center)
+                        Text("Average").font(.caption2.bold()).foregroundStyle(.secondary)
+                            .gridColumnAlignment(.center)
+                        Text("Longest").font(.caption2.bold()).foregroundStyle(.secondary)
+                            .gridColumnAlignment(.center)
+                    }
+                    ForEach(group.rows) { row in
+                        GridRow {
+                            Text(row.scopeLabel).font(.caption).foregroundStyle(.secondary)
+                            if let result = row.result {
+                                durationText(Double(result.shortestSeconds))
+                                    .fixedSize()
+                                    .gridColumnAlignment(.center)
+                                durationText(result.averageSeconds)
+                                    .fixedSize()
+                                    .gridColumnAlignment(.center)
+                                durationText(Double(result.longestSeconds))
+                                    .fixedSize()
+                                    .gridColumnAlignment(.center)
+                            } else {
+                                // Repeated under each value column rather
+                                // than spanning all three — matches the
+                                // shape of a data row (one value per column)
+                                // instead of reading as one merged cell.
+                                Text("No Data")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .gridColumnAlignment(.center)
                                 Text("No Data")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
