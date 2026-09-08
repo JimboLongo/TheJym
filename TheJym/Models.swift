@@ -1297,6 +1297,17 @@ final class BodyWeightEntry {
         self.date = date
         self.weight = weight
     }
+
+    /// The effective bodyweight as of `date` — the most recent entry ON OR
+    /// BEFORE it, never simply the most recent entry overall, so resolving
+    /// a backdated session doesn't pick up a LATER weigh-in than existed at
+    /// the time. Nil if there's no entry that early yet. `entries` must
+    /// already be sorted ascending by date (every call site queries with
+    /// `@Query(sort: \BodyWeightEntry.date)`) — shared here rather than
+    /// each caller resolving this the same way independently.
+    static func resolved(asOf date: Date, in entries: [BodyWeightEntry]) -> Double? {
+        entries.last { $0.date <= date }?.weight
+    }
 }
 
 // MARK: - Timers

@@ -171,7 +171,7 @@ struct WorkoutLogView: View {
     /// Most recent BodyWeightEntry on or before `date` — used to resolve a
     /// bodyweight exercise's effective weight. Nil if none exists yet.
     private func resolvedBodyweight(asOf date: Date) -> Double? {
-        allBodyWeights.last { $0.date <= date }?.weight
+        BodyWeightEntry.resolved(asOf: date, in: allBodyWeights)
     }
 
     /// Live approximation (today's date) for the "BW + n -> lb" hint shown

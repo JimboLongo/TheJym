@@ -87,7 +87,7 @@ struct HistoryView: View {
         var changed = false
         for session in sessions {
             for log in session.exerciseLogs where !log.isBodyweight && bodyweightNames.contains(log.exerciseName) {
-                guard let bw = bodyWeights.last(where: { $0.date <= session.date })?.weight else { continue }
+                guard let bw = BodyWeightEntry.resolved(asOf: session.date, in: bodyWeights) else { continue }
                 log.isBodyweight = true
                 for set in log.sets {
                     set.addedWeight = max(0, set.weight - bw)
@@ -581,6 +581,7 @@ struct SessionDetailView: View {
     @Query(sort: \Phase.number) private var phases: [Phase]
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \Bar.name) private var bars: [Bar]
+    @Query(sort: \BodyWeightEntry.date) private var bodyWeights: [BodyWeightEntry]
 
     @State private var dayReattachmentNote: String?
     @State private var showingAddExercise = false
@@ -693,10 +694,20 @@ struct SessionDetailView: View {
         let s: SetLog
         if log.isBodyweight {
             // Inherit the bodyweight already resolved for this log's other
-            // sets, so a manually-added set doesn't end up with no
-            // bodyweight to add its weight to.
-            let bw = log.sortedSets.first?.bodyweightAtLog ?? 0
-            s = SetLog(index: log.sets.count, weight: bw, reps: 0, addedWeight: 0, bodyweightAtLog: bw)
+            // sets, so every set on one manually-added exercise agrees.
+            // The very FIRST set has no sibling to inherit from — resolve
+            // it the same way the live workout flow does instead of
+            // falling back to 0: the most recent BodyWeightEntry as of the
+            // SESSION's own date (not "most recent overall"), so a
+            // backdated session doesn't pick up a later weigh-in than
+            // existed at the time. Nil (not 0) if there's truly no entry
+            // that early — bodyweightAtLog is Optional exactly so an
+            // unresolved set doesn't display a fabricated "0 lb" as fact
+            // (same convention as `weight` falling back to 0 only for the
+            // resolved TOTAL, never for bodyweightAtLog itself).
+            let bw = log.sortedSets.first?.bodyweightAtLog
+                ?? BodyWeightEntry.resolved(asOf: log.session?.date ?? .now, in: bodyWeights)
+            s = SetLog(index: log.sets.count, weight: bw ?? 0, reps: 0, addedWeight: 0, bodyweightAtLog: bw)
         } else {
             s = SetLog(index: log.sets.count, weight: 0, reps: 0)
         }
