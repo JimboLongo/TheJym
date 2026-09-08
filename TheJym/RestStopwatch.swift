@@ -82,6 +82,25 @@ final class RestStopwatch: ObservableObject {
         return Double(targetSeconds) - elapsed <= 10
     }
 
+    /// Which of the final-approach cues (5,4,3,2,1 beeps, 0 tone) have
+    /// already fired for the CURRENT approach to zero — not "for the
+    /// current anchor": a threshold is un-fired (removed) the moment
+    /// `remaining` rises back above it, so it's eligible to fire again on a
+    /// later approach even without a real re-anchor. See `evaluateAudioCues`.
+    private var firedThresholds: Set<Int> = []
+    /// How a cue is actually played — real playback goes through
+    /// TimerAudioEngine.shared (this app's one audio path; see its own file
+    /// for why nothing here talks to AVAudioSession/AVAudioEngine directly).
+    /// Overridable so tests can substitute a no-op: driving a target of 5s
+    /// or less through resetAndStart/retarget synchronously calls this on
+    /// the calling thread, and the real engine's AVAudioSession activation
+    /// has no business running inside a unit test — it isn't a real device
+    /// audio route, and it has hung the test process rather than failing
+    /// fast when tried.
+    var playCue: (_ frequency: Double, _ duration: Double, _ amplitude: Float) -> Void = { frequency, duration, amplitude in
+        TimerAudioEngine.shared.playBeep(frequency: frequency, duration: duration, amplitude: amplitude)
+    }
+
     deinit {
         ticker?.invalidate()
     }
@@ -90,13 +109,29 @@ final class RestStopwatch: ObservableObject {
     /// `targetSeconds` (that exercise's own rest time, or nil to fall back
     /// to counting up) and restarts from the top, overriding a manual pause
     /// if one was in effect, since the whole point is "time since/until the
-    /// last completed set."
+    /// last completed set." Re-anchors elapsed to 0 — for changing the
+    /// target WITHOUT touching elapsed (e.g. swiping to a different
+    /// exercise), use `retarget(to:)` instead.
     func resetAndStart(targetSeconds: Int?) {
         self.targetSeconds = targetSeconds
         accumulated = 0
         startDate = Date()
         isRunning = true
+        firedThresholds.removeAll()
         startTicking()
+        evaluateAudioCues()
+    }
+
+    /// Changes which duration is being counted down to/from WITHOUT
+    /// touching the elapsed-time anchor — for when the exercise being
+    /// VIEWED changes (a swipe) rather than one being logged against.
+    /// Elapsed time since the last logged set is the invariant; the target
+    /// is just whichever exercise is currently on screen. A no-op if the
+    /// target isn't actually changing.
+    func retarget(to targetSeconds: Int?) {
+        guard targetSeconds != self.targetSeconds else { return }
+        self.targetSeconds = targetSeconds
+        evaluateAudioCues()
     }
 
     /// Pause — freezes the displayed time in place rather than clearing it,
@@ -124,13 +159,24 @@ final class RestStopwatch: ObservableObject {
     func reset() {
         accumulated = 0
         if isRunning { startDate = Date() }
+        // Explicit, not left to evaluateAudioCues' own live filter — for a
+        // target of 5s or less, the filter alone can leave a stale
+        // "already fired" entry behind that coincidentally still satisfies
+        // `remaining <= threshold` at the fresh full duration, silently
+        // skipping a cue that should legitimately fire again on this new
+        // run from the top.
+        firedThresholds.removeAll()
+        evaluateAudioCues()
     }
 
     private func startTicking() {
         stopTicking()
         let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor in self.tickToken += 1 }
+            Task { @MainActor in
+                self.tickToken += 1
+                self.evaluateAudioCues()
+            }
         }
         RunLoop.main.add(t, forMode: .common)
         ticker = t
@@ -139,5 +185,50 @@ final class RestStopwatch: ObservableObject {
     private func stopTicking() {
         ticker?.invalidate()
         ticker = nil
+    }
+
+    // MARK: Audio cues — final-5-seconds beeps + a 0-second tone
+    //
+    // A short beep once per second for the final 5 seconds (5,4,3,2,1), one
+    // 3-second tone at 0, then silence — the display keeps blinking red at
+    // 0:00 until the next set, but this sits on screen for a whole workout
+    // and must not keep beeping indefinitely.
+    //
+    // Ticks are wall-clock derived, not a guaranteed once-per-second
+    // callback — one can land twice in the same second, or a gap (the app
+    // backgrounding, a slow frame) can skip several seconds at once. Testing
+    // `Int(remaining) == 5` on every tick would either double-fire on a
+    // double-tick or silently skip a cue entirely on a gap. Tracking which
+    // thresholds have already fired for the current approach sidesteps the
+    // double-tick case for free (the threshold's already consumed, so
+    // nothing plays again). For a gap — or a discontinuous jump from
+    // retargeting, or a target that starts at 5s or less in the first
+    // place — only the single nearest still-live threshold plays; the ones
+    // it skipped over are marked fired without sound, since they were never
+    // actually the "current" number on the way down (e.g. a fresh 3-second
+    // target was never at 5 or 4 seconds remaining; a swipe that drops
+    // remaining from 40s to -10s didn't audibly pass through 5,4,3,2,1
+    // either). `firedThresholds` un-fires a threshold the moment `remaining`
+    // rises back above it (see its own doc), so retargeting to a longer
+    // duration (this file's `retarget(to:)`) or hitting Reset both make the
+    // whole final approach eligible to play out again from scratch.
+    private func evaluateAudioCues() {
+        guard let targetSeconds else {
+            firedThresholds.removeAll()
+            return
+        }
+        let remaining = Double(targetSeconds) - elapsed
+        firedThresholds = firedThresholds.filter { remaining <= Double($0) }
+        guard isRunning, remaining <= 5 else { return }
+        let current = max(0, min(5, Int(remaining.rounded(.down))))
+        guard !firedThresholds.contains(current) else { return }
+        for threshold in stride(from: 5, through: current, by: -1) {
+            firedThresholds.insert(threshold)
+        }
+        if current == 0 {
+            playCue(440, 3.0, 0.3)
+        } else {
+            playCue(880, 0.18, 0.35)
+        }
     }
 }

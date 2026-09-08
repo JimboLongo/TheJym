@@ -158,6 +158,16 @@ struct WorkoutLogView: View {
         return phase.plan(for: day, cycle: phase.currentCycle)
     }
 
+    /// The rest countdown's target for whichever page is currently being
+    /// viewed — an exercise page's own effective rest time (same lookup
+    /// `exercisePage` itself uses), or nil (falls back to counting up) for
+    /// the Completed summary and Workout Stopwatch pages, neither of which
+    /// has an exercise of its own to attribute a rest time to.
+    private func restTimeSeconds(forPageID pageID: String?) -> Int? {
+        guard let pageID, let draft = drafts.first(where: { "ex-\($0.id)" == pageID }) else { return nil }
+        return plannedExercises(for: day).first { $0.exerciseName == draft.name }?.restTimeSeconds
+    }
+
     /// Most recent BodyWeightEntry on or before `date` — used to resolve a
     /// bodyweight exercise's effective weight. Nil if none exists yet.
     private func resolvedBodyweight(asOf date: Date) -> Double? {
@@ -613,6 +623,18 @@ struct WorkoutLogView: View {
             }
             lastInteraction = Date()
             saveDraftToDisk()
+        }
+        // The rest countdown follows whichever exercise is currently being
+        // VIEWED, not the one it was last logged against — elapsed time
+        // since that set is the invariant; the target is just whatever's on
+        // screen right now. retarget(to:) changes only the target, not the
+        // elapsed anchor, so a swipe never resets or restarts the count —
+        // resetAndStart(targetSeconds:) stays reserved for an actual logged
+        // set (see onSetLogged below). Falls back to nil (count-up) on the
+        // Completed/Stopwatch pages, which have no exercise of their own to
+        // attribute a rest time to.
+        .onChange(of: currentPageID) { _, newValue in
+            restStopwatch.retarget(to: restTimeSeconds(forPageID: newValue))
         }
         .sheet(isPresented: $showRecapSheet, onDismiss: { selectedTab = .stats; dismiss() }) {
             WorkoutRecapView(entries: recapEntries, choices: $recapChoices, weights: $recapWeights) { applyRecapChoices() }
