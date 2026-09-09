@@ -60,20 +60,20 @@ struct TheJymWidgetLiveActivity: Widget {
             .activitySystemActionForegroundColor(Color.white)
         } dynamicIsland: { context in
             DynamicIsland {
-                // .center is the only expanded region wide enough to hold
-                // both the label and the timer as one centered group rather
-                // than pulling them apart to the two edges — this is also
-                // the ONLY Dynamic Island presentation that supports true
-                // centering at all: the compact pill below is physically
-                // split by the camera cutout, so compactLeading/
-                // compactTrailing can never span or center across it.
-                DynamicIslandExpandedRegion(.center) {
-                    VStack(spacing: 4) {
-                        Label("Workout", systemImage: "figure.strengthtraining.traditional")
-                            .font(.headline)
-                        elapsedText(context.state)
-                            .font(.system(.title2, design: .monospaced)).bold()
-                    }
+                // A lone .center region (no .leading/.trailing at all)
+                // left the system with nothing to size the expanded pill
+                // around, so it rendered empty — .leading + .trailing is
+                // the combination that actually works. The compact pill
+                // below is physically split by the camera cutout either
+                // way, so compactLeading/compactTrailing can never span or
+                // center across it regardless of what the expanded region
+                // does.
+                DynamicIslandExpandedRegion(.leading) {
+                    Label("Workout", systemImage: "figure.strengthtraining.traditional")
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    elapsedText(context.state)
+                        .font(.system(.title3, design: .monospaced)).bold()
                 }
             } compactLeading: {
                 Image(systemName: "figure.strengthtraining.traditional")
