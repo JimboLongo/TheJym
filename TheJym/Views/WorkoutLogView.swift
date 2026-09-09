@@ -1188,15 +1188,21 @@ struct ExercisePageView: View {
     /// set's reps, not just a set's first completion.
     var onSetLogged: (Int?) -> Void = { _ in }
 
-    /// Name/notes/rest-time header text, 30% bigger than the .title/
-    /// .callout styles they used to just reference directly — ScaledMetric
-    /// (not a bare .system(size:)) so they still grow and shrink with the
-    /// system Dynamic Type setting the way every other named-style text in
-    /// this app does, just anchored to a bigger base size. 28 and 16 are
-    /// .title's and .callout's own default point sizes; ×1.3 is the exact
-    /// "30% bigger" ask.
+    /// Name/notes/rest-time header text — ScaledMetric (not a bare
+    /// .system(size:)) so they still grow and shrink with the system
+    /// Dynamic Type setting the way every other named-style text in this
+    /// app does, just anchored to a bigger base size. 28 and 16 are
+    /// .title's and .callout's own default point sizes.
     @ScaledMetric(relativeTo: .title) private var nameFontSize: CGFloat = 28 * 1.3
-    @ScaledMetric(relativeTo: .callout) private var secondaryFontSize: CGFloat = 16 * 1.3
+    /// The timer glyph next to the rest time — deliberately NOT bumped
+    /// alongside notesAndRestTimeFontSize below; stays at the same "30%
+    /// bigger than callout" size the notes/rest-time text was at before
+    /// that second bump.
+    @ScaledMetric(relativeTo: .callout) private var restTimerIconSize: CGFloat = 16 * 1.3
+    /// Notes and the rest-time duration text — 20% bigger than
+    /// restTimerIconSize above (16 * 1.3 * 1.2), so the icon doesn't grow
+    /// to match while the text next to it does.
+    @ScaledMetric(relativeTo: .callout) private var notesAndRestTimeFontSize: CGFloat = 16 * 1.3 * 1.2
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1981,16 +1987,17 @@ struct ExercisePageView: View {
     /// competing for space.
     private var nameWithNotes: Text {
         let nameFont = Font.system(size: nameFontSize, weight: .bold)
-        let secondaryFont = Font.system(size: secondaryFontSize)
+        let iconFont = Font.system(size: restTimerIconSize)
+        let textFont = Font.system(size: notesAndRestTimeFontSize)
         var result = Text(draft.name).font(nameFont)
         if let notes = exerciseDef?.notes, !notes.isEmpty {
-            result = result + Text("  " + notes).font(secondaryFont).foregroundStyle(.secondary)
+            result = result + Text("  " + notes).font(textFont).foregroundStyle(.secondary)
         }
         if let restTimeSeconds {
             result = result
                 + Text("  ")
-                + Text(Image(systemName: "timer")).font(secondaryFont).foregroundStyle(.secondary)
-                + Text(" " + Formatters.duration(Double(restTimeSeconds))).font(secondaryFont).foregroundStyle(.secondary)
+                + Text(Image(systemName: "timer")).font(iconFont).foregroundStyle(.secondary)
+                + Text(" " + Formatters.duration(Double(restTimeSeconds))).font(textFont).foregroundStyle(.secondary)
         }
         return result
     }
