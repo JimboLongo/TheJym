@@ -1194,10 +1194,12 @@ struct ExercisePageView: View {
     /// app does, just anchored to a bigger base size. 28 and 16 are
     /// .title's and .callout's own default point sizes.
     @ScaledMetric(relativeTo: .title) private var nameFontSize: CGFloat = 28 * 1.3
-    /// Notes and the rest-time duration text — the timer glyph next to the
-    /// rest time matches this same size (see nameWithNotes) rather than
-    /// having its own.
+    /// Notes and the rest-time duration text.
     @ScaledMetric(relativeTo: .callout) private var notesAndRestTimeFontSize: CGFloat = 16 * 1.3 * 1.2
+    /// The pencil (after notes) and timer (after the rest time) glyphs —
+    /// 10% smaller than the text they sit next to, rather than matching it
+    /// exactly.
+    @ScaledMetric(relativeTo: .callout) private var headerIconSize: CGFloat = 16 * 1.3 * 1.2 * 0.9
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1983,19 +1985,20 @@ struct ExercisePageView: View {
     private var nameWithNotes: Text {
         let nameFont = Font.system(size: nameFontSize, weight: .bold)
         let textFont = Font.system(size: notesAndRestTimeFontSize)
+        let iconFont = Font.system(size: headerIconSize)
         var result = Text(draft.name).font(nameFont)
         if let notes = exerciseDef?.notes, !notes.isEmpty {
             result = result
                 + Text("  " + notes).font(textFont).foregroundStyle(.secondary)
                 + Text(" ")
-                + Text(Image(systemName: "pencil")).font(textFont).foregroundStyle(.secondary)
+                + Text(Image(systemName: "pencil")).font(iconFont).foregroundStyle(.secondary)
         }
         if let restTimeSeconds {
             result = result
                 + Text("  ")
                 + Text(Formatters.duration(Double(restTimeSeconds))).font(textFont).foregroundStyle(.secondary)
                 + Text(" ")
-                + Text(Image(systemName: "timer")).font(textFont).foregroundStyle(.secondary)
+                + Text(Image(systemName: "timer")).font(iconFont).foregroundStyle(.secondary)
         }
         return result
     }
