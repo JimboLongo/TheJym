@@ -320,10 +320,20 @@ struct WorkoutLogView: View {
         CompletedSummaryPageView(drafts: $drafts, allLogs: allExerciseLogs,
                                  currentBodyweight: currentBodyweight,
                                  pageHeight: pageHeight,
+                                 stopwatch: workoutStopwatch,
                                  currentPageID: $currentPageID,
                                  isDeloadCycle: isDeloadCycle,
                                  isCollapsed: $completedSummaryCollapsed,
-                                 onFinish: { showDatePicker = true })
+                                 onFinish: {
+                                     // Stop counting right here, before the
+                                     // date-confirmation step even opens —
+                                     // otherwise however long that takes
+                                     // gets silently added to the saved
+                                     // duration.
+                                     workoutStopwatch.pause()
+                                     saveWorkoutStopwatchToDisk()
+                                     showDatePicker = true
+                                 })
     }
 
     private func workoutStopwatchPage(pageHeight: CGFloat) -> some View {
@@ -3377,6 +3387,11 @@ struct CompletedSummaryPageView: View {
     let allLogs: [ExerciseLog]
     let currentBodyweight: Double?
     let pageHeight: CGFloat
+    /// Ticks live while the workout's still going — WorkoutLogView pauses
+    /// it the instant Finish/Complete below is tapped, before the date
+    /// confirmation step even opens, so what's saved matches what's shown
+    /// here rather than including however long that confirmation took.
+    @ObservedObject var stopwatch: WorkoutStopwatch
     @Binding var currentPageID: String?
     /// See ExercisePageView's own doc — same deload-matched comparisons.
     let isDeloadCycle: Bool
@@ -3414,6 +3429,9 @@ struct CompletedSummaryPageView: View {
                     Text("Completed")
                         .font(.title2.bold())
                 }
+                Label("Workout time: \(Formatters.duration(stopwatch.elapsed))", systemImage: "stopwatch")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 if completedIndices.isEmpty {
                     Text("Nothing checked off yet — swipe back to an exercise and finish it, or save now to end the workout early.")
                         .font(.subheadline)
