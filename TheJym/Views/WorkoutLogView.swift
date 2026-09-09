@@ -1985,13 +1985,17 @@ struct ExercisePageView: View {
         let textFont = Font.system(size: notesAndRestTimeFontSize)
         var result = Text(draft.name).font(nameFont)
         if let notes = exerciseDef?.notes, !notes.isEmpty {
-            result = result + Text("  " + notes).font(textFont).foregroundStyle(.secondary)
+            result = result
+                + Text("  " + notes).font(textFont).foregroundStyle(.secondary)
+                + Text(" ")
+                + Text(Image(systemName: "pencil")).font(textFont).foregroundStyle(.secondary)
         }
         if let restTimeSeconds {
             result = result
                 + Text("  ")
+                + Text(Formatters.duration(Double(restTimeSeconds))).font(textFont).foregroundStyle(.secondary)
+                + Text(" ")
                 + Text(Image(systemName: "timer")).font(textFont).foregroundStyle(.secondary)
-                + Text(" " + Formatters.duration(Double(restTimeSeconds))).font(textFont).foregroundStyle(.secondary)
         }
         return result
     }
