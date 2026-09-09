@@ -56,8 +56,6 @@ struct TimerTemplatesListView: View {
                     } label: {
                         Label("New Template", systemImage: "plus")
                     }
-                } header: {
-                    Text("Templates")
                 }
             }
             .navigationTitle("Timers")
@@ -68,6 +66,17 @@ struct TimerTemplatesListView: View {
             }
             .navigationDestination(item: $newTemplate) { template in
                 TimerTemplateDetailView(template: template)
+            }
+            .onAppear {
+                // Don't keep a finished run's "Complete" state hanging
+                // around across visits — landing back on this list is the
+                // one moment every path (finishing a run, backing out,
+                // relaunching the app) passes through, so clearing a
+                // finished-but-not-yet-stopped run here means it never
+                // lingers as something still being "tracked". Never clears
+                // an ACTUALLY running (not yet finished) timer — that one
+                // still needs to keep going across tab switches.
+                if engine.isFinished { engine.stop() }
             }
         }
     }
