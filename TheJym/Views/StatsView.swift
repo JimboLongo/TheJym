@@ -192,7 +192,7 @@ struct StatsView: View {
             pairs.append(("Phase \(progress.number)",
                           progress.completedCount == 0
                               ? "No completed cycles yet"
-                              : "\(progress.perfectCount) of \(progress.completedCount) perfect"))
+                              : "\(progress.perfectCount) of \(progress.completedCount)"))
         }
         if let miles = stats.milesThisPhase {
             pairs.append(("Miles walked", milesLabel(miles)))
