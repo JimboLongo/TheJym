@@ -1970,15 +1970,15 @@ struct ExercisePageView: View {
     /// shrinks all of it together instead of separate HStack children
     /// competing for space.
     private var nameWithNotes: Text {
-        var result = Text(draft.name).font(.title2.bold())
+        var result = Text(draft.name).font(.title.bold())
         if let notes = exerciseDef?.notes, !notes.isEmpty {
-            result = result + Text("  " + notes).font(.caption2).foregroundStyle(.secondary)
+            result = result + Text("  " + notes).font(.callout).foregroundStyle(.secondary)
         }
         if let restTimeSeconds {
             result = result
                 + Text("  ")
-                + Text(Image(systemName: "timer")).font(.caption2).foregroundStyle(.secondary)
-                + Text(" " + Formatters.duration(Double(restTimeSeconds))).font(.caption2).foregroundStyle(.secondary)
+                + Text(Image(systemName: "timer")).font(.callout).foregroundStyle(.secondary)
+                + Text(" " + Formatters.duration(Double(restTimeSeconds))).font(.callout).foregroundStyle(.secondary)
         }
         return result
     }
@@ -1991,12 +1991,14 @@ struct ExercisePageView: View {
                 // proportionally, rather than two flexible HStack children
                 // fighting over space — same per-segment-styled-Text
                 // concatenation pattern the Big Lift table's date labels
-                // use. Auto-shrinks (down to 70%) instead of letting a long
+                // use. Auto-shrinks (down to 50%) instead of letting a long
                 // name push the rep-total badge/button off the trailing
-                // edge or wrap the row taller.
+                // edge, wrap the row taller, or truncate — the larger base
+                // size here needs more shrink headroom than the old one did
+                // to still guarantee a one-line fit for a long name.
                 nameWithNotes
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.5)
                 if case .repTotal(let target) = draft.goalType {
                     Text("\(draft.repTotalSoFar)/\(target)")
                         .font(.title3.bold())
