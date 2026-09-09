@@ -320,7 +320,7 @@ struct StatsView: View {
                 statGrid([
                     ("Final cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")"),
                     ("Adherence", String(format: "%.0f%%", summary.adherencePercent)),
-                    ("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount) perfect"),
+                    ("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount)"),
                     ("Miles walked", milesLabel(summary.milesWalked)),
                 ])
             } label: {
