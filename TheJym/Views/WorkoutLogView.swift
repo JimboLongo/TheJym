@@ -1194,14 +1194,9 @@ struct ExercisePageView: View {
     /// app does, just anchored to a bigger base size. 28 and 16 are
     /// .title's and .callout's own default point sizes.
     @ScaledMetric(relativeTo: .title) private var nameFontSize: CGFloat = 28 * 1.3
-    /// The timer glyph next to the rest time — deliberately NOT bumped
-    /// alongside notesAndRestTimeFontSize below; stays at the same "30%
-    /// bigger than callout" size the notes/rest-time text was at before
-    /// that second bump.
-    @ScaledMetric(relativeTo: .callout) private var restTimerIconSize: CGFloat = 16 * 1.3
-    /// Notes and the rest-time duration text — 20% bigger than
-    /// restTimerIconSize above (16 * 1.3 * 1.2), so the icon doesn't grow
-    /// to match while the text next to it does.
+    /// Notes and the rest-time duration text — the timer glyph next to the
+    /// rest time matches this same size (see nameWithNotes) rather than
+    /// having its own.
     @ScaledMetric(relativeTo: .callout) private var notesAndRestTimeFontSize: CGFloat = 16 * 1.3 * 1.2
 
     @State private var showAddEquipmentSheet = false
@@ -1987,7 +1982,6 @@ struct ExercisePageView: View {
     /// competing for space.
     private var nameWithNotes: Text {
         let nameFont = Font.system(size: nameFontSize, weight: .bold)
-        let iconFont = Font.system(size: restTimerIconSize)
         let textFont = Font.system(size: notesAndRestTimeFontSize)
         var result = Text(draft.name).font(nameFont)
         if let notes = exerciseDef?.notes, !notes.isEmpty {
@@ -1996,7 +1990,7 @@ struct ExercisePageView: View {
         if let restTimeSeconds {
             result = result
                 + Text("  ")
-                + Text(Image(systemName: "timer")).font(iconFont).foregroundStyle(.secondary)
+                + Text(Image(systemName: "timer")).font(textFont).foregroundStyle(.secondary)
                 + Text(" " + Formatters.duration(Double(restTimeSeconds))).font(textFont).foregroundStyle(.secondary)
         }
         return result
