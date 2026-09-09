@@ -302,6 +302,7 @@ struct WorkoutLogView: View {
                          restTimeSeconds: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }?.restTimeSeconds,
                          onSetLogged: { restTimeSeconds in
                              restStopwatch.resetAndStart(targetSeconds: restTimeSeconds)
+                             restActivityDidChange()
                              // The first logged rep of the whole workout — not
                              // opening the screen — is the only "start" moment
                              // session duration has. start() already no-ops
@@ -310,7 +311,7 @@ struct WorkoutLogView: View {
                              // so this never overrides or restarts either.
                              if !workoutStopwatch.hasStarted {
                                  workoutStopwatch.start()
-                                 workoutStopwatchDidChange()
+                                 saveWorkoutStopwatchToDisk()
                              }
                          })
     }
@@ -327,19 +328,18 @@ struct WorkoutLogView: View {
 
     private func workoutStopwatchPage(pageHeight: CGFloat) -> some View {
         WorkoutStopwatchPageView(stopwatch: workoutStopwatch, pageHeight: pageHeight,
-                                 onChange: workoutStopwatchDidChange)
+                                 onChange: saveWorkoutStopwatchToDisk)
     }
 
-    /// Called after every Start/Pause/Resume/Reset (see
-    /// WorkoutStopwatchPageView.onChange's own doc) and right after the
-    /// auto-start above — keeps both the on-disk snapshot (survives the app
-    /// being killed) and the Dynamic Island's Live Activity (see
-    /// WorkoutActivityController) in sync with whatever WorkoutStopwatch
-    /// just did.
-    private func workoutStopwatchDidChange() {
-        saveWorkoutStopwatchToDisk()
-        WorkoutActivityController.shared.sync(hasStarted: workoutStopwatch.hasStarted,
-                                              snapshot: workoutStopwatch.snapshot)
+    /// Keeps the Dynamic Island's Live Activity (see RestActivityController)
+    /// in sync with whatever RestStopwatch just did — called after every
+    /// resetAndStart (a logged set, see onSetLogged above) and every
+    /// retarget (a swipe to a different exercise, see the currentPageID
+    /// onChange below). Unlike WorkoutStopwatch, RestStopwatch is never
+    /// persisted to disk (see its own doc), so there's no separate "save"
+    /// half to this the way workoutStopwatchPage's onChange still has.
+    private func restActivityDidChange() {
+        RestActivityController.shared.sync(restStopwatch.liveActivityState)
     }
 
     var body: some View {
@@ -522,7 +522,7 @@ struct WorkoutLogView: View {
                 clearSavedDraft()
                 workoutStopwatch.clear()
                 clearSavedWorkoutStopwatch()
-                WorkoutActivityController.shared.end()
+                RestActivityController.shared.end()
                 showResumePrompt = false
                 buildDrafts()
             }
@@ -628,11 +628,21 @@ struct WorkoutLogView: View {
                     buildDrafts()
                 }
             }
+            // Unlike WorkoutStopwatch, RestStopwatch is never persisted
+            // (see its own doc) — restStopwatch itself always starts fresh
+            // here, with nothing saved to reconcile a leftover Live
+            // Activity against, so any one still showing from a killed app
+            // gets ended rather than adopted.
+            RestActivityController.shared.end()
             UIApplication.shared.isIdleTimerDisabled = true
             lastInteraction = Date()
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+            // Leaving the workout screen without finishing — restStopwatch
+            // itself is about to be gone too (never persisted), so nothing
+            // would keep this in sync going forward.
+            RestActivityController.shared.end()
         }
         .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
             // Keep the screen awake for up to 3 minutes of idle time (e.g.
@@ -660,6 +670,7 @@ struct WorkoutLogView: View {
         // attribute a rest time to.
         .onChange(of: currentPageID) { _, newValue in
             restStopwatch.retarget(to: restTimeSeconds(forPageID: newValue))
+            restActivityDidChange()
         }
         .sheet(isPresented: $showRecapSheet, onDismiss: { selectedTab = .stats; dismiss() }) {
             WorkoutRecapView(entries: recapEntries, choices: $recapChoices, weights: $recapWeights) { applyRecapChoices() }
@@ -856,13 +867,6 @@ struct WorkoutLogView: View {
         guard let data = UserDefaults.standard.data(forKey: workoutStopwatchStorageKey),
               let snapshot = try? JSONDecoder().decode(WorkoutStopwatch.Snapshot.self, from: data) else { return }
         workoutStopwatch.restore(snapshot)
-        // A Live Activity survives the app being killed, so relaunching
-        // into an in-progress workout should re-adopt whatever's already
-        // showing (or start one fresh if it was dismissed) rather than
-        // leaving the Dynamic Island stuck on stale content — see
-        // WorkoutActivityController.sync's own doc on adopting an existing
-        // Activity instead of duplicating it.
-        WorkoutActivityController.shared.sync(hasStarted: snapshot.hasStarted, snapshot: snapshot)
     }
 
     private func clearSavedWorkoutStopwatch() {
@@ -996,7 +1000,7 @@ struct WorkoutLogView: View {
         // genuinely fresh stopwatch.
         workoutStopwatch.pause()
         clearSavedWorkoutStopwatch()
-        WorkoutActivityController.shared.end()
+        RestActivityController.shared.end()
 
         if !entries.isEmpty {
             recapEntries = entries

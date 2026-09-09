@@ -83,6 +83,16 @@ final class RestStopwatch: ObservableObject {
         return Double(targetSeconds) - elapsed <= 10
     }
 
+    /// Everything the Dynamic Island Live Activity needs to mirror this
+    /// countdown/count-up live — not a persisted Snapshot like
+    /// WorkoutStopwatch's (this stopwatch is deliberately never written to
+    /// disk, see its own file doc), just a read of the same anchor
+    /// `displaySeconds` itself derives from, for RestActivityController to
+    /// push into a Live Activity's content state.
+    var liveActivityState: (targetSeconds: Int?, accumulatedSeconds: TimeInterval, startDate: Date?, isRunning: Bool) {
+        (targetSeconds, accumulated, startDate, isRunning)
+    }
+
     /// Which of the final-approach cues (5,4,3,2,1 beeps, 0 tone) have
     /// already fired for the CURRENT approach to zero — not "for the
     /// current anchor": a threshold is un-fired (removed) the moment

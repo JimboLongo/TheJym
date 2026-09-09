@@ -2,57 +2,65 @@
 //  TheJymWidgetLiveActivity.swift
 //  TheJymWidget
 //
-//  Renders WorkoutActivityAttributes (shared with the main TheJym target —
+//  Renders RestActivityAttributes (shared with the main TheJym target —
 //  see its own file, added to this target's Sources build phase too) on
-//  the Lock Screen and in the Dynamic Island. Elapsed time ticks natively
-//  via Text(timerInterval:) while running, driven by `virtualStart` below
-//  — no per-second updates from the app are needed, only whenever the
-//  content state itself changes (Start/Pause/Resume/Reset), matching
-//  WorkoutStopwatch's own wall-clock-anchored model.
+//  the Lock Screen and in the Dynamic Island. Elapsed/remaining time ticks
+//  natively via Text(timerInterval:) while running, driven by
+//  `virtualStart` below — no per-second updates from the app are needed,
+//  only whenever the content state itself changes (resetAndStart on a
+//  logged set, or retarget on a swipe to a different exercise), matching
+//  RestStopwatch's own wall-clock-anchored model.
+//
+//  One simplification vs. the in-app view: RestStopwatch counts past 0
+//  into negative numbers once a rest period is overdue, but
+//  Text(timerInterval:) can't tick a live counter past the end of its own
+//  range — it just holds at the range's boundary. So a countdown here
+//  ticks down to 0:00 and holds there rather than continuing to count the
+//  overdue time, which needs a fresh push from the app to update further
+//  anyway (see RestActivityController) — a reasonable "best effort" match
+//  for a Live Activity, not full parity with the in-app countdown.
 //
 
 import ActivityKit
 import WidgetKit
 import SwiftUI
 
-private extension WorkoutActivityAttributes.ContentState {
-    /// The reference point Text(timerInterval:) counts up from so its
-    /// displayed elapsed time equals accumulatedSeconds + (now - startDate)
-    /// — exactly WorkoutStopwatch.elapsed's own formula — without the app
+private extension RestActivityAttributes.ContentState {
+    /// The reference point Text(timerInterval:) counts from so its
+    /// displayed value equals accumulatedSeconds + (now - startDate) —
+    /// exactly RestStopwatch's own elapsed formula — without the app
     /// needing to push a fresh value every second.
     var virtualStart: Date {
         (startDate ?? Date()).addingTimeInterval(-accumulatedSeconds)
     }
 }
 
-/// Same mm:ss / h:mm:ss shape as the app's own Formatters.duration — kept
-/// as a private copy rather than a shared file, since this is the only
-/// place in the widget extension that needs it and it's a two-line
-/// function, not worth a second shared-file wiring for.
-private func staticDuration(_ seconds: Double) -> String {
-    let total = max(0, Int(seconds.rounded()))
-    let h = total / 3600, m = (total % 3600) / 60, s = total % 60
-    return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
-}
-
 @ViewBuilder
-private func elapsedText(_ state: WorkoutActivityAttributes.ContentState) -> some View {
-    if state.isRunning {
+private func timerText(_ state: RestActivityAttributes.ContentState) -> some View {
+    if let targetSeconds = state.targetSeconds {
+        let start = state.virtualStart
+        let end = start.addingTimeInterval(max(0, Double(targetSeconds)))
+        Text(timerInterval: start...max(end, start), countsDown: true)
+    } else {
         Text(timerInterval: state.virtualStart...state.virtualStart.addingTimeInterval(24 * 60 * 60),
              countsDown: false)
-    } else {
-        Text(staticDuration(state.accumulatedSeconds))
     }
+}
+
+/// Matches RestStopwatchBar's own icon choice: a plain stopwatch while
+/// counting up with no target, a countdown timer glyph once there's one.
+private func iconName(_ state: RestActivityAttributes.ContentState) -> String {
+    state.targetSeconds == nil ? "stopwatch" : "timer"
 }
 
 struct TheJymWidgetLiveActivity: Widget {
     var body: some WidgetConfiguration {
-        ActivityConfiguration(for: WorkoutActivityAttributes.self) { context in
+        ActivityConfiguration(for: RestActivityAttributes.self) { context in
             HStack {
-                Label("Workout", systemImage: "figure.strengthtraining.traditional")
+                Label("Rest", systemImage: iconName(context.state))
                     .font(.headline)
                 Spacer()
-                elapsedText(context.state)
+                timerText(context.state)
                     .font(.system(.title2, design: .monospaced)).bold()
             }
             .padding()
@@ -61,27 +69,26 @@ struct TheJymWidgetLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 // A lone .center region (no .leading/.trailing at all)
-                // left the system with nothing to size the expanded pill
-                // around, so it rendered empty — .leading + .trailing is
-                // the combination that actually works. The compact pill
-                // below is physically split by the camera cutout either
-                // way, so compactLeading/compactTrailing can never span or
-                // center across it regardless of what the expanded region
-                // does.
+                // leaves the system with nothing to size the expanded pill
+                // around and renders empty — .leading + .trailing is the
+                // combination that actually works. The compact pill below
+                // is physically split by the camera cutout either way, so
+                // compactLeading/compactTrailing can never span or center
+                // across it regardless of what the expanded region does.
                 DynamicIslandExpandedRegion(.leading) {
-                    Label("Workout", systemImage: "figure.strengthtraining.traditional")
+                    Label("Rest", systemImage: iconName(context.state))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    elapsedText(context.state)
+                    timerText(context.state)
                         .font(.system(.title3, design: .monospaced)).bold()
                 }
             } compactLeading: {
-                Image(systemName: "figure.strengthtraining.traditional")
+                Image(systemName: iconName(context.state))
             } compactTrailing: {
-                elapsedText(context.state)
+                timerText(context.state)
                     .font(.system(.caption, design: .monospaced)).bold()
             } minimal: {
-                Image(systemName: "figure.strengthtraining.traditional")
+                Image(systemName: iconName(context.state))
             }
         }
     }
