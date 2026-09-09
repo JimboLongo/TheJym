@@ -308,7 +308,10 @@ struct WorkoutLogView: View {
                              // once hasStarted is true (covers both an
                              // already-running and a since-paused stopwatch),
                              // so this never overrides or restarts either.
-                             if !workoutStopwatch.hasStarted { workoutStopwatch.start() }
+                             if !workoutStopwatch.hasStarted {
+                                 workoutStopwatch.start()
+                                 workoutStopwatchDidChange()
+                             }
                          })
     }
 
@@ -324,7 +327,19 @@ struct WorkoutLogView: View {
 
     private func workoutStopwatchPage(pageHeight: CGFloat) -> some View {
         WorkoutStopwatchPageView(stopwatch: workoutStopwatch, pageHeight: pageHeight,
-                                 onChange: saveWorkoutStopwatchToDisk)
+                                 onChange: workoutStopwatchDidChange)
+    }
+
+    /// Called after every Start/Pause/Resume/Reset (see
+    /// WorkoutStopwatchPageView.onChange's own doc) and right after the
+    /// auto-start above — keeps both the on-disk snapshot (survives the app
+    /// being killed) and the Dynamic Island's Live Activity (see
+    /// WorkoutActivityController) in sync with whatever WorkoutStopwatch
+    /// just did.
+    private func workoutStopwatchDidChange() {
+        saveWorkoutStopwatchToDisk()
+        WorkoutActivityController.shared.sync(hasStarted: workoutStopwatch.hasStarted,
+                                              snapshot: workoutStopwatch.snapshot)
     }
 
     var body: some View {
@@ -507,6 +522,7 @@ struct WorkoutLogView: View {
                 clearSavedDraft()
                 workoutStopwatch.clear()
                 clearSavedWorkoutStopwatch()
+                WorkoutActivityController.shared.end()
                 showResumePrompt = false
                 buildDrafts()
             }
@@ -840,6 +856,13 @@ struct WorkoutLogView: View {
         guard let data = UserDefaults.standard.data(forKey: workoutStopwatchStorageKey),
               let snapshot = try? JSONDecoder().decode(WorkoutStopwatch.Snapshot.self, from: data) else { return }
         workoutStopwatch.restore(snapshot)
+        // A Live Activity survives the app being killed, so relaunching
+        // into an in-progress workout should re-adopt whatever's already
+        // showing (or start one fresh if it was dismissed) rather than
+        // leaving the Dynamic Island stuck on stale content — see
+        // WorkoutActivityController.sync's own doc on adopting an existing
+        // Activity instead of duplicating it.
+        WorkoutActivityController.shared.sync(hasStarted: snapshot.hasStarted, snapshot: snapshot)
     }
 
     private func clearSavedWorkoutStopwatch() {
@@ -973,6 +996,7 @@ struct WorkoutLogView: View {
         // genuinely fresh stopwatch.
         workoutStopwatch.pause()
         clearSavedWorkoutStopwatch()
+        WorkoutActivityController.shared.end()
 
         if !entries.isEmpty {
             recapEntries = entries

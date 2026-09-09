@@ -7,10 +7,24 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3580254F6C871BF8AC294B27 /* TheJymWidgetLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C64E87C40B836B05DB5FCE9F /* TheJymWidgetLiveActivity.swift */; };
+		751E3EC607FB28981C4FEB22 /* WorkoutActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABAB4AFA04DBB3180E3C10D8 /* WorkoutActivityAttributes.swift */; };
 		9C66067AC8F0815F729F01FB /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF9A4D0B81AD797D76A68E8D /* Foundation.framework */; };
+		A36B6A4176526C693796B8CB /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 770D4DDD46D7FBF37DBEED5E /* WidgetKit.framework */; };
+		AA8FBBAF9F0794FF3B35C877 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF9A4D0B81AD797D76A68E8D /* Foundation.framework */; };
+		B70D33587B48E7E8BC7B6FE8 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 651F8F3B534D4465EEAF2A37 /* SwiftUI.framework */; };
+		BB74B2361B674EE7AECD3734 /* TheJymWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A56F57CB9C8AFB29D1A9E6B1 /* TheJymWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F8B229F3CF752DD4ADB1E6C0 /* TheJymWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B4ABEC99117E9CD97CD58B3 /* TheJymWidgetBundle.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		07A41B7435525E6DB44A0FEC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 44DED6D6301272C900A62B53 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B58071D304B6815A91DB8F9F;
+			remoteInfo = TheJymWidget;
+		};
 		53C3EAD31ED1AB63B5DCB729 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 44DED6D6301272C900A62B53 /* Project object */;
@@ -20,10 +34,31 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		B97B7D8E7CA0C930C6D90ACC /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				BB74B2361B674EE7AECD3734 /* TheJymWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		44DED6DE301272C900A62B53 /* TheJym.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TheJym.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		651F8F3B534D4465EEAF2A37 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		73CE5803734C05835F72F35D /* TheJymTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TheJymTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		770D4DDD46D7FBF37DBEED5E /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		7B4ABEC99117E9CD97CD58B3 /* TheJymWidgetBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TheJymWidgetBundle.swift; sourceTree = "<group>"; };
+		A56F57CB9C8AFB29D1A9E6B1 /* TheJymWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TheJymWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABAB4AFA04DBB3180E3C10D8 /* WorkoutActivityAttributes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutActivityAttributes.swift; sourceTree = "<group>"; };
 		BF9A4D0B81AD797D76A68E8D /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		C64E87C40B836B05DB5FCE9F /* TheJymWidgetLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TheJymWidgetLiveActivity.swift; sourceTree = "<group>"; };
+		CAB1BE6E497779D771B32F6D /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -70,9 +105,39 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A0F50476FDE4B768833DEB9F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA8FBBAF9F0794FF3B35C877 /* Foundation.framework in Frameworks */,
+				A36B6A4176526C693796B8CB /* WidgetKit.framework in Frameworks */,
+				B70D33587B48E7E8BC7B6FE8 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		23386D2ABAC386CF7B5CEE90 /* Shared with TheJymWidget */ = {
+			isa = PBXGroup;
+			children = (
+				ABAB4AFA04DBB3180E3C10D8 /* WorkoutActivityAttributes.swift */,
+			);
+			name = "Shared with TheJymWidget";
+			path = TheJym;
+			sourceTree = "<group>";
+		};
+		35775B863C2C0CF2D45FA57B /* TheJymWidget */ = {
+			isa = PBXGroup;
+			children = (
+				7B4ABEC99117E9CD97CD58B3 /* TheJymWidgetBundle.swift */,
+				C64E87C40B836B05DB5FCE9F /* TheJymWidgetLiveActivity.swift */,
+				CAB1BE6E497779D771B32F6D /* Info.plist */,
+			);
+			name = TheJymWidget;
+			path = TheJymWidget;
+			sourceTree = "<group>";
+		};
 		44DED6D5301272C900A62B53 = {
 			isa = PBXGroup;
 			children = (
@@ -80,6 +145,8 @@
 				44DED6DF301272C900A62B53 /* Products */,
 				BE30BAB638EDCAA12E21B434 /* Frameworks */,
 				607E71C8ED6AA4AA640C629B /* TheJymTests */,
+				35775B863C2C0CF2D45FA57B /* TheJymWidget */,
+				23386D2ABAC386CF7B5CEE90 /* Shared with TheJymWidget */,
 			);
 			sourceTree = "<group>";
 		};
@@ -88,6 +155,7 @@
 			children = (
 				44DED6DE301272C900A62B53 /* TheJym.app */,
 				73CE5803734C05835F72F35D /* TheJymTests.xctest */,
+				A56F57CB9C8AFB29D1A9E6B1 /* TheJymWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -104,6 +172,8 @@
 			isa = PBXGroup;
 			children = (
 				92A6D731E2773E77A3DFB513 /* iOS */,
+				770D4DDD46D7FBF37DBEED5E /* WidgetKit.framework */,
+				651F8F3B534D4465EEAF2A37 /* SwiftUI.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -139,10 +209,12 @@
 				44DED6DA301272C900A62B53 /* Sources */,
 				44DED6DB301272C900A62B53 /* Frameworks */,
 				44DED6DC301272C900A62B53 /* Resources */,
+				B97B7D8E7CA0C930C6D90ACC /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				3DCCF64D933F4F64AAF6996C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				44DED6E0301272C900A62B53 /* TheJym */,
@@ -151,6 +223,23 @@
 			productName = TheJym;
 			productReference = 44DED6DE301272C900A62B53 /* TheJym.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B58071D304B6815A91DB8F9F /* TheJymWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 42F5AEABE5A9FDF8A854E480 /* Build configuration list for PBXNativeTarget "TheJymWidget" */;
+			buildPhases = (
+				3C8651AC413BBB74BC196934 /* Sources */,
+				A0F50476FDE4B768833DEB9F /* Frameworks */,
+				DE5C47BD668A990B2458F8BF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TheJymWidget;
+			productName = TheJymWidget;
+			productReference = A56F57CB9C8AFB29D1A9E6B1 /* TheJymWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -183,6 +272,7 @@
 			targets = (
 				44DED6DD301272C900A62B53 /* TheJym */,
 				0868CA45D4AE67D386AD664D /* TheJymTests */,
+				B58071D304B6815A91DB8F9F /* TheJymWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -202,6 +292,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		DE5C47BD668A990B2458F8BF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -209,6 +306,16 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3C8651AC413BBB74BC196934 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F8B229F3CF752DD4ADB1E6C0 /* TheJymWidgetBundle.swift in Sources */,
+				3580254F6C871BF8AC294B27 /* TheJymWidgetLiveActivity.swift in Sources */,
+				751E3EC607FB28981C4FEB22 /* WorkoutActivityAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -222,6 +329,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		3DCCF64D933F4F64AAF6996C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = TheJymWidget;
+			target = B58071D304B6815A91DB8F9F /* TheJymWidget */;
+			targetProxy = 07A41B7435525E6DB44A0FEC /* PBXContainerItemProxy */;
+		};
 		F21F162838FD8ABDCF0E04E3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = TheJym;
@@ -243,6 +356,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TheJym/Info.plist;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -277,6 +391,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = TheJym/Info.plist;
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -420,6 +535,32 @@
 			};
 			name = Release;
 		};
+		64492872BE242A3DFE2AE493 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QJ4HB93XZ8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TheJymWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimbo.TheJym.TheJymWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		69BE4216CC149107E6690BF6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -453,9 +594,45 @@
 			};
 			name = Debug;
 		};
+		9B0A1CB7A3D1156FD30D65F0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QJ4HB93XZ8;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TheJymWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jimbo.TheJym.TheJymWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		42F5AEABE5A9FDF8A854E480 /* Build configuration list for PBXNativeTarget "TheJymWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9B0A1CB7A3D1156FD30D65F0 /* Release */,
+				64492872BE242A3DFE2AE493 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		44DED6D9301272C900A62B53 /* Build configuration list for PBXProject "TheJym" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
