@@ -1204,10 +1204,17 @@ struct ExercisePageView: View {
     /// app does, just anchored to a bigger base size. 28 and 16 are
     /// .title's and .callout's own default point sizes.
     @ScaledMetric(relativeTo: .title) private var nameFontSize: CGFloat = 28 * 1.3
-    /// Notes and the rest-time duration text — the pencil (after notes)
-    /// and timer (after the rest time) glyphs match this same size (see
-    /// nameWithNotes) rather than having their own.
+    /// Notes and the rest-time duration text.
     @ScaledMetric(relativeTo: .callout) private var notesAndRestTimeFontSize: CGFloat = 16 * 1.3 * 1.2
+    /// The pencil (after notes) and timer (after the rest time) glyphs —
+    /// 0.85x the text size, Apple's typical optical-correction ratio for a
+    /// symbol sitting next to body text: an SF Symbol fills more of its
+    /// bounding box than a text glyph does, so matching point size 1:1
+    /// reads as visibly bigger (confirmed by rendering both side by side —
+    /// see the icon-scale comparison artifact). Not the same as the
+    /// earlier, since-reverted 0.9x reduction, which had no such
+    /// justification.
+    @ScaledMetric(relativeTo: .callout) private var headerIconSize: CGFloat = 16 * 1.3 * 1.2 * 0.85
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1993,19 +2000,20 @@ struct ExercisePageView: View {
     private var nameWithNotes: Text {
         let nameFont = Font.system(size: nameFontSize, weight: .bold)
         let textFont = Font.system(size: notesAndRestTimeFontSize)
+        let iconFont = Font.system(size: headerIconSize)
         var result = Text(draft.name).font(nameFont)
         if let notes = exerciseDef?.notes, !notes.isEmpty {
             result = result
                 + Text("  " + notes).font(textFont).foregroundStyle(.secondary)
                 + Text(" ")
-                + Text(Image(systemName: "pencil")).font(textFont).foregroundStyle(.secondary)
+                + Text(Image(systemName: "pencil")).font(iconFont).foregroundStyle(.secondary)
         }
         if let restTimeSeconds {
             result = result
                 + Text("  ")
                 + Text(Formatters.duration(Double(restTimeSeconds))).font(textFont).foregroundStyle(.secondary)
                 + Text(" ")
-                + Text(Image(systemName: "timer")).font(textFont).foregroundStyle(.secondary)
+                + Text(Image(systemName: "timer")).font(iconFont).foregroundStyle(.secondary)
         }
         return result
     }
