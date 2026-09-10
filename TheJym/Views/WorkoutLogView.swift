@@ -2094,10 +2094,17 @@ struct ExercisePageView: View {
                         notesQuickEditButton
                     }
                 } else {
+                    // No explicit frame on either button — a fixed-width
+                    // box left short content (e.g. "None") stranded inside
+                    // it, reading as a large gap before the next item.
+                    // Left as plain flexible views, HStack gives each only
+                    // the width its own (lineLimit(1)-truncated) content
+                    // actually needs, same as any other pair of Text views
+                    // sharing a row.
                     HStack(spacing: 14) {
                         restTimerLabel
-                        setupQuickEditButton.frame(maxWidth: 120, alignment: .leading)
-                        notesQuickEditButton.frame(maxWidth: 120, alignment: .leading)
+                        setupQuickEditButton
+                        notesQuickEditButton
                         Spacer()
                     }
                 }
