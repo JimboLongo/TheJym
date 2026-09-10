@@ -783,54 +783,62 @@ struct RestTimePickerSheet: View {
 /// rule that replaces ProgressionEngine's usual algorithmic suggestion for
 /// every PlannedExercise slot using that exercise/rep scheme, in every phase
 /// (global per exercise-and-rep-scheme; originally lived per-phase/cycle on
-/// PlannedExercise itself in e10a508/48078d3, since replaced). One reps field
-/// per set (same shape as the rep scheme itself), matching the sheet-per-slot
-/// pattern RestTimePickerSheet uses. `setCount` comes from the rep scheme's
-/// own length at the moment this sheet opens. Storage-agnostic by design —
-/// callers pass in whatever's currently set and get back the new value (or
-/// nil/nil for Clear); this view has no idea where that's actually stored.
+/// PlannedExercise itself in e10a508/48078d3, since replaced). Reps entry
+/// matches AddSetSheet's own pattern for the base rep scheme itself — one
+/// slash-delimited TextField ("8/8/8/8"), not a row per set — rather than a
+/// second, different way to type a rep scheme into this app. `setCount`
+/// comes from the rep scheme's own length at the moment this sheet opens,
+/// and the parsed reps count must match it exactly (see `canSet`) — a
+/// ceiling shorter or longer than the scheme it's ceiling-ing for doesn't
+/// mean anything. Storage-agnostic by design — callers pass in whatever's
+/// currently set and get back the new value (or nil/nil for Clear); this
+/// view has no idea where that's actually stored.
 struct UpperTargetPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let exerciseName: String
+    let setCount: Int
     var onSet: ([Int]?, Double?) -> Void
 
-    @State private var repsText: [String]
+    @State private var repsText: String
     @State private var amountText: String
 
     init(exerciseName: String, setCount: Int,
          initialUpperTargetReps: [Int]?, initialWeightIncreaseAmount: Double?,
          onSet: @escaping ([Int]?, Double?) -> Void) {
         self.exerciseName = exerciseName
+        self.setCount = setCount
         self.onSet = onSet
-        let count = max(setCount, 1)
-        if let initialUpperTargetReps, initialUpperTargetReps.count == count {
-            _repsText = State(initialValue: initialUpperTargetReps.map(String.init))
-        } else {
-            _repsText = State(initialValue: Array(repeating: "", count: count))
-        }
+        // Same join format planSummary/setsSummaryText use to display an
+        // existing rep scheme — "8/8/8", no spaces — so re-editing shows
+        // the ceiling exactly as its own scheme would read.
+        _repsText = State(initialValue: initialUpperTargetReps.map { $0.map(String.init).joined(separator: "/") } ?? "")
         _amountText = State(initialValue: initialWeightIncreaseAmount.map { Formatters.trim($0) } ?? "")
     }
 
-    /// Only a fully-filled reps row (every set given a ceiling) plus a real
-    /// amount counts as configured — a half-filled sheet doesn't silently
-    /// activate the feature with holes in it.
+    /// Same parse as AddSetSheet's own `reps`.
+    private var reps: [Int] {
+        repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// A non-empty ceiling, matching the rep scheme's own set count exactly,
+    /// plus a real weight amount — a half-filled or mismatched-length
+    /// ceiling doesn't silently activate the feature with holes in it.
     private var canSet: Bool {
-        !repsText.contains { Int($0) == nil } && Double(amountText) != nil
+        !reps.isEmpty && reps.count == setCount && Double(amountText) != nil
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    ForEach(repsText.indices, id: \.self) { i in
-                        HStack {
-                            Text("Set \(i + 1) ceiling").foregroundStyle(.secondary)
-                            Spacer()
-                            TextField("reps", text: $repsText[i])
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 60)
-                        }
+                    TextField("Reps e.g. 8/8/8/8", text: $repsText)
+                        .keyboardType(.numbersAndPunctuation)
+                        .font(.system(.body, design: .monospaced))
+                    if !reps.isEmpty && reps.count != setCount {
+                        Label("This set has \(setCount) set\(setCount == 1 ? "" : "s") — enter exactly \(setCount) number\(setCount == 1 ? "" : "s").",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                     }
                 } footer: {
                     Text("Once every set meets or beats its ceiling, this weight bump replaces the usual AI suggestion — no bump at all if any set falls short.")
@@ -855,7 +863,7 @@ struct UpperTargetPickerSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Set") {
-                        onSet(repsText.compactMap { Int($0) }, Double(amountText))
+                        onSet(reps, Double(amountText))
                         dismiss()
                     }
                     .disabled(!canSet)
