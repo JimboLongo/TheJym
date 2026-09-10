@@ -129,6 +129,21 @@ final class Bar {
 
 // MARK: - Exercise library
 
+/// One rep scheme's fixed weight-bump rule (ExerciseDef.repSchemeCeilings) —
+/// global per exercise-and-rep-scheme rather than per-phase/cycle, replacing
+/// PlannedExercise's own upperTargetReps/weightIncreaseAmount fields
+/// (e10a508/48078d3, removed). `reps` is the key this is looked up by
+/// (matched against a repSchemes entry, or a PlannedExercise.targetReps at
+/// logging time) — see ExerciseDef.ceiling(for:)'s own doc for what happens
+/// when nothing matches. `upperTargetReps` is the per-set rep ceiling (same
+/// shape as `reps`); `weightIncreaseAmount` is the flat bump suggested once
+/// every logged set meets or beats its ceiling.
+struct RepSchemeCeiling: Codable, Hashable {
+    var reps: [Int]
+    var upperTargetReps: [Int]
+    var weightIncreaseAmount: Double
+}
+
 /// A persistent, user-managed exercise definition. Equipment and notes
 /// belong to the exercise itself, regardless of rep scheme. `repSchemes` is
 /// the list of saved "sets" under it (e.g. "Back Squat" might have both
@@ -150,6 +165,17 @@ final class ExerciseDef {
     var additionalNotes: String = ""
     @Relationship(deleteRule: .nullify) var equipment: Bar?
     var repSchemes: [[Int]] = []   // saved sets, e.g. [[5,5,5,3,3,3], [8,8,8]]
+    /// Per-rep-scheme fixed weight-bump rule — sparse, keyed by exact
+    /// equality against one of `repSchemes`' own entries (safe: only
+    /// `addRepScheme` ever adds to `repSchemes`, and it already dedups by
+    /// exact array equality, so two identical reps arrays can never coexist
+    /// here to key against ambiguously). An entry existing at all means the
+    /// feature is configured for that scheme — no separate nil-vs-off
+    /// distinction needed the way PlannedExercise's now-removed
+    /// upperTargetReps/weightIncreaseAmount fields (e10a508/48078d3) used to
+    /// need one. Global per exercise-and-rep-scheme, not per-phase/cycle —
+    /// see `ceiling(for:)`.
+    var repSchemeCeilings: [RepSchemeCeiling] = []
     /// Saved rep-total targets, e.g. [30, 40] — the repTotal-goal counterpart
     /// to repSchemes, for exercises like Pull-Up where a saved "set" is a
     /// single running total instead of a fixed rep scheme.
@@ -191,6 +217,45 @@ final class ExerciseDef {
     func addRepScheme(_ reps: [Int]) {
         guard !reps.isEmpty, !repSchemes.contains(reps) else { return }
         repSchemes.append(reps)
+    }
+
+    /// Removes `reps` from the saved sets, along with its ceiling if it had
+    /// one — a repScheme's ceiling has no meaning once the scheme itself is
+    /// gone, so this is the one place a caller deleting a repScheme also
+    /// needs to call to avoid leaving an orphaned ceiling entry behind.
+    func removeRepScheme(_ reps: [Int]) {
+        repSchemes.removeAll { $0 == reps }
+        repSchemeCeilings.removeAll { $0.reps == reps }
+    }
+
+    /// The fixed weight-bump rule for exactly this reps array, if configured
+    /// — nil both when nothing's ever been set for it AND when `reps`
+    /// doesn't correspond to any saved repScheme at all (e.g. a
+    /// PlannedExercise.targetReps produced by import or a manual edit that
+    /// doesn't match anything saved here). Callers should treat both cases
+    /// identically: no ceiling to show, nothing to qualify against.
+    func ceiling(for reps: [Int]) -> RepSchemeCeiling? {
+        repSchemeCeilings.first { $0.reps == reps }
+    }
+
+    /// Sets (or replaces) the ceiling for `reps`. Does NOT verify `reps` is
+    /// an actual saved repScheme — the one call site (the rep-ceiling editor
+    /// reached from ExerciseSetHistoryView) only ever calls this for a
+    /// scheme it's already showing, which by construction is one of
+    /// `repSchemes`' own entries.
+    func setCeiling(for reps: [Int], upperTargetReps: [Int], weightIncreaseAmount: Double) {
+        let entry = RepSchemeCeiling(reps: reps, upperTargetReps: upperTargetReps,
+                                     weightIncreaseAmount: weightIncreaseAmount)
+        if let idx = repSchemeCeilings.firstIndex(where: { $0.reps == reps }) {
+            repSchemeCeilings[idx] = entry
+        } else {
+            repSchemeCeilings.append(entry)
+        }
+    }
+
+    /// Clears the ceiling for `reps`, if any — a no-op if it never had one.
+    func clearCeiling(for reps: [Int]) {
+        repSchemeCeilings.removeAll { $0.reps == reps }
     }
 
     /// Adds `target` as a saved rep-total if it isn't already present.
@@ -727,23 +792,16 @@ final class PhaseDay {
     /// (plan(for:cycle:) tolerates that without crashing, but it's still bad
     /// data).
     ///
-    /// `restTimeSeconds`/`upperTargetReps`/`weightIncreaseAmount` are fully
-    /// resolved by the CALLER, same as every other parameter here — there's
-    /// no fallback-to-base logic in this function itself. A caller changing
-    /// exercise/set but not rest time should pass through whatever's
-    /// currently effective (the override's own value if one already
-    /// exists, or the base slot's own value if this is the first override
-    /// ever created for this cycle) so an unrelated edit doesn't silently
-    /// clear a previously-set rest time. `upperTargetReps`/
-    /// `weightIncreaseAmount` are the one exception: every call site that
-    /// changes the exercise or its rep scheme passes nil for both instead
-    /// of carrying them forward, since a ceiling shaped for the old
-    /// exercise/set doesn't mean anything against a new one — only the
-    /// dedicated rep-ceiling editor passes real values through.
+    /// `restTimeSeconds` is fully resolved by the CALLER, same as every
+    /// other parameter here — there's no fallback-to-base logic in this
+    /// function itself. A caller changing exercise/set but not rest time
+    /// should pass through whatever's currently effective (the override's
+    /// own value if one already exists, or the base slot's own value if
+    /// this is the first override ever created for this cycle) so an
+    /// unrelated edit doesn't silently clear a previously-set rest time.
     func setCycleOverride(for baseSlot: PlannedExercise, cycle: Int, exerciseName: String,
                           targetReps: [Int], goalType: GoalType, isBodyweight: Bool,
-                          restTimeSeconds: Int?, upperTargetReps: [Int]?, weightIncreaseAmount: Double?,
-                          context: ModelContext) {
+                          restTimeSeconds: Int?, context: ModelContext) {
         if let existing = plannedExercises.first(where: {
             $0.cycleOverride == cycle && $0.overriddenSlotID == baseSlot.slotID
         }) {
@@ -753,13 +811,10 @@ final class PhaseDay {
             existing.isBodyweight = isBodyweight
             existing.goalType = goalType
             existing.restTimeSeconds = restTimeSeconds
-            existing.upperTargetReps = upperTargetReps
-            existing.weightIncreaseAmount = weightIncreaseAmount
         } else {
             let override = PlannedExercise(order: baseSlot.order, exerciseName: exerciseName,
                                            targetReps: targetReps, isBodyweight: isBodyweight,
                                            goalType: goalType, restTimeSeconds: restTimeSeconds,
-                                           upperTargetReps: upperTargetReps, weightIncreaseAmount: weightIncreaseAmount,
                                            cycleOverride: cycle, overriddenSlotID: baseSlot.slotID)
             override.day = self
             context.insert(override)
@@ -820,27 +875,6 @@ final class PlannedExercise {
     /// carries its own real value here rather than only ever reading the
     /// base slot's — see `setCycleOverride`'s own doc.
     var restTimeSeconds: Int?
-    /// fixedSets only (unused/nil for repTotal — see suggestNextWeightsForUpperTarget's
-    /// own doc for why the two goal types don't mix here). Per-set rep
-    /// ceiling: once every logged set on a workout meets or beats its
-    /// corresponding entry here, that workout QUALIFIES for the flat
-    /// `weightIncreaseAmount` bump below instead of ProgressionEngine's
-    /// usual aggressiveness-scaled suggestion — see
-    /// ProgressionEngine.qualifiesForUpperTarget. nil means this feature
-    /// isn't configured for this slot at all (the normal algorithm runs
-    /// unchanged); same shape as `targetReps`, one entry per set. Same
-    /// copy-forward-at-override-creation pattern as `restTimeSeconds` (see
-    /// its own doc) — EXCEPT changing this slot's exercise or rep scheme
-    /// resets both this and `weightIncreaseAmount` to nil rather than
-    /// carrying them forward, since a ceiling tuned for one exercise/set
-    /// shape isn't meaningful for another (see every `.targetReps = `
-    /// assignment site for the matching reset).
-    var upperTargetReps: [Int]?
-    /// fixedSets only, paired with `upperTargetReps` above — the flat
-    /// weight bump (same amount added to every set) to suggest once a
-    /// workout qualifies. Distinct nil (feature off) from a real 0 (feature
-    /// on, but the configured bump is deliberately zero).
-    var weightIncreaseAmount: Double?
 
     /// Stable identity for this slot, independent of `order` — lets a
     /// per-cycle override (see `cycleOverride`/`overriddenSlotID`) keep
@@ -864,7 +898,6 @@ final class PlannedExercise {
          targetReps: [Int], suggestedWeights: [Double] = [],
          isBodyweight: Bool = false, goalType: GoalType = .fixedSets,
          repTotalProgressesReps: Bool = false, restTimeSeconds: Int? = nil,
-         upperTargetReps: [Int]? = nil, weightIncreaseAmount: Double? = nil,
          cycleOverride: Int = 0, overriddenSlotID: UUID? = nil) {
         self.order = order
         self.exerciseName = exerciseName
@@ -873,8 +906,6 @@ final class PlannedExercise {
         self.isBodyweight = isBodyweight
         self.repTotalProgressesReps = repTotalProgressesReps
         self.restTimeSeconds = restTimeSeconds
-        self.upperTargetReps = upperTargetReps
-        self.weightIncreaseAmount = weightIncreaseAmount
         // Explicit, not relying on the property's own `= UUID()` default —
         // SwiftData's @Model macro doesn't reliably re-run a stored
         // property's default-value expression inside a hand-written init,
@@ -946,14 +977,6 @@ final class PlannedExercise {
         case .repTotal(let target):
             return "\(target) Total"
         }
-    }
-
-    /// Compact "10/10/10 +5" reading of upperTargetReps/weightIncreaseAmount
-    /// for a row subtitle — nil when the feature isn't configured on this
-    /// slot at all (see upperTargetReps' own doc).
-    var upperTargetSummary: String? {
-        guard let upperTargetReps, let weightIncreaseAmount else { return nil }
-        return "\(upperTargetReps.map(String.init).joined(separator: "/")) +\(Formatters.trim(weightIncreaseAmount))"
     }
 
     /// `targetReps` and `weights` as a matched pair of "/"-joined lines, each

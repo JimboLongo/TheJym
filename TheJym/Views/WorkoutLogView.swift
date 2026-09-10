@@ -300,7 +300,8 @@ struct WorkoutLogView: View {
                          currentPageID: $currentPageID, allDrafts: drafts,
                          isDeloadCycle: isDeloadCycle,
                          restTimeSeconds: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }?.restTimeSeconds,
-                         upperTargetReps: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }?.upperTargetReps,
+                         upperTargetReps: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }
+                            .flatMap { ceiling(for: $0) }?.upperTargetReps,
                          onSetLogged: { restTimeSeconds in
                              restStopwatch.resetAndStart(targetSeconds: restTimeSeconds)
                              restActivityDidChange()
@@ -712,6 +713,18 @@ struct WorkoutLogView: View {
         return settings?.dumbbellRoundingIncrement ?? 5
     }
 
+    /// This slot's fixed weight-bump rule, if its exercise has one saved
+    /// against this exact rep scheme — global per exercise-and-rep-scheme
+    /// (ExerciseDef.repSchemeCeilings), not per-phase/cycle (see
+    /// e10a508/48078d3, replaced). Cleanly nil — no ceiling, no crash —
+    /// whenever `pe.targetReps` doesn't correspond to anything actually
+    /// saved on the exercise's own repSchemes (an import path or a manual
+    /// edit can produce a slot whose reps don't match any saved scheme;
+    /// ExerciseDef.ceiling(for:) already handles that by simple lookup miss).
+    private func ceiling(for pe: PlannedExercise) -> RepSchemeCeiling? {
+        exerciseDefs.first { $0.name == pe.exerciseName }?.ceiling(for: pe.targetReps)
+    }
+
     private func buildDrafts() {
         guard drafts.isEmpty else { return }
         if var saved = loadDraftFromDisk(), !saved.isEmpty {
@@ -748,11 +761,11 @@ struct WorkoutLogView: View {
             switch pe.goalType {
             case .fixedSets:
                 let weights: [Double]
-                if let upperTargetReps = pe.upperTargetReps, let weightIncreaseAmount = pe.weightIncreaseAmount {
+                if let ceiling = ceiling(for: pe) {
                     // REPLACES the algorithmic suggestion entirely for this
-                    // slot — see PlannedExercise.upperTargetReps' own doc.
+                    // slot — see ExerciseDef.repSchemeCeilings' own doc.
                     weights = ProgressionEngine.startingWeightsForUpperTarget(
-                        for: pe, upperTargetReps: upperTargetReps, weightIncreaseAmount: weightIncreaseAmount,
+                        for: pe, upperTargetReps: ceiling.upperTargetReps, weightIncreaseAmount: ceiling.weightIncreaseAmount,
                         history: logs, aiOn: aiOn, roundingIncrement: increment, isDeloadCycle: isDeloadCycle)
                 } else {
                     weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
@@ -816,9 +829,9 @@ struct WorkoutLogView: View {
             switch drafts[idx].goalType {
             case .fixedSets:
                 let weights: [Double]
-                if let upperTargetReps = pe.upperTargetReps, let weightIncreaseAmount = pe.weightIncreaseAmount {
+                if let ceiling = ceiling(for: pe) {
                     weights = ProgressionEngine.startingWeightsForUpperTarget(
-                        for: pe, upperTargetReps: upperTargetReps, weightIncreaseAmount: weightIncreaseAmount,
+                        for: pe, upperTargetReps: ceiling.upperTargetReps, weightIncreaseAmount: ceiling.weightIncreaseAmount,
                         history: logs, aiOn: aiOn, roundingIncrement: increment, isDeloadCycle: isDeloadCycle)
                 } else {
                     weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
@@ -980,16 +993,16 @@ struct WorkoutLogView: View {
             switch d.goalType {
             case .fixedSets:
                 let currentWeights = log.sortedSets.map { d.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
-                if let upperTargetReps = pe?.upperTargetReps, let weightIncreaseAmount = pe?.weightIncreaseAmount {
+                if let ceiling = pe.flatMap({ ceiling(for: $0) }) {
                     // REPLACES the algorithm entirely for this slot — no
                     // suggestion at all (not a smaller bump, not the old
                     // algorithm) when the workout doesn't qualify. streak/
                     // requiredStreak are 0 so WorkoutRecapView's "Progress to
                     // next weight jump" row (streak-based, meaningless for
                     // this single-hit rule) stays hidden.
-                    let qualifies = ProgressionEngine.qualifiesForUpperTarget(log, upperTargetReps: upperTargetReps)
+                    let qualifies = ProgressionEngine.qualifiesForUpperTarget(log, upperTargetReps: ceiling.upperTargetReps)
                     let suggestion = qualifies
-                        ? currentWeights.map { ProgressionEngine.roundToPlate($0 + weightIncreaseAmount, smallest: increment) }
+                        ? currentWeights.map { ProgressionEngine.roundToPlate($0 + ceiling.weightIncreaseAmount, smallest: increment) }
                         : nil
                     entries.append(RecapEntry(exerciseName: d.name,
                                               previousTotal: priorLogs.last?.totalWeightMoved,
@@ -1228,13 +1241,16 @@ struct ExercisePageView: View {
     /// next to the name/notes, and handed to `onSetLogged` as the workout-
     /// wide rest timer's new target every time a set here is committed.
     let restTimeSeconds: Int?
-    /// This exercise's own effective PlannedExercise.upperTargetReps
-    /// (already resolved for the active cycle, same as restTimeSeconds
-    /// above) — nil if the fixed weight-bump rule isn't configured for
-    /// this slot. Only ever used by the Target pill's label (setRows) to
-    /// show "6-8" instead of a bare "6"; never touches the pill's drop
-    /// behavior, which stays keyed to targetReps alone (see setRows' own
-    /// doc for why that's a deliberate, checked decision).
+    /// This slot's exercise's ExerciseDef.repSchemeCeiling for its current
+    /// targetReps, if any — global per exercise-and-rep-scheme (every
+    /// phase/cycle sharing that scheme shares this), not per-slot like
+    /// restTimeSeconds above; resolved by WorkoutLogView.ceiling(for:) at
+    /// construction time. nil if the fixed weight-bump rule isn't
+    /// configured for this exercise/rep-scheme. Only ever used by the
+    /// Target pill's label (setRows) to show "6-8" instead of a bare "6";
+    /// never touches the pill's drop behavior, which stays keyed to
+    /// targetReps alone (see setRows' own doc for why that's a deliberate,
+    /// checked decision).
     let upperTargetReps: [Int]?
     /// Called every time a set's reps are committed (fixed-scheme wheel,
     /// rep-total wheel, or the target-badge quick-fill drag) — retargets and
@@ -2201,8 +2217,10 @@ struct ExercisePageView: View {
 
                     if let goal = draft.targetReps[safe: i] {
                         // Label-only: the upper end of the range, when this
-                        // slot has the fixed rep-ceiling rule configured
-                        // (PlannedExercise.upperTargetReps). `goal` itself —
+                        // slot's exercise/rep-scheme has the fixed rep-
+                        // ceiling rule configured (ExerciseDef.repSchemeCeilings,
+                        // resolved into this page's own upperTargetReps
+                        // property). `goal` itself —
                         // read below by both the label's lower number and
                         // the drag-to-fill drop — stays targetReps[i] no
                         // matter what upperGoal is; a two-number label must

@@ -778,15 +778,17 @@ struct RestTimePickerSheet: View {
     }
 }
 
-/// Edits PlannedExercise.upperTargetReps/weightIncreaseAmount — the flat
-/// "hit this rep ceiling on every set, get this exact weight bump" rule
-/// that replaces ProgressionEngine's usual algorithmic suggestion for a
-/// slot (see PlannedExercise.upperTargetReps' own doc). One reps field per
-/// set (same shape as targetReps), matching the sheet-per-slot pattern
-/// RestTimePickerSheet already uses. `setCount` comes from the slot's
-/// current targetReps.count at the moment this sheet opens — a set added
-/// or removed afterward re-derives this fresh next time it's reopened,
-/// same as every other per-slot editor here.
+/// Edits one rep scheme's RepSchemeCeiling (ExerciseDef.repSchemeCeilings) —
+/// the flat "hit this rep ceiling on every set, get this exact weight bump"
+/// rule that replaces ProgressionEngine's usual algorithmic suggestion for
+/// every PlannedExercise slot using that exercise/rep scheme, in every phase
+/// (global per exercise-and-rep-scheme; originally lived per-phase/cycle on
+/// PlannedExercise itself in e10a508/48078d3, since replaced). One reps field
+/// per set (same shape as the rep scheme itself), matching the sheet-per-slot
+/// pattern RestTimePickerSheet uses. `setCount` comes from the rep scheme's
+/// own length at the moment this sheet opens. Storage-agnostic by design —
+/// callers pass in whatever's currently set and get back the new value (or
+/// nil/nil for Clear); this view has no idea where that's actually stored.
 struct UpperTargetPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let exerciseName: String

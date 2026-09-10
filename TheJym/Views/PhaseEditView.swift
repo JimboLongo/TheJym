@@ -221,7 +221,6 @@ struct PlannedExerciseRow: View {
     @State private var showingSetPicker = false
     @State private var showingAddSet = false
     @State private var showingRestTimePicker = false
-    @State private var showingUpperTargetPicker = false
 
     private var def: ExerciseDef? {
         exerciseDefs.first { $0.name == pe.exerciseName }
@@ -298,32 +297,6 @@ struct PlannedExerciseRow: View {
                 .fixedSize()
             }
 
-            // Own line rather than a third item crammed into the HStack
-            // above — three fixedSize compact buttons side by side overflow
-            // badly at the largest accessibility Dynamic Type sizes (the
-            // set-picker/rest-time pair already fills the row by itself
-            // there). fixedSets only — a repTotal slot has no per-set
-            // ceiling to speak of.
-            if !isRepTotal {
-                HStack {
-                    Button {
-                        showingUpperTargetPicker = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.right.circle")
-                            Text(pe.upperTargetSummary ?? "–")
-                        }
-                        .font(.system(.subheadline, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 8).padding(.vertical, 6)
-                        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                    .fixedSize()
-                    Spacer()
-                }
-            }
-
             if isRepTotal {
                 Toggle("AI progresses rep total instead of weight", isOn: $pe.repTotalProgressesReps)
                     .font(.caption)
@@ -342,16 +315,12 @@ struct PlannedExerciseRow: View {
                     Button(reps.map(String.init).joined(separator: "/")) {
                         pe.targetReps = reps
                         pe.goalType = .fixedSets
-                        pe.upperTargetReps = nil
-                        pe.weightIncreaseAmount = nil
                     }
                 }
                 ForEach(def.repTotalTargets, id: \.self) { target in
                     Button("\(target) total reps") {
                         pe.targetReps = []
                         pe.goalType = .repTotal(target: target)
-                        pe.upperTargetReps = nil
-                        pe.weightIncreaseAmount = nil
                     }
                 }
             }
@@ -377,19 +346,8 @@ struct PlannedExerciseRow: View {
                     pe.targetReps = []
                     pe.goalType = .repTotal(target: target)
                 }
-                pe.upperTargetReps = nil
-                pe.weightIncreaseAmount = nil
                 try? context.save()
                 showingAddSet = false
-            }
-        }
-        .sheet(isPresented: $showingUpperTargetPicker) {
-            UpperTargetPickerSheet(exerciseName: pe.exerciseName, setCount: pe.targetReps.count,
-                                   initialUpperTargetReps: pe.upperTargetReps,
-                                   initialWeightIncreaseAmount: pe.weightIncreaseAmount) { newReps, newAmount in
-                pe.upperTargetReps = newReps
-                pe.weightIncreaseAmount = newAmount
-                try? context.save()
             }
         }
         .sheet(isPresented: $showingRestTimePicker) {

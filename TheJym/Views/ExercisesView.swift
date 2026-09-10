@@ -360,6 +360,12 @@ struct ExerciseSetHistoryView: View {
     let reps: [Int]
     let allLogs: [ExerciseLog]
 
+    @State private var showingCeilingPicker = false
+
+    /// Global per exercise-and-rep-scheme (every phase/cycle using this
+    /// exact scheme shares it) — see ExerciseDef.ceiling's own doc.
+    private var ceiling: RepSchemeCeiling? { def.ceiling(for: reps) }
+
     private var history: [ExerciseLog] {
         allLogs
             .filter { $0.exerciseName == def.name && $0.targetReps == reps && !$0.sets.isEmpty }
@@ -381,6 +387,19 @@ struct ExerciseSetHistoryView: View {
                     }
                 }
             }
+            Section {
+                Button {
+                    showingCeilingPicker = true
+                } label: {
+                    LabeledContent("Rep Ceiling") {
+                        Text(ceiling.map { "\($0.upperTargetReps.map(String.init).joined(separator: "/")) +\(Formatters.trim($0.weightIncreaseAmount))" } ?? "Not set")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            } footer: {
+                Text("Once every logged set meets or beats its ceiling, this weight bump replaces the usual AI suggestion for this rep scheme — in every phase it's used.")
+            }
             if history.isEmpty {
                 ContentUnavailableView("No History Yet", systemImage: "clock",
                                        description: Text("Log this set in a workout and it'll show up here."))
@@ -397,13 +416,23 @@ struct ExerciseSetHistoryView: View {
             }
         }
         .navigationTitle(reps.map(String.init).joined(separator: "/"))
+        .sheet(isPresented: $showingCeilingPicker) {
+            UpperTargetPickerSheet(exerciseName: def.name, setCount: reps.count,
+                                   initialUpperTargetReps: ceiling?.upperTargetReps,
+                                   initialWeightIncreaseAmount: ceiling?.weightIncreaseAmount) { newReps, newAmount in
+                if let newReps, let newAmount {
+                    def.setCeiling(for: reps, upperTargetReps: newReps, weightIncreaseAmount: newAmount)
+                } else {
+                    def.clearCeiling(for: reps)
+                }
+                try? context.save()
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(role: .destructive) {
-                    if let idx = def.repSchemes.firstIndex(of: reps) {
-                        def.repSchemes.remove(at: idx)
-                        try? context.save()
-                    }
+                    def.removeRepScheme(reps)
+                    try? context.save()
                     dismiss()
                 } label: {
                     Image(systemName: "trash")
