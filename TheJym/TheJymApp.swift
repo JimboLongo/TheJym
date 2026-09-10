@@ -136,6 +136,7 @@ struct ContentView: View {
             repairLegacyRestActivityNames()
             refreshStreakNotification()
             refreshWeightNotification()
+            removeOrphanedExerciseDefs()
         }
         // Re-evaluated on every foreground/background transition — not just
         // launch — so the reminder reflects whatever was just logged (on
@@ -607,6 +608,40 @@ struct ContentView: View {
             pe.slotID = UUID()
         }
         try? context.save()
+    }
+
+    /// One-time cleanup from the 2026-09-09 orphaned-exercise-data audit: 12
+    /// ExerciseDef rows (test/variant entries someone tried once in the
+    /// Exercises tab) that have never been logged and aren't placed in any
+    /// Phase day, present or future. Named explicitly rather than a generic
+    /// "any zero-log def" rule — a generic rule would also catch an exercise
+    /// a user just added to the library and hasn't gotten to yet, which is
+    /// normal, not orphaned. Re-derives "still unreferenced" from current
+    /// data each run (not just deleting by name) so this can't touch a def
+    /// that picked up a real log or PlannedExercise placement after the
+    /// audit. Safe to leave running indefinitely: once these 12 are gone,
+    /// the name-set guard at the top makes every future run a fast no-op.
+    private func removeOrphanedExerciseDefs() {
+        let auditedStaleNames: Set<String> = [
+            "Face Pulls, paused", "Nordic Curls (eccentric)", "B-Stance DB RDLs",
+            "Front-Rack BB Reverse Lunge", "Pendlay Row", "Leg Extensions, 1.5 reps",
+            "Bench Press, 1s pause", "Seated Calf Raises, 2s pause", "EZ Skullcrushers",
+            "Hammer Curls", "Half-Kneeling 1-Arm DB Press", "Tricep Dips"
+        ]
+        guard exerciseDefs.contains(where: { auditedStaleNames.contains($0.name) }) else { return }
+        guard let logs = try? context.fetch(FetchDescriptor<ExerciseLog>()),
+              let plannedExercises = try? context.fetch(FetchDescriptor<PlannedExercise>())
+        else { return }
+        let loggedNames = Set(logs.map(\.exerciseName))
+        let plannedNames = Set(plannedExercises.map(\.exerciseName))
+
+        var changed = false
+        for def in exerciseDefs where auditedStaleNames.contains(def.name) {
+            guard !loggedNames.contains(def.name), !plannedNames.contains(def.name) else { continue }
+            context.delete(def)
+            changed = true
+        }
+        if changed { try? context.save() }
     }
 
     /// Create default settings, bars, dumbbells, and exercise library on first launch.
