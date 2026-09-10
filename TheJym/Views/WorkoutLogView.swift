@@ -746,11 +746,20 @@ struct WorkoutLogView: View {
 
             switch pe.goalType {
             case .fixedSets:
-                let weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
+                let weights: [Double]
+                if let upperTargetReps = pe.upperTargetReps, let weightIncreaseAmount = pe.weightIncreaseAmount {
+                    // REPLACES the algorithmic suggestion entirely for this
+                    // slot — see PlannedExercise.upperTargetReps' own doc.
+                    weights = ProgressionEngine.startingWeightsForUpperTarget(
+                        for: pe, upperTargetReps: upperTargetReps, weightIncreaseAmount: weightIncreaseAmount,
+                        history: logs, aiOn: aiOn, roundingIncrement: increment, isDeloadCycle: isDeloadCycle)
+                } else {
+                    weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
                                                                  aggressiveness: agg, roundingIncrement: increment,
                                                                  customIncreaseStreak: customIncreaseStreak,
                                                                  customIncreaseAmount: customIncreaseAmount,
                                                                  isDeloadCycle: isDeloadCycle)
+                }
                 // A bodyweight exercise with nothing ever suggested for
                 // added weight (no history yet, and the plan itself has no
                 // weightsText for it) leaves `weights` completely empty —
@@ -805,11 +814,18 @@ struct WorkoutLogView: View {
 
             switch drafts[idx].goalType {
             case .fixedSets:
-                let weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
+                let weights: [Double]
+                if let upperTargetReps = pe.upperTargetReps, let weightIncreaseAmount = pe.weightIncreaseAmount {
+                    weights = ProgressionEngine.startingWeightsForUpperTarget(
+                        for: pe, upperTargetReps: upperTargetReps, weightIncreaseAmount: weightIncreaseAmount,
+                        history: logs, aiOn: aiOn, roundingIncrement: increment, isDeloadCycle: isDeloadCycle)
+                } else {
+                    weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
                                                                  aggressiveness: agg, roundingIncrement: increment,
                                                                  customIncreaseStreak: customIncreaseStreak,
                                                                  customIncreaseAmount: customIncreaseAmount,
                                                                  isDeloadCycle: isDeloadCycle)
+                }
                 // Same empty-`weights` gap as buildDrafts: a bodyweight
                 // exercise with nothing suggested yet gets "0", not "",
                 // for any set `weights` doesn't cover.
@@ -962,20 +978,41 @@ struct WorkoutLogView: View {
 
             switch d.goalType {
             case .fixedSets:
-                let streak = ProgressionEngine.currentStreak(targetReps: d.targetReps, history: combinedHistory)
-                let suggestion = ProgressionEngine.suggestNextWeights(
-                    targetReps: d.targetReps, history: combinedHistory,
-                    aggressiveness: agg, roundingIncrement: increment, isBodyweight: d.isBodyweight,
-                    customIncreaseStreak: customIncreaseStreak, customIncreaseAmount: customIncreaseAmount)
                 let currentWeights = log.sortedSets.map { d.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
-                entries.append(RecapEntry(exerciseName: d.name,
-                                          previousTotal: priorLogs.last?.totalWeightMoved,
-                                          todayTotal: log.totalWeightMoved,
-                                          streak: streak,
-                                          requiredStreak: ProgressionEngine.requiredStreak(for: agg),
-                                          suggestion: (suggestion != currentWeights) ? suggestion : nil,
-                                          currentWeights: currentWeights,
-                                          increment: increment))
+                if let upperTargetReps = pe?.upperTargetReps, let weightIncreaseAmount = pe?.weightIncreaseAmount {
+                    // REPLACES the algorithm entirely for this slot — no
+                    // suggestion at all (not a smaller bump, not the old
+                    // algorithm) when the workout doesn't qualify. streak/
+                    // requiredStreak are 0 so WorkoutRecapView's "Progress to
+                    // next weight jump" row (streak-based, meaningless for
+                    // this single-hit rule) stays hidden.
+                    let qualifies = ProgressionEngine.qualifiesForUpperTarget(log, upperTargetReps: upperTargetReps)
+                    let suggestion = qualifies
+                        ? currentWeights.map { ProgressionEngine.roundToPlate($0 + weightIncreaseAmount, smallest: increment) }
+                        : nil
+                    entries.append(RecapEntry(exerciseName: d.name,
+                                              previousTotal: priorLogs.last?.totalWeightMoved,
+                                              todayTotal: log.totalWeightMoved,
+                                              streak: 0,
+                                              requiredStreak: 0,
+                                              suggestion: suggestion,
+                                              currentWeights: currentWeights,
+                                              increment: increment))
+                } else {
+                    let streak = ProgressionEngine.currentStreak(targetReps: d.targetReps, history: combinedHistory)
+                    let suggestion = ProgressionEngine.suggestNextWeights(
+                        targetReps: d.targetReps, history: combinedHistory,
+                        aggressiveness: agg, roundingIncrement: increment, isBodyweight: d.isBodyweight,
+                        customIncreaseStreak: customIncreaseStreak, customIncreaseAmount: customIncreaseAmount)
+                    entries.append(RecapEntry(exerciseName: d.name,
+                                              previousTotal: priorLogs.last?.totalWeightMoved,
+                                              todayTotal: log.totalWeightMoved,
+                                              streak: streak,
+                                              requiredStreak: ProgressionEngine.requiredStreak(for: agg),
+                                              suggestion: (suggestion != currentWeights) ? suggestion : nil,
+                                              currentWeights: currentWeights,
+                                              increment: increment))
+                }
 
             case .repTotal:
                 // repTotal progression is applied automatically (no interactive

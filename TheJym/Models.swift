@@ -717,16 +717,23 @@ final class PhaseDay {
     /// (plan(for:cycle:) tolerates that without crashing, but it's still bad
     /// data).
     ///
-    /// `restTimeSeconds` is fully resolved by the CALLER, same as every
-    /// other parameter here — there's no fallback-to-base logic in this
-    /// function itself. A caller changing exercise/set but not rest time
-    /// should pass through whatever's currently effective (the override's
-    /// own value if one already exists, or the base slot's own value if
-    /// this is the first override ever created for this cycle) so an
-    /// unrelated edit doesn't silently clear a previously-set rest time.
+    /// `restTimeSeconds`/`upperTargetReps`/`weightIncreaseAmount` are fully
+    /// resolved by the CALLER, same as every other parameter here — there's
+    /// no fallback-to-base logic in this function itself. A caller changing
+    /// exercise/set but not rest time should pass through whatever's
+    /// currently effective (the override's own value if one already
+    /// exists, or the base slot's own value if this is the first override
+    /// ever created for this cycle) so an unrelated edit doesn't silently
+    /// clear a previously-set rest time. `upperTargetReps`/
+    /// `weightIncreaseAmount` are the one exception: every call site that
+    /// changes the exercise or its rep scheme passes nil for both instead
+    /// of carrying them forward, since a ceiling shaped for the old
+    /// exercise/set doesn't mean anything against a new one — only the
+    /// dedicated rep-ceiling editor passes real values through.
     func setCycleOverride(for baseSlot: PlannedExercise, cycle: Int, exerciseName: String,
                           targetReps: [Int], goalType: GoalType, isBodyweight: Bool,
-                          restTimeSeconds: Int?, context: ModelContext) {
+                          restTimeSeconds: Int?, upperTargetReps: [Int]?, weightIncreaseAmount: Double?,
+                          context: ModelContext) {
         if let existing = plannedExercises.first(where: {
             $0.cycleOverride == cycle && $0.overriddenSlotID == baseSlot.slotID
         }) {
@@ -736,10 +743,13 @@ final class PhaseDay {
             existing.isBodyweight = isBodyweight
             existing.goalType = goalType
             existing.restTimeSeconds = restTimeSeconds
+            existing.upperTargetReps = upperTargetReps
+            existing.weightIncreaseAmount = weightIncreaseAmount
         } else {
             let override = PlannedExercise(order: baseSlot.order, exerciseName: exerciseName,
                                            targetReps: targetReps, isBodyweight: isBodyweight,
                                            goalType: goalType, restTimeSeconds: restTimeSeconds,
+                                           upperTargetReps: upperTargetReps, weightIncreaseAmount: weightIncreaseAmount,
                                            cycleOverride: cycle, overriddenSlotID: baseSlot.slotID)
             override.day = self
             context.insert(override)
@@ -800,6 +810,27 @@ final class PlannedExercise {
     /// carries its own real value here rather than only ever reading the
     /// base slot's — see `setCycleOverride`'s own doc.
     var restTimeSeconds: Int?
+    /// fixedSets only (unused/nil for repTotal — see suggestNextWeightsForUpperTarget's
+    /// own doc for why the two goal types don't mix here). Per-set rep
+    /// ceiling: once every logged set on a workout meets or beats its
+    /// corresponding entry here, that workout QUALIFIES for the flat
+    /// `weightIncreaseAmount` bump below instead of ProgressionEngine's
+    /// usual aggressiveness-scaled suggestion — see
+    /// ProgressionEngine.qualifiesForUpperTarget. nil means this feature
+    /// isn't configured for this slot at all (the normal algorithm runs
+    /// unchanged); same shape as `targetReps`, one entry per set. Same
+    /// copy-forward-at-override-creation pattern as `restTimeSeconds` (see
+    /// its own doc) — EXCEPT changing this slot's exercise or rep scheme
+    /// resets both this and `weightIncreaseAmount` to nil rather than
+    /// carrying them forward, since a ceiling tuned for one exercise/set
+    /// shape isn't meaningful for another (see every `.targetReps = `
+    /// assignment site for the matching reset).
+    var upperTargetReps: [Int]?
+    /// fixedSets only, paired with `upperTargetReps` above — the flat
+    /// weight bump (same amount added to every set) to suggest once a
+    /// workout qualifies. Distinct nil (feature off) from a real 0 (feature
+    /// on, but the configured bump is deliberately zero).
+    var weightIncreaseAmount: Double?
 
     /// Stable identity for this slot, independent of `order` — lets a
     /// per-cycle override (see `cycleOverride`/`overriddenSlotID`) keep
@@ -823,6 +854,7 @@ final class PlannedExercise {
          targetReps: [Int], suggestedWeights: [Double] = [],
          isBodyweight: Bool = false, goalType: GoalType = .fixedSets,
          repTotalProgressesReps: Bool = false, restTimeSeconds: Int? = nil,
+         upperTargetReps: [Int]? = nil, weightIncreaseAmount: Double? = nil,
          cycleOverride: Int = 0, overriddenSlotID: UUID? = nil) {
         self.order = order
         self.exerciseName = exerciseName
@@ -831,6 +863,8 @@ final class PlannedExercise {
         self.isBodyweight = isBodyweight
         self.repTotalProgressesReps = repTotalProgressesReps
         self.restTimeSeconds = restTimeSeconds
+        self.upperTargetReps = upperTargetReps
+        self.weightIncreaseAmount = weightIncreaseAmount
         // Explicit, not relying on the property's own `= UUID()` default —
         // SwiftData's @Model macro doesn't reliably re-run a stored
         // property's default-value expression inside a hand-written init,
@@ -902,6 +936,14 @@ final class PlannedExercise {
         case .repTotal(let target):
             return "\(target) Total"
         }
+    }
+
+    /// Compact "10/10/10 +5" reading of upperTargetReps/weightIncreaseAmount
+    /// for a row subtitle — nil when the feature isn't configured on this
+    /// slot at all (see upperTargetReps' own doc).
+    var upperTargetSummary: String? {
+        guard let upperTargetReps, let weightIncreaseAmount else { return nil }
+        return "\(upperTargetReps.map(String.init).joined(separator: "/")) +\(Formatters.trim(weightIncreaseAmount))"
     }
 
     /// `targetReps` and `weights` as a matched pair of "/"-joined lines, each

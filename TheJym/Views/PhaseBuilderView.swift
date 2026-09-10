@@ -778,6 +778,91 @@ struct RestTimePickerSheet: View {
     }
 }
 
+/// Edits PlannedExercise.upperTargetReps/weightIncreaseAmount — the flat
+/// "hit this rep ceiling on every set, get this exact weight bump" rule
+/// that replaces ProgressionEngine's usual algorithmic suggestion for a
+/// slot (see PlannedExercise.upperTargetReps' own doc). One reps field per
+/// set (same shape as targetReps), matching the sheet-per-slot pattern
+/// RestTimePickerSheet already uses. `setCount` comes from the slot's
+/// current targetReps.count at the moment this sheet opens — a set added
+/// or removed afterward re-derives this fresh next time it's reopened,
+/// same as every other per-slot editor here.
+struct UpperTargetPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let exerciseName: String
+    var onSet: ([Int]?, Double?) -> Void
+
+    @State private var repsText: [String]
+    @State private var amountText: String
+
+    init(exerciseName: String, setCount: Int,
+         initialUpperTargetReps: [Int]?, initialWeightIncreaseAmount: Double?,
+         onSet: @escaping ([Int]?, Double?) -> Void) {
+        self.exerciseName = exerciseName
+        self.onSet = onSet
+        let count = max(setCount, 1)
+        if let initialUpperTargetReps, initialUpperTargetReps.count == count {
+            _repsText = State(initialValue: initialUpperTargetReps.map(String.init))
+        } else {
+            _repsText = State(initialValue: Array(repeating: "", count: count))
+        }
+        _amountText = State(initialValue: initialWeightIncreaseAmount.map { Formatters.trim($0) } ?? "")
+    }
+
+    /// Only a fully-filled reps row (every set given a ceiling) plus a real
+    /// amount counts as configured — a half-filled sheet doesn't silently
+    /// activate the feature with holes in it.
+    private var canSet: Bool {
+        !repsText.contains { Int($0) == nil } && Double(amountText) != nil
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    ForEach(repsText.indices, id: \.self) { i in
+                        HStack {
+                            Text("Set \(i + 1) ceiling").foregroundStyle(.secondary)
+                            Spacer()
+                            TextField("reps", text: $repsText[i])
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 60)
+                        }
+                    }
+                } footer: {
+                    Text("Once every set meets or beats its ceiling, this weight bump replaces the usual AI suggestion — no bump at all if any set falls short.")
+                }
+                Section("Weight increase") {
+                    HStack {
+                        Text("Add").foregroundStyle(.secondary)
+                        Spacer()
+                        TextField("lb", text: $amountText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                    }
+                }
+            }
+            .navigationTitle("Rep Ceiling for \(exerciseName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .destructiveAction) {
+                    Button("Clear") { onSet(nil, nil); dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Set") {
+                        onSet(repsText.compactMap { Int($0) }, Double(amountText))
+                        dismiss()
+                    }
+                    .disabled(!canSet)
+                }
+            }
+        }
+    }
+}
+
 struct DraftExerciseRow: View {
     @Binding var item: PhaseBuilderView.DraftExercise
 

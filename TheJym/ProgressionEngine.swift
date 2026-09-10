@@ -77,6 +77,69 @@ enum ProgressionEngine {
         return latestWeights.map { roundToPlate($0 + increment, smallest: roundingIncrement) }
     }
 
+    // MARK: - Fixed upper-target rule (replaces suggestNextWeights entirely
+    // for a slot with PlannedExercise.upperTargetReps configured — see its
+    // own doc. Deliberately separate from suggestNextWeights/startingWeights
+    // rather than a branch inside them, so the aggressiveness-preset
+    // algorithm's own logic never has to reason about this rule at all.)
+
+    /// True if EVERY logged set's reps meet or beat its corresponding
+    /// `upperTargetReps` entry, one-for-one. Unlike `metAll` below (which
+    /// silently stops checking once it runs past however many sets were
+    /// logged, and reuses the last target for any set beyond the plan),
+    /// this requires an EXACT set-count match: a session that logged fewer
+    /// sets than planned does not qualify just because the sets it did log
+    /// were fine — skipping a set outright shouldn't earn a bump — and an
+    /// extra, unplanned set doesn't get a target inferred for it either.
+    static func qualifiesForUpperTarget(_ log: ExerciseLog, upperTargetReps: [Int]) -> Bool {
+        let sets = log.sortedSets
+        guard sets.count == upperTargetReps.count else { return false }
+        return zip(sets, upperTargetReps).allSatisfy { $0.reps >= $1 }
+    }
+
+    /// Suggest next weights for a slot with a fixed upperTargetReps/
+    /// weightIncreaseAmount rule configured — mirrors `suggestNextWeights`'s
+    /// own shape (nil with no history, hold the weight when the rule's
+    /// criteria aren't met) so every caller's own fallback behaves
+    /// identically either way; only the criteria and the bump differ.
+    static func suggestNextWeightsForUpperTarget(upperTargetReps: [Int],
+                                                  weightIncreaseAmount: Double,
+                                                  history: [ExerciseLog],
+                                                  roundingIncrement: Double = 2.5,
+                                                  isBodyweight: Bool = false) -> [Double]? {
+        guard let latest = history.last, !latest.sets.isEmpty else { return nil }
+        let latestWeights = isBodyweight
+            ? latest.sortedSets.map { $0.addedWeight ?? 0 }
+            : latest.sortedSets.map(\.weight)
+        guard qualifiesForUpperTarget(latest, upperTargetReps: upperTargetReps) else { return latestWeights }
+        return latestWeights.map { roundToPlate($0 + weightIncreaseAmount, smallest: roundingIncrement) }
+    }
+
+    /// Same idea as `startingWeights`, for a slot with the fixed
+    /// upperTargetReps rule configured — same AI-on/off and deload-halving
+    /// wrapper behavior, sourcing the actual suggestion from
+    /// `suggestNextWeightsForUpperTarget` instead of `suggestNextWeights`.
+    static func startingWeightsForUpperTarget(for pe: PlannedExercise,
+                                               upperTargetReps: [Int],
+                                               weightIncreaseAmount: Double,
+                                               history: [ExerciseLog],
+                                               aiOn: Bool,
+                                               roundingIncrement: Double,
+                                               isDeloadCycle: Bool = false) -> [Double] {
+        var weights = aiOn
+            ? (suggestNextWeightsForUpperTarget(upperTargetReps: upperTargetReps,
+                                                weightIncreaseAmount: weightIncreaseAmount,
+                                                history: history, roundingIncrement: roundingIncrement,
+                                                isBodyweight: pe.isBodyweight)
+               ?? pe.suggestedWeights)
+            : (history.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+               ?? pe.suggestedWeights)
+        if isDeloadCycle, !weights.isEmpty {
+            weights = deloadWeights(from: weights)
+        }
+        return weights
+    }
+
     // MARK: - Shared performance checks (used by suggestNextWeights + recap)
 
     /// Did a given session EXCEED every target rep? (strictly more on at
