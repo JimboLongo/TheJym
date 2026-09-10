@@ -59,6 +59,9 @@ struct TrainingStats {
     var mtdMiles: Double
     var priorYearMtdMiles: Double
     var allTimeMiles: Double        // unbounded — every "mi" entry in history
+    /// Every real, exercise-bearing session ever logged — unbounded, same
+    /// scope as `allTimeMiles` above rather than `daysSinceStart`'s window.
+    var allTimeWorkoutCount: Int
     /// Hours across every session with a recorded durationSeconds — a
     /// session logged before duration tracking existed (or one where the
     /// workout stopwatch was never started) is excluded from this sum
@@ -298,6 +301,7 @@ enum StatsEngine {
         // YTD/MTD: "worked out" means an actual training session, not a rest
         // day activity — separate from loggedDays above (which is streak math).
         let workoutDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
+        let allTimeWorkoutCount = sessionDates.count
 
         // Perfect-cycle progress needs an active phase to judge cycles
         // against its split pattern — with none, fall back to a simpler,
@@ -545,6 +549,7 @@ enum StatsEngine {
                              mtdMiles: mtdMiles,
                              priorYearMtdMiles: priorYearMtdMiles,
                              allTimeMiles: allTimeMiles,
+                             allTimeWorkoutCount: allTimeWorkoutCount,
                              allTimeHoursTrained: allTimeHoursTrained,
                              completedPhaseSummaries: completedPhaseSummaries,
                              bigLiftGroups: bigLiftGroups,

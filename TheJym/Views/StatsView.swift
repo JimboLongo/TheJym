@@ -265,6 +265,7 @@ struct StatsView: View {
                 // (since-start) rather than merged into it.
                 ("All-time miles", milesLabel(stats.allTimeMiles)),
                 ("Best month all-time", stats.bestMonthLabel.map { "\($0) (\(stats.bestMonthWorkouts))" } ?? "—"),
+                ("All-time workouts", "\(stats.allTimeWorkoutCount)"),
                 ("All-time hours trained", hoursLabel(stats.allTimeHoursTrained)),
             ])
         } header: {
@@ -511,7 +512,7 @@ struct DayDurationGroupTable: View {
     let group: DayDurationGroup
 
     private func durationText(_ seconds: Double) -> Text {
-        Text(Formatters.duration(seconds))
+        Text(Formatters.durationRoundedToMinute(seconds))
             .font(.system(.subheadline, design: .monospaced)).bold()
     }
 

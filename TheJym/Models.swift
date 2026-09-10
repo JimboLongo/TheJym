@@ -1405,6 +1405,16 @@ enum Formatters {
         let h = total / 3600, m = (total % 3600) / 60, s = total % 60
         return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
+    /// Same as `duration`, rounded to the nearest whole minute — used for the
+    /// Stats page's Workout Duration table, where second-level precision
+    /// reads as false confidence (a workout's length isn't reproducible to
+    /// the second) and just adds noise to the Shortest/Average/Longest
+    /// columns.
+    static func durationRoundedToMinute(_ seconds: Double) -> String {
+        let totalMinutes = Int((max(0, seconds) / 60).rounded())
+        let h = totalMinutes / 60, m = totalMinutes % 60
+        return h > 0 ? String(format: "%d:%02d", h, m) : "\(m) min"
+    }
     /// Full weekday name alone, e.g. "Sunday" — first line of the workout
     /// log's two-line date button.
     static let weekdayFull: DateFormatter = {
