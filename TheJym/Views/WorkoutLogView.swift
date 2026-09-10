@@ -2046,7 +2046,8 @@ struct ExercisePageView: View {
             Button {
                 showEditNotesSheet = true
             } label: {
-                Label("Setup", systemImage: "pencil")
+                Label(def.notes.isEmpty ? "None" : def.notes, systemImage: "gearshape")
+                    .lineLimit(1)
             }
             .foregroundStyle(def.notes.isEmpty ? .secondary : .primary)
         }
@@ -2056,7 +2057,8 @@ struct ExercisePageView: View {
             Button {
                 showEditAdditionalNotesSheet = true
             } label: {
-                Label("Notes", systemImage: "pencil")
+                Label(def.additionalNotes.isEmpty ? "None" : def.additionalNotes, systemImage: "pencil")
+                    .lineLimit(1)
             }
             .foregroundStyle(def.additionalNotes.isEmpty ? .secondary : .primary)
         }
@@ -2068,10 +2070,13 @@ struct ExercisePageView: View {
     /// warmupPage no longer has them). Rest Timer is display-only (nothing
     /// in the live workout view can edit it — only Phase Edit can), so it's
     /// a plain Label, not a button; Setup/Notes keep their tap-to-edit
-    /// sheets. Each piece is independently optional — a repTotal exercise
-    /// with no rest time and no exerciseDef match (shouldn't normally
-    /// happen, but see exerciseDef's own optionality) would show nothing
-    /// here at all rather than an empty row.
+    /// sheets, and show the field's own CONTENT as the label (not the word
+    /// "Setup"/"Notes") — "None" when blank — so this row doubles as the
+    /// only place either value is actually visible on the main page.
+    /// Each piece is independently optional — a repTotal exercise with no
+    /// rest time and no exerciseDef match (shouldn't normally happen, but
+    /// see exerciseDef's own optionality) would show nothing here at all
+    /// rather than an empty row.
     ///
     /// Stacks vertically at an accessibility Dynamic Type size instead of
     /// staying in one HStack — 3 short items still overflow into ugly
@@ -2091,8 +2096,8 @@ struct ExercisePageView: View {
                 } else {
                     HStack(spacing: 14) {
                         restTimerLabel
-                        setupQuickEditButton
-                        notesQuickEditButton
+                        setupQuickEditButton.frame(maxWidth: 120, alignment: .leading)
+                        notesQuickEditButton.frame(maxWidth: 120, alignment: .leading)
                         Spacer()
                     }
                 }
