@@ -1552,7 +1552,7 @@ struct ExercisePageView: View {
                 // the quick-edit entry point.
                 Divider()
                 HStack {
-                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
+                    Text("Setup").font(.caption.bold()).foregroundStyle(.secondary)
                     Spacer()
                     Button {
                         showEditNotesSheet = true
@@ -2745,7 +2745,7 @@ struct NotesEditSheet: View {
         NavigationStack {
             TextEditor(text: $text)
                 .padding()
-                .navigationTitle("Notes")
+                .navigationTitle("Setup")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {

@@ -195,7 +195,7 @@ struct ExercisesView: View {
                         addSetTarget = def
                         selectedDef = nil
                     }
-                    Button("Edit Equipment & Notes…") {
+                    Button("Edit Equipment & Setup…") {
                         editTarget = def
                         selectedDef = nil
                     }
@@ -297,7 +297,7 @@ struct ExerciseEditView: View {
                     .labelsHidden()
                     .pickerStyle(.inline)
                 }
-                Section("Notes") {
+                Section("Setup") {
                     TextField("Form cues, setup tips, etc.", text: $notes, axis: .vertical)
                         .lineLimit(1...4)
                 }
