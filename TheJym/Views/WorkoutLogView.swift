@@ -300,6 +300,7 @@ struct WorkoutLogView: View {
                          currentPageID: $currentPageID, allDrafts: drafts,
                          isDeloadCycle: isDeloadCycle,
                          restTimeSeconds: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }?.restTimeSeconds,
+                         upperTargetReps: plannedExercises(for: day).first { $0.exerciseName == drafts[i].name }?.upperTargetReps,
                          onSetLogged: { restTimeSeconds in
                              restStopwatch.resetAndStart(targetSeconds: restTimeSeconds)
                              restActivityDidChange()
@@ -1227,6 +1228,14 @@ struct ExercisePageView: View {
     /// next to the name/notes, and handed to `onSetLogged` as the workout-
     /// wide rest timer's new target every time a set here is committed.
     let restTimeSeconds: Int?
+    /// This exercise's own effective PlannedExercise.upperTargetReps
+    /// (already resolved for the active cycle, same as restTimeSeconds
+    /// above) — nil if the fixed weight-bump rule isn't configured for
+    /// this slot. Only ever used by the Target pill's label (setRows) to
+    /// show "6-8" instead of a bare "6"; never touches the pill's drop
+    /// behavior, which stays keyed to targetReps alone (see setRows' own
+    /// doc for why that's a deliberate, checked decision).
+    let upperTargetReps: [Int]?
     /// Called every time a set's reps are committed (fixed-scheme wheel,
     /// rep-total wheel, or the target-badge quick-fill drag) — retargets and
     /// restarts the workout-wide rest timer, hoisted up in WorkoutLogView,
@@ -2165,8 +2174,17 @@ struct ExercisePageView: View {
                     weightCell(for: i, height: wheelHeight)
 
                     if let goal = draft.targetReps[safe: i] {
+                        // Label-only: the upper end of the range, when this
+                        // slot has the fixed rep-ceiling rule configured
+                        // (PlannedExercise.upperTargetReps). `goal` itself —
+                        // read below by both the label's lower number and
+                        // the drag-to-fill drop — stays targetReps[i] no
+                        // matter what upperGoal is; a two-number label must
+                        // never change what dropping the pill actually fills
+                        // in, which should always be the LOWER bound.
+                        let upperGoal = upperTargetReps?[safe: i]
                         HStack(spacing: 8) {
-                            Text("\(goal)")
+                            Text(upperGoal.map { "\(goal)-\($0)" } ?? "\(goal)")
                                 .font(.caption.bold())
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
@@ -2192,6 +2210,10 @@ struct ExercisePageView: View {
                                 .onEnded { value in
                                     if value.translation.width > 40 {
                                         let oldReps = draft.sets[i].reps ?? 0
+                                        // Explicitly `goal` (targetReps[i]),
+                                        // never upperGoal — dropping the pill
+                                        // always fills the lower bound, even
+                                        // when the label shows a range.
                                         draft.sets[i].repsText = String(goal)
                                         checkAutoCollapse()
                                         onSetLogged(restTimeSeconds)
