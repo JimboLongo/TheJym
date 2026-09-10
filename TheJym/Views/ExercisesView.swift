@@ -195,7 +195,7 @@ struct ExercisesView: View {
                         addSetTarget = def
                         selectedDef = nil
                     }
-                    Button("Edit Equipment & Setup…") {
+                    Button("Edit Equipment, Setup & Notes…") {
                         editTarget = def
                         selectedDef = nil
                     }
@@ -256,6 +256,7 @@ struct ExerciseEditView: View {
     @State private var name = ""
     @State private var repsText = "8/8/8"
     @State private var notes = ""
+    @State private var additionalNotes = ""
     @State private var equipmentID: PersistentIdentifier?
     @State private var isBodyweight = false
 
@@ -301,6 +302,10 @@ struct ExerciseEditView: View {
                     TextField("Form cues, setup tips, etc.", text: $notes, axis: .vertical)
                         .lineLimit(1...4)
                 }
+                Section("Notes") {
+                    TextField("Anything else worth remembering", text: $additionalNotes, axis: .vertical)
+                        .lineLimit(1...4)
+                }
             }
             .navigationTitle(def == nil ? "New Exercise" : "Edit Exercise")
             .toolbar {
@@ -315,6 +320,7 @@ struct ExerciseEditView: View {
                 guard let def else { return }
                 name = def.name
                 notes = def.notes
+                additionalNotes = def.additionalNotes
                 equipmentID = def.equipment?.persistentModelID
                 isBodyweight = def.isBodyweight
             }
@@ -329,13 +335,14 @@ struct ExerciseEditView: View {
         if let def {
             def.name = trimmedName
             def.notes = notes
+            def.additionalNotes = additionalNotes
             def.equipment = equipment
             def.isBodyweight = isBodyweight
             saved = def
         } else {
             guard !reps.isEmpty else { return }
-            let newDef = ExerciseDef(name: trimmedName, notes: notes, equipment: equipment,
-                                     repSchemes: [reps], isBodyweight: isBodyweight)
+            let newDef = ExerciseDef(name: trimmedName, notes: notes, additionalNotes: additionalNotes,
+                                     equipment: equipment, repSchemes: [reps], isBodyweight: isBodyweight)
             context.insert(newDef)
             saved = newDef
         }
@@ -361,13 +368,16 @@ struct ExerciseSetHistoryView: View {
 
     var body: some View {
         List {
-            if !def.notes.isEmpty || def.equipment != nil {
+            if !def.notes.isEmpty || !def.additionalNotes.isEmpty || def.equipment != nil {
                 Section("Details") {
                     if let eq = def.equipment {
                         LabeledContent("Equipment", value: eq.name)
                     }
                     if !def.notes.isEmpty {
                         Text(def.notes).font(.subheadline)
+                    }
+                    if !def.additionalNotes.isEmpty {
+                        Text(def.additionalNotes).font(.subheadline)
                     }
                 }
             }
@@ -421,13 +431,16 @@ struct ExerciseRepTotalHistoryView: View {
 
     var body: some View {
         List {
-            if !def.notes.isEmpty || def.equipment != nil {
+            if !def.notes.isEmpty || !def.additionalNotes.isEmpty || def.equipment != nil {
                 Section("Details") {
                     if let eq = def.equipment {
                         LabeledContent("Equipment", value: eq.name)
                     }
                     if !def.notes.isEmpty {
                         Text(def.notes).font(.subheadline)
+                    }
+                    if !def.additionalNotes.isEmpty {
+                        Text(def.additionalNotes).font(.subheadline)
                     }
                 }
             }

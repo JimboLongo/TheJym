@@ -1265,6 +1265,9 @@ struct ExercisePageView: View {
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
     @State private var showEditNotesSheet = false
+    /// Same, for the second free-text field (ExerciseDef.additionalNotes,
+    /// shown to the user as "Notes" — distinct from Setup above).
+    @State private var showEditAdditionalNotesSheet = false
     /// Which internal tag of the pace panel's TabView is showing — 1 is the
     /// live pace comparisons (the "real" first page), 2 is previous
     /// workouts, 3 is the plate calculator, 4 is warm-up sets; 0 and 5 are
@@ -1561,12 +1564,35 @@ struct ExercisePageView: View {
                             .font(.caption2)
                     }
                 }
+                // Setup's own row/sheet pair, mirrored exactly — Notes is a
+                // second, independent free-text field (additionalNotes),
+                // deliberately NOT folded into nameWithNotes above (that
+                // header's already been through several rounds of careful
+                // AX-size-driven sizing; a second inline segment there
+                // wasn't part of what was asked for here).
+                Divider()
+                HStack {
+                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        showEditAdditionalNotesSheet = true
+                    } label: {
+                        Label(def.additionalNotes.isEmpty ? "Add" : "Edit", systemImage: "pencil")
+                            .font(.caption2)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .sheet(isPresented: $showEditNotesSheet) {
-            NotesEditSheet(initialText: exerciseDef?.notes ?? "") { newText in
+            NotesEditSheet(title: "Setup", initialText: exerciseDef?.notes ?? "") { newText in
                 exerciseDef?.notes = newText
+                try? context.save()
+            }
+        }
+        .sheet(isPresented: $showEditAdditionalNotesSheet) {
+            NotesEditSheet(title: "Notes", initialText: exerciseDef?.additionalNotes ?? "") { newText in
+                exerciseDef?.additionalNotes = newText
                 try? context.save()
             }
         }
@@ -2733,10 +2759,12 @@ struct ExercisePageView: View {
 
 struct NotesEditSheet: View {
     @Environment(\.dismiss) private var dismiss
+    let title: String
     @State private var text: String
     let onSave: (String) -> Void
 
-    init(initialText: String, onSave: @escaping (String) -> Void) {
+    init(title: String, initialText: String, onSave: @escaping (String) -> Void) {
+        self.title = title
         _text = State(initialValue: initialText)
         self.onSave = onSave
     }
@@ -2745,7 +2773,7 @@ struct NotesEditSheet: View {
         NavigationStack {
             TextEditor(text: $text)
                 .padding()
-                .navigationTitle("Setup")
+                .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {

@@ -138,7 +138,16 @@ final class Bar {
 @Model
 final class ExerciseDef {
     @Attribute(.unique) var name: String
+    /// Shown to the user as "Setup" — form cues, setup tips, etc. Named
+    /// `notes` from before that rename (commit 1668ac4); kept as-is rather
+    /// than renamed alongside the UI label, since renaming a stored
+    /// property is a separate refactor from relabeling what the user sees.
+    /// See `additionalNotes` below for the field actually shown as "Notes."
     var notes: String = ""
+    /// Shown to the user as "Notes" — a second, independent free-text
+    /// field alongside Setup (`notes` above), added after Setup's own
+    /// rename made the name "Notes" available for a genuinely new field.
+    var additionalNotes: String = ""
     @Relationship(deleteRule: .nullify) var equipment: Bar?
     var repSchemes: [[Int]] = []   // saved sets, e.g. [[5,5,5,3,3,3], [8,8,8]]
     /// Saved rep-total targets, e.g. [30, 40] — the repTotal-goal counterpart
@@ -164,11 +173,12 @@ final class ExerciseDef {
     /// (it doesn't reliably — see PlannedExercise.slotID's own doc for why).
     var dateAdded: Date = Date.now
 
-    init(name: String, notes: String = "",
+    init(name: String, notes: String = "", additionalNotes: String = "",
          equipment: Bar? = nil, repSchemes: [[Int]] = [], repTotalTargets: [Int] = [],
          isBodyweight: Bool = false, isBigLift: Bool = false, dateAdded: Date = Date.now) {
         self.name = name
         self.notes = notes
+        self.additionalNotes = additionalNotes
         self.equipment = equipment
         self.repSchemes = repSchemes
         self.repTotalTargets = repTotalTargets
