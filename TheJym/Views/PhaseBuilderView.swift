@@ -799,8 +799,11 @@ struct UpperTargetPickerSheet: View {
     let setCount: Int
     var onSet: ([Int]?, Double?) -> Void
 
+    /// Fixed choices only — no free entry, no "Custom…" escape hatch.
+    static let weightIncreaseChoices: [Double] = [2.5, 5, 10]
+
     @State private var repsText: String
-    @State private var amountText: String
+    @State private var amount: Double
 
     init(exerciseName: String, setCount: Int,
          initialUpperTargetReps: [Int]?, initialWeightIncreaseAmount: Double?,
@@ -812,7 +815,19 @@ struct UpperTargetPickerSheet: View {
         // existing rep scheme — "8/8/8", no spaces — so re-editing shows
         // the ceiling exactly as its own scheme would read.
         _repsText = State(initialValue: initialUpperTargetReps.map { $0.map(String.init).joined(separator: "/") } ?? "")
-        _amountText = State(initialValue: initialWeightIncreaseAmount.map { Formatters.trim($0) } ?? "")
+        // The Picker always needs a real selection (no "nothing chosen"
+        // state — with only 3 options a blank/placeholder 4th choice would
+        // outnumber the real ones for no benefit). An existing value that
+        // isn't one of the 3 choices (set before this change, or by any
+        // other path) rounds to the nearest one rather than being dropped
+        // silently; a brand-new sheet defaults to the middle choice, 5.
+        if let initialWeightIncreaseAmount {
+            _amount = State(initialValue: Self.weightIncreaseChoices.min(by: {
+                abs($0 - initialWeightIncreaseAmount) < abs($1 - initialWeightIncreaseAmount)
+            }) ?? 5)
+        } else {
+            _amount = State(initialValue: 5)
+        }
     }
 
     /// Same parse as AddSetSheet's own `reps`.
@@ -820,11 +835,13 @@ struct UpperTargetPickerSheet: View {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     }
 
-    /// A non-empty ceiling, matching the rep scheme's own set count exactly,
-    /// plus a real weight amount — a half-filled or mismatched-length
-    /// ceiling doesn't silently activate the feature with holes in it.
+    /// A non-empty ceiling matching the rep scheme's own set count exactly —
+    /// a half-filled or mismatched-length ceiling doesn't silently activate
+    /// the feature with holes in it. `amount` needs no check here: the
+    /// Picker only ever offers the 3 fixed choices, so it's always valid
+    /// once the sheet has appeared at all.
     private var canSet: Bool {
-        !reps.isEmpty && reps.count == setCount && Double(amountText) != nil
+        !reps.isEmpty && reps.count == setCount
     }
 
     var body: some View {
@@ -847,10 +864,13 @@ struct UpperTargetPickerSheet: View {
                     HStack {
                         Text("Add").foregroundStyle(.secondary)
                         Spacer()
-                        TextField("lb", text: $amountText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 60)
+                        Picker("Add", selection: $amount) {
+                            ForEach(Self.weightIncreaseChoices, id: \.self) { choice in
+                                Text("\(Formatters.trim(choice)) lb").tag(choice)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
                     }
                 }
             }
@@ -863,7 +883,7 @@ struct UpperTargetPickerSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Set") {
-                        onSet(reps, Double(amountText))
+                        onSet(reps, amount)
                         dismiss()
                     }
                     .disabled(!canSet)
