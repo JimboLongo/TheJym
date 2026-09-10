@@ -1204,6 +1204,7 @@ struct WorkoutStopwatchPageView: View {
 
 struct ExercisePageView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \Bar.name) private var allBars: [Bar]
     @Query private var settingsList: [AppSettings]
     private var settings: AppSettings? { settingsList.first }
@@ -1260,23 +1261,15 @@ struct ExercisePageView: View {
     /// set's reps, not just a set's first completion.
     var onSetLogged: (Int?) -> Void = { _ in }
 
-    /// Name/notes/rest-time header text — ScaledMetric (not a bare
-    /// .system(size:)) so they still grow and shrink with the system
-    /// Dynamic Type setting the way every other named-style text in this
-    /// app does, just anchored to a bigger base size. 28 and 16 are
-    /// .title's and .callout's own default point sizes.
+    /// Name header text — ScaledMetric (not a bare .system(size:)) so it
+    /// still grows and shrinks with the system Dynamic Type setting the way
+    /// every other named-style text in this app does, just anchored to a
+    /// bigger base size. 28 is .title's own default point size. Setup/rest-
+    /// time/Notes used to be concatenated into this same Text (with their
+    /// own ScaledMetric sizes, since removed) — now shown on their own line
+    /// beneath the name instead, in the existing quick-edit rows' plain
+    /// .caption/.caption2 styling rather than a custom size.
     @ScaledMetric(relativeTo: .title) private var nameFontSize: CGFloat = 28 * 1.3
-    /// Notes and the rest-time duration text.
-    @ScaledMetric(relativeTo: .callout) private var notesAndRestTimeFontSize: CGFloat = 16 * 1.3 * 1.2
-    /// The pencil (after notes) and timer (after the rest time) glyphs —
-    /// 0.85x the text size, Apple's typical optical-correction ratio for a
-    /// symbol sitting next to body text: an SF Symbol fills more of its
-    /// bounding box than a text glyph does, so matching point size 1:1
-    /// reads as visibly bigger (confirmed by rendering both side by side —
-    /// see the icon-scale comparison artifact). Not the same as the
-    /// earlier, since-reverted 0.9x reduction, which had no such
-    /// justification.
-    @ScaledMetric(relativeTo: .callout) private var headerIconSize: CGFloat = 16 * 1.3 * 1.2 * 0.85
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -1565,53 +1558,8 @@ struct ExercisePageView: View {
                     }
                 }
             }
-            if let def = exerciseDef {
-                // The notes text itself now shows under the exercise name in
-                // the header instead of repeating here — this row is just
-                // the quick-edit entry point.
-                Divider()
-                HStack {
-                    Text("Setup").font(.caption.bold()).foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        showEditNotesSheet = true
-                    } label: {
-                        Label(def.notes.isEmpty ? "Add" : "Edit", systemImage: "pencil")
-                            .font(.caption2)
-                    }
-                }
-                // Setup's own row/sheet pair, mirrored exactly — Notes is a
-                // second, independent free-text field (additionalNotes),
-                // deliberately NOT folded into nameWithNotes above (that
-                // header's already been through several rounds of careful
-                // AX-size-driven sizing; a second inline segment there
-                // wasn't part of what was asked for here).
-                Divider()
-                HStack {
-                    Text("Notes").font(.caption.bold()).foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        showEditAdditionalNotesSheet = true
-                    } label: {
-                        Label(def.additionalNotes.isEmpty ? "Add" : "Edit", systemImage: "pencil")
-                            .font(.caption2)
-                    }
-                }
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(isPresented: $showEditNotesSheet) {
-            NotesEditSheet(title: "Setup", initialText: exerciseDef?.notes ?? "") { newText in
-                exerciseDef?.notes = newText
-                try? context.save()
-            }
-        }
-        .sheet(isPresented: $showEditAdditionalNotesSheet) {
-            NotesEditSheet(title: "Notes", initialText: exerciseDef?.additionalNotes ?? "") { newText in
-                exerciseDef?.additionalNotes = newText
-                try? context.save()
-            }
-        }
     }
 
     /// Distinct, nonzero weights entered across today's sets for this
@@ -2080,46 +2028,85 @@ struct ExercisePageView: View {
         .padding(.bottom, 4)
     }
 
-    /// Exercise name (bold) plus, if set, this exercise's notes and rest
-    /// time right after it on the same line (small, secondary) — one
-    /// combined Text so the header's own lineLimit/minimumScaleFactor
-    /// shrinks all of it together instead of separate HStack children
-    /// competing for space.
-    private var nameWithNotes: Text {
-        let nameFont = Font.system(size: nameFontSize, weight: .bold)
-        let textFont = Font.system(size: notesAndRestTimeFontSize)
-        let iconFont = Font.system(size: headerIconSize)
-        var result = Text(draft.name).font(nameFont)
-        if let notes = exerciseDef?.notes, !notes.isEmpty {
-            result = result
-                + Text("  " + notes).font(textFont).foregroundStyle(.secondary)
-                + Text(" ")
-                + Text(Image(systemName: "pencil")).font(iconFont).foregroundStyle(.secondary)
-        }
+    /// Exercise name alone, bold — Setup/rest-time/Notes used to be
+    /// concatenated onto this same line (see git history around 48078d3);
+    /// they're now their own row underneath instead (see
+    /// restTimerSetupNotesRow), so this is just the name.
+    private var nameText: Text {
+        Text(draft.name).font(.system(size: nameFontSize, weight: .bold))
+    }
+
+    @ViewBuilder private var restTimerLabel: some View {
         if let restTimeSeconds {
-            result = result
-                + Text("  ")
-                + Text(Formatters.duration(Double(restTimeSeconds))).font(textFont).foregroundStyle(.secondary)
-                + Text(" ")
-                + Text(Image(systemName: "timer")).font(iconFont).foregroundStyle(.secondary)
+            Label(Formatters.duration(Double(restTimeSeconds)), systemImage: "timer")
         }
-        return result
+    }
+    @ViewBuilder private var setupQuickEditButton: some View {
+        if let def = exerciseDef {
+            Button {
+                showEditNotesSheet = true
+            } label: {
+                Label("Setup", systemImage: "pencil")
+            }
+            .foregroundStyle(def.notes.isEmpty ? .secondary : .primary)
+        }
+    }
+    @ViewBuilder private var notesQuickEditButton: some View {
+        if let def = exerciseDef {
+            Button {
+                showEditAdditionalNotesSheet = true
+            } label: {
+                Label("Notes", systemImage: "pencil")
+            }
+            .foregroundStyle(def.additionalNotes.isEmpty ? .secondary : .primary)
+        }
+    }
+
+    /// Rest Timer + Setup + Notes together, directly under the exercise
+    /// name — same plain .caption/.caption2 styling the two quick-edit rows
+    /// already used on the Warm-Up Sets sub-page (moved here from there;
+    /// warmupPage no longer has them). Rest Timer is display-only (nothing
+    /// in the live workout view can edit it — only Phase Edit can), so it's
+    /// a plain Label, not a button; Setup/Notes keep their tap-to-edit
+    /// sheets. Each piece is independently optional — a repTotal exercise
+    /// with no rest time and no exerciseDef match (shouldn't normally
+    /// happen, but see exerciseDef's own optionality) would show nothing
+    /// here at all rather than an empty row.
+    ///
+    /// Stacks vertically at an accessibility Dynamic Type size instead of
+    /// staying in one HStack — 3 short items still overflow into ugly
+    /// mid-word wrapping ("Se"/"tup") at that size even though each is far
+    /// narrower than what broke PlannedExerciseRow's 3-button row earlier
+    /// (48078d3); confirmed by rendering both ways rather than assumed.
+    @ViewBuilder
+    private var restTimerSetupNotesRow: some View {
+        if restTimeSeconds != nil || exerciseDef != nil {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        restTimerLabel
+                        setupQuickEditButton
+                        notesQuickEditButton
+                    }
+                } else {
+                    HStack(spacing: 14) {
+                        restTimerLabel
+                        setupQuickEditButton
+                        notesQuickEditButton
+                        Spacer()
+                    }
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .buttonStyle(.plain)
+        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                // Name + notes as ONE Text (not two separate views) so
-                // lineLimit/minimumScaleFactor shrink them together
-                // proportionally, rather than two flexible HStack children
-                // fighting over space — same per-segment-styled-Text
-                // concatenation pattern the Big Lift table's date labels
-                // use. Auto-shrinks (down to 50%) instead of letting a long
-                // name push the rep-total badge/button off the trailing
-                // edge, wrap the row taller, or truncate — the larger base
-                // size here needs more shrink headroom than the old one did
-                // to still guarantee a one-line fit for a long name.
-                nameWithNotes
+                nameText
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
                 if case .repTotal(let target) = draft.goalType {
@@ -2149,6 +2136,7 @@ struct ExercisePageView: View {
                     .font(.caption)
                 }
             }
+            restTimerSetupNotesRow
             if draft.isExpanded {
                 VStack(alignment: .leading, spacing: 2) {
                     switch draft.goalType {
@@ -2198,6 +2186,18 @@ struct ExercisePageView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $showEditNotesSheet) {
+            NotesEditSheet(title: "Setup", initialText: exerciseDef?.notes ?? "") { newText in
+                exerciseDef?.notes = newText
+                try? context.save()
+            }
+        }
+        .sheet(isPresented: $showEditAdditionalNotesSheet) {
+            NotesEditSheet(title: "Notes", initialText: exerciseDef?.additionalNotes ?? "") { newText in
+                exerciseDef?.additionalNotes = newText
+                try? context.save()
             }
         }
     }
