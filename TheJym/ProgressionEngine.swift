@@ -102,6 +102,12 @@ enum ProgressionEngine {
     /// own shape (nil with no history, hold the weight when the rule's
     /// criteria aren't met) so every caller's own fallback behaves
     /// identically either way; only the criteria and the bump differ.
+    /// `weightIncreaseAmount` is the exercise's CONFIGURED default bump —
+    /// used only as a fallback. When the qualifying session itself recorded
+    /// a per-session choice (ExerciseLog.selectedWeightIncreaseAmount, set
+    /// via WorkoutRecapView's Picker), that choice wins instead, so "No
+    /// Increase" chosen for a specific qualifying workout actually holds
+    /// the weight rather than being silently overridden by the default.
     static func suggestNextWeightsForUpperTarget(upperTargetReps: [Int],
                                                   weightIncreaseAmount: Double,
                                                   history: [ExerciseLog],
@@ -112,7 +118,8 @@ enum ProgressionEngine {
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
         guard qualifiesForUpperTarget(latest, upperTargetReps: upperTargetReps) else { return latestWeights }
-        return latestWeights.map { roundToPlate($0 + weightIncreaseAmount, smallest: roundingIncrement) }
+        let amount = latest.selectedWeightIncreaseAmount ?? weightIncreaseAmount
+        return latestWeights.map { roundToPlate($0 + amount, smallest: roundingIncrement) }
     }
 
     /// Same idea as `startingWeights`, for a slot with the fixed

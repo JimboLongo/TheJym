@@ -1172,6 +1172,16 @@ final class ExerciseLog {
     /// at save time alongside `achievedRank`. Always false for a repTotal
     /// exercise (reaching its total is already required to finish it).
     var missedTarget: Bool = false
+    /// Per-session override of ExerciseDef.repSchemeCeilings' configured
+    /// weightIncreaseAmount, for a session that qualified for its ceiling
+    /// (WorkoutRecapView's weight-increase Picker) — "what I chose to do
+    /// THIS time," not the exercise's standing default. 0 is a genuine "No
+    /// Increase" choice, distinct from nil (never asked — predates this
+    /// field, or this log never qualified). ProgressionEngine.
+    /// suggestNextWeightsForUpperTarget reads this off the most recent
+    /// qualifying log and falls back to the configured default only when
+    /// it's nil.
+    var selectedWeightIncreaseAmount: Double? = nil
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
     var sets: [SetLog] = []
