@@ -1267,9 +1267,12 @@ struct ExercisePageView: View {
     /// bigger base size. 28 is .title's own default point size. Setup/rest-
     /// time/Notes used to be concatenated into this same Text (with their
     /// own ScaledMetric sizes, since removed) — now shown on their own line
-    /// beneath the name instead, in the existing quick-edit rows' plain
-    /// .caption/.caption2 styling rather than a custom size.
+    /// beneath the name instead.
     @ScaledMetric(relativeTo: .title) private var nameFontSize: CGFloat = 28 * 1.3
+    /// Rest Timer/Setup/Notes row — same ScaledMetric-not-bare-size
+    /// reasoning as nameFontSize above, anchored 10% above .caption2's own
+    /// default (11pt) rather than that plain semantic style.
+    @ScaledMetric(relativeTo: .caption2) private var restTimerSetupNotesFontSize: CGFloat = 11 * 1.1
 
     @State private var showAddEquipmentSheet = false
     /// Shown from the Warm-Up Sets page's Edit/Add button.
@@ -2109,7 +2112,7 @@ struct ExercisePageView: View {
                     }
                 }
             }
-            .font(.caption2)
+            .font(.system(size: restTimerSetupNotesFontSize))
             .foregroundStyle(.secondary)
             .buttonStyle(.plain)
         }
