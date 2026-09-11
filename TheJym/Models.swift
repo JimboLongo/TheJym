@@ -1182,6 +1182,22 @@ final class ExerciseLog {
     /// qualifying log and falls back to the configured default only when
     /// it's nil.
     var selectedWeightIncreaseAmount: Double? = nil
+    /// Per-session weight DECREASE, for a session that missed a target
+    /// (WorkoutRecapView's weight-decrease Picker, shown whenever
+    /// `missedTarget` above is true) — same "what I chose to do THIS time"
+    /// convention as `selectedWeightIncreaseAmount`, kept as its own field
+    /// rather than a signed value on that one so the two flows (qualifying
+    /// a ceiling vs. missing a target — mutually exclusive in the sane case,
+    /// see qualifiesForUpperTarget/missedAnyTarget's own invariant note)
+    /// never share a single ambiguous number. Stores the literal delta to
+    /// ADD to next session's weight, so it's always <= 0 (e.g. -5 for a 5lb
+    /// decrease) — consumption is a plain addition, no sign-flip needed. 0
+    /// is a genuine "No Decrease" choice, distinct from nil (never asked —
+    /// predates this field, or this log didn't miss a target).
+    /// ProgressionEngine.suggestNextWeights/suggestNextWeightsForUpperTarget
+    /// read this off the most recent log and let it override their own
+    /// computed suggestion whenever it's set.
+    var selectedWeightDecreaseAmount: Double? = nil
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
     var sets: [SetLog] = []

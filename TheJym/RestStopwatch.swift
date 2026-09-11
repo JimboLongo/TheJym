@@ -237,7 +237,7 @@ final class RestStopwatch: ObservableObject {
             firedThresholds.insert(threshold)
         }
         if current == 0 {
-            playCue(440, 3.0, 0.3)
+            playCue(880, 3.0, 0.3)
         } else {
             playCue(880, 0.18, 0.35)
         }

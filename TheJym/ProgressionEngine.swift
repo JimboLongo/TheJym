@@ -45,6 +45,19 @@ enum ProgressionEngine {
         let latestWeights = isBodyweight
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
+
+        // A per-session decrease choice (WorkoutRecapView's Picker, recorded
+        // only when `latest` itself missed a target) overrides everything
+        // below — the streak/aggressiveness jump AND the automatic ~5%
+        // backoff a few lines down — same precedence
+        // ExerciseLog.selectedWeightIncreaseAmount already has over
+        // suggestNextWeightsForUpperTarget's configured default. nil (never
+        // decided — old data, or a session that didn't miss) falls through
+        // to the algorithm unchanged.
+        if let decrease = latest.selectedWeightDecreaseAmount {
+            return latestWeights.map { roundToPlate($0 + decrease, smallest: roundingIncrement) }
+        }
+
         let streak = currentStreak(targetReps: targetReps, history: history)
 
         let smallJump: Double = 2.5
@@ -117,7 +130,15 @@ enum ProgressionEngine {
         let latestWeights = isBodyweight
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
-        guard qualifiesForUpperTarget(latest, upperTargetReps: upperTargetReps) else { return latestWeights }
+        guard qualifiesForUpperTarget(latest, upperTargetReps: upperTargetReps) else {
+            // Didn't qualify — a per-session decrease choice (recorded only
+            // when `latest` itself missed a target; see
+            // ExerciseLog.selectedWeightDecreaseAmount) applies here instead.
+            // nil (not missed, or missed but never decided) holds the weight,
+            // same as before this existed.
+            let decrease = latest.selectedWeightDecreaseAmount ?? 0
+            return latestWeights.map { roundToPlate($0 + decrease, smallest: roundingIncrement) }
+        }
         let amount = latest.selectedWeightIncreaseAmount ?? weightIncreaseAmount
         return latestWeights.map { roundToPlate($0 + amount, smallest: roundingIncrement) }
     }

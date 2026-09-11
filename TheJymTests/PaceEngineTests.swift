@@ -134,7 +134,9 @@ final class PaceEngineTests: XCTestCase {
     /// A completed log of `exerciseName` at `weights` (one set each, target
     /// 8 reps), `daysAgo` days back. `hitTarget` controls whether each set's
     /// actual reps meet (8, the default) or fall short of (7) that target —
-    /// the thing the `.lastLogged` streak now tracks, independent of weight.
+    /// irrelevant to `.lastLogged`'s own count (a plain count of sessions at
+    /// a given weight, not gated on hitting target), kept around so tests can
+    /// still confirm a miss doesn't drop a session out of that count.
     @MainActor
     @discardableResult
     private func log(_ exerciseName: String, weights: [Double], daysAgo: Int, context: ModelContext,
@@ -155,11 +157,11 @@ final class PaceEngineTests: XCTestCase {
         return exerciseLog
     }
 
-    /// The streak describes the previous session's OWN weights, not today's
-    /// — two historical sessions in a row at the same weight, both hitting
-    /// target, read "(2x)" regardless of what's typed in for today.
+    /// The count describes the previous session's OWN weights, not today's
+    /// — two historical sessions at the same weight read "(2x)" regardless
+    /// of what's typed in for today.
     @MainActor
-    func testLastLoggedStreakCountsConsecutiveSessionsAtThePreviousSessionsOwnWeightsThatHitTargetReps() {
+    func testLastLoggedCountsSessionsAtThePreviousSessionsOwnWeights() {
         let context = makeContext()
         log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
@@ -174,12 +176,32 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
     }
 
-    /// Reported correction: the streak should NOT change when today's
+    /// A plain count: sessions logged at the previous session's own weight
+    /// that did NOT all hit their target reps still all count — hitting
+    /// target reps is not, and has never been (post-fix), a requirement for
+    /// this count, only "same weight as Previous Workout" is.
+    @MainActor
+    func testLastLoggedCountIncludesSessionsThatMissedTargetReps() {
+        let context = makeContext()
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: false)
+        log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: false)
+        let allLogs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
+                                                  currentWeights: [135, 135, 135], allLogs: allLogs)
+        guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
+            return XCTFail("Expected a .lastLogged comparison")
+        }
+        XCTAssertEqual(lastLogged.occurrenceCount, 2, "both sessions missed their target reps, but both are still at the same weight as Previous Workout")
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
+    }
+
+    /// Reported correction: the count should NOT change when today's
     /// weight field changes — it's still (2x) even though today's weight
     /// (135) has never been done before (so "Best at Weights" reads 0/no
     /// data). Previous can legitimately exceed Best at Weights this way.
     @MainActor
-    func testLastLoggedStreakDoesNotChangeWhenTodaysWeightDiffersFromHistory() {
+    func testLastLoggedCountDoesNotChangeWhenTodaysWeightDiffersFromHistory() {
         let context = makeContext()
         log("Bench Press", weights: [130, 130, 130], daysAgo: 14, context: context, hitTarget: true)
         log("Bench Press", weights: [130, 130, 130], daysAgo: 7, context: context, hitTarget: true)
@@ -224,10 +246,13 @@ final class PaceEngineTests: XCTestCase {
     }
 
     /// Same shape, but the session before "Previous Workout" fell short of
-    /// its target reps (same weight throughout, so weight isn't what breaks
-    /// it) — so "Previous Workout" is only the 1st hit in a row, "(1x)".
+    /// its target reps (same weight throughout, so weight isn't what could
+    /// break it) — still "(2x)": hitting target reps was never a
+    /// requirement for the OTHER sessions in the count either, only for
+    /// "Previous Workout" (this test's predecessor, pre-fix) itself used to
+    /// require it.
     @MainActor
-    func testLastLoggedStreakResetsWhenThePriorSessionMissedTargetReps() {
+    func testLastLoggedCountIncludesAPriorSessionThatMissedTargetReps() {
         let context = makeContext()
         log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: false)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: true)
@@ -238,14 +263,14 @@ final class PaceEngineTests: XCTestCase {
         guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
             return XCTFail("Expected a .lastLogged comparison")
         }
-        XCTAssertEqual(lastLogged.occurrenceCount, 1)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (1x)")
+        XCTAssertEqual(lastLogged.occurrenceCount, 2)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
     }
 
-    /// Three sessions in a row that all hit target reps should read "(3x)"
-    /// on the most recent one.
+    /// Three sessions at the same weight all count, regardless of order or
+    /// whether each individually hit target reps.
     @MainActor
-    func testLastLoggedStreakCountsThreeInARow() {
+    func testLastLoggedCountsThreeSessionsAtTheSameWeight() {
         let context = makeContext()
         log("Bench Press", weights: [135, 135, 135], daysAgo: 21, context: context, hitTarget: true)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
@@ -261,10 +286,12 @@ final class PaceEngineTests: XCTestCase {
         XCTAssertEqual(lastLogged.label, "Previous Workout (3x)")
     }
 
-    /// If "Previous Workout" itself missed target reps, the streak reads
-    /// "(0x)" — it starts over rather than just not counting that session.
+    /// "Previous Workout" itself having missed target reps no longer zeroes
+    /// the count out — it's still counted alongside the other session at
+    /// that same weight, reading "(2x)" rather than the old streak
+    /// semantics' "(0x)".
     @MainActor
-    func testLastLoggedStreakIsZeroWhenTheMostRecentSessionMissedTargetReps() {
+    func testLastLoggedCountIsNotZeroedByTheMostRecentSessionMissingTargetReps() {
         let context = makeContext()
         log("Bench Press", weights: [135, 135, 135], daysAgo: 14, context: context, hitTarget: true)
         log("Bench Press", weights: [135, 135, 135], daysAgo: 7, context: context, hitTarget: false)
@@ -275,11 +302,11 @@ final class PaceEngineTests: XCTestCase {
         guard let lastLogged = comparisons.first(where: { $0.kind == .lastLogged }) else {
             return XCTFail("Expected a .lastLogged comparison")
         }
-        XCTAssertEqual(lastLogged.occurrenceCount, 0)
-        XCTAssertEqual(lastLogged.label, "Previous Workout (0x)")
+        XCTAssertEqual(lastLogged.occurrenceCount, 2)
+        XCTAssertEqual(lastLogged.label, "Previous Workout (2x)")
     }
 
-    /// No prior log at all — no streak count should be shown.
+    /// No prior log at all — no count suffix should be shown.
     func testLastLoggedLabelHasNoStreakSuffixWithoutData() {
         let comparisons = PaceEngine.comparisons(for: "Bench Press", targetReps: [8, 8, 8],
                                                   currentWeights: [135, 135, 135], allLogs: [])
