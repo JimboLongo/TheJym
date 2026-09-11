@@ -144,15 +144,17 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         XCTAssertEqual(suggestion, [30, 30, 30], "bumps ADDED weight (25 + 5), never the resolved bodyweight total")
     }
 
-    /// A per-session choice (ExerciseLog.selectedWeightIncreaseAmount, set
-    /// via WorkoutRecapView's Picker) overrides the exercise's configured
-    /// default for that specific qualifying log.
+    /// A per-session wheel choice (ExerciseLog.selectedWeightAdjustment, set
+    /// via WorkoutRecapView's wheel) overrides the exercise's configured
+    /// default for that specific qualifying log. Coverage for the wheel
+    /// applying regardless of verdict (including a decrease on a qualifying
+    /// log) lives in ProgressionEngineWeightAdjustmentTests.
     @MainActor
     func testSuggestNextWeightsForUpperTargetPrefersPerSessionChoiceOverConfiguredDefault() {
         let context = makeContext()
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [10, 10, 10],
                         actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        entry.selectedWeightIncreaseAmount = 10
+        entry.selectedWeightAdjustment = 10
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
@@ -160,20 +162,20 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         XCTAssertEqual(suggestion, [145, 145, 145], "the recorded per-session choice (10) wins over the configured default (5)")
     }
 
-    /// "No Increase" (0) is a real, distinct choice — it must actually hold
+    /// "No Change" (0) is a real, distinct choice — it must actually hold
     /// the weight even though the session qualified and the exercise's
     /// configured default would otherwise bump it.
     @MainActor
-    func testSuggestNextWeightsForUpperTargetHonorsExplicitNoIncreaseChoice() {
+    func testSuggestNextWeightsForUpperTargetHonorsExplicitNoChangeChoice() {
         let context = makeContext()
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [10, 10, 10],
                         actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        entry.selectedWeightIncreaseAmount = 0
+        entry.selectedWeightAdjustment = 0
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
             upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
-        XCTAssertEqual(suggestion, [135, 135, 135], "explicit No Increase (0) must hold the weight, not fall back to the configured default")
+        XCTAssertEqual(suggestion, [135, 135, 135], "explicit No Change (0) must hold the weight, not fall back to the configured default")
     }
 
     /// nil (never decided — old data, predating this field) falls back to
@@ -183,7 +185,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let context = makeContext()
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [10, 10, 10],
                         actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        XCTAssertNil(entry.selectedWeightIncreaseAmount)
+        XCTAssertNil(entry.selectedWeightAdjustment)
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(

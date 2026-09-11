@@ -75,25 +75,16 @@ struct WorkoutLogView: View {
     @State private var drafts: [ExerciseDraft] = []
     @State private var showRecapSheet = false
     @State private var recapEntries: [RecapEntry] = []
-    @State private var recapChoices: [String: Bool] = [:]
-    /// Hand-adjustable per-set weights for each recap entry's suggested
-    /// jump/drop — seeded from `RecapEntry.suggestion`, then edited via the
-    /// recap's own +/- steppers. What `applyRecapChoices` actually writes
-    /// out, not necessarily the original AI suggestion verbatim.
-    @State private var recapWeights: [String: [Double]] = [:]
-    /// Per-exercise weight-increase-amount Picker selection for ceiling-
-    /// qualifying entries (RecapEntry.ceilingLog != nil) — seeded from that
-    /// entry's own configured default, written to
-    /// ExerciseLog.selectedWeightIncreaseAmount by applyRecapChoices. Kept
-    /// separate from `recapWeights` since it's a discrete No-Increase/2.5/
-    /// 5/10 choice, not a per-set stepper-adjustable weight.
-    @State private var recapWeightIncreaseChoices: [String: Double] = [:]
-    /// Same idea as `recapWeightIncreaseChoices`, for missed-target entries
-    /// (RecapEntry.decreaseLog != nil) — written to
-    /// ExerciseLog.selectedWeightDecreaseAmount by applyRecapChoices. Values
-    /// here are the literal delta to add (<= 0), matching that field's own
-    /// convention.
-    @State private var recapWeightDecreaseChoices: [String: Double] = [:]
+    /// Weight-adjustment wheel position for each recap entry, keyed by
+    /// exercise name — one of -10/-5/-2.5/0/2.5/5/10. Seeded per-entry by
+    /// WorkoutLogView from that entry's own verdict (see
+    /// WorkoutRecapView.initialAdjustment(for:)) before the sheet appears;
+    /// applyRecapChoices persists whatever's here (or that same seeded
+    /// default if the user never touched the wheel) onto
+    /// ExerciseLog.selectedWeightAdjustment. Not restricted by verdict — any
+    /// of the 7 values is always selectable regardless of which verdict an
+    /// entry got.
+    @State private var recapWeightAdjustments: [String: Double] = [:]
     @State private var currentPageID: String?
     @State private var showExerciseJumpList = false
     /// Collapses every row on the Completed summary page at once — hoisted
@@ -251,47 +242,37 @@ struct WorkoutLogView: View {
         }
     }
 
+    /// One fixedSets exercise's entry in the post-workout recap — fixedSets
+    /// only; repTotal has no interactive recap step at all (see finishWorkout's
+    /// own doc on why) and never creates one of these. Every fixedSets
+    /// exercise gets exactly one, unconditionally, unlike the old design
+    /// where only a qualifying/missed exercise got an entry at all — the
+    /// three-state verdict (see WorkoutRecapView.verdict(for:)) is exhaustive
+    /// across every fully-logged fixedSets exercise, so there's no case left
+    /// where "no entry" would even mean something.
     struct RecapEntry: Identifiable {
         let id = UUID()
         var exerciseName: String
-        /// Prior best total to compare against — nil if never logged before.
-        var previousTotal: Double?
-        var todayTotal: Double
-        var streak: Int
-        var requiredStreak: Int
-        /// Non-nil only when suggestNextWeights proposes a change from what
-        /// was actually lifted today (a jump if higher, a drop if lower).
-        var suggestion: [Double]?
+        /// The ExerciseLog to write the recap wheel's choice onto
+        /// (selectedWeightAdjustment) — always this session's own log, since
+        /// every entry now gets a wheel regardless of verdict.
+        var log: ExerciseLog
         var currentWeights: [Double]
-        /// This exercise's own weight step (2.5 for barbell/plate work, or
-        /// the dumbbell increment) — the +/- granularity for hand-adjusting
-        /// the suggested jump per set in the recap.
-        var increment: Double
-        /// Non-nil only for a ceiling-qualifying entry (repSchemeCeilings,
-        /// see ExerciseDef) — the ExerciseLog to write the recap's
-        /// weight-increase Picker choice onto. nil for a plain
-        /// streak-based entry (no ceiling involved) OR a ceiling entry that
-        /// didn't qualify this time (no bump/choice to make either way).
-        var ceilingLog: ExerciseLog? = nil
-        /// The exercise's own configured default bump (ExerciseDef.
-        /// repSchemeCeilings' weightIncreaseAmount) — seeds the Picker's
-        /// initial selection. nil exactly when `ceilingLog` is nil.
-        var configuredWeightIncreaseAmount: Double? = nil
-        /// Non-nil only for a missed-target entry (ExerciseLog.missedTarget
-        /// — any fixedSets exercise, ceiling-configured or not) — the
-        /// ExerciseLog to write the recap's weight-decrease Picker choice
-        /// onto. Mutually exclusive with `ceilingLog` in the sane case (see
-        /// missedAnyTarget/qualifiesForUpperTarget's own invariant note in
-        /// finishWorkout) — never both non-nil for the same entry.
-        var decreaseLog: ExerciseLog? = nil
-        /// Seeds the decrease Picker's initial selection — the NEGATIVE of
-        /// the exercise's configured repSchemeCeilings weightIncreaseAmount
-        /// when one exists (there's nothing else to default to), else nil
-        /// (seeds "No Decrease" — see WorkoutLogView's own seeding code).
-        /// nil whenever `decreaseLog` is nil, but can ALSO be nil with
-        /// `decreaseLog` set (a missed-target exercise with no ceiling
-        /// configured at all).
-        var configuredWeightDecreaseDefault: Double? = nil
+        /// True for a bodyweight exercise, whose `currentWeights` above is
+        /// added-weight-only (not the resolved total) — see
+        /// WorkoutRecapView.weightLabels(for:)'s "BW+" labeling.
+        var isBodyweight: Bool
+        var actualReps: [Int]
+        var targetReps: [Int]
+        /// nil when no ceiling is configured for this exercise/rep-scheme
+        /// slot — the "no ceiling at all" half of the Hit Target/Missed
+        /// Ceiling bucket (see WorkoutRecapView.verdict(for:)'s own doc).
+        var upperTargetReps: [Int]?
+        /// The exercise's own configured bump (ExerciseDef.repSchemeCeilings'
+        /// weightIncreaseAmount) — seeds the wheel's initial position for
+        /// the Missed Target (negated) and Hit Ceiling (as-is) verdicts. nil
+        /// exactly when `upperTargetReps` is nil.
+        var configuredWeightIncreaseAmount: Double?
     }
 
     /// One page in the paging ScrollView: either a single active exercise,
@@ -723,9 +704,7 @@ struct WorkoutLogView: View {
             restActivityDidChange()
         }
         .sheet(isPresented: $showRecapSheet, onDismiss: { selectedTab = .stats; dismiss() }) {
-            WorkoutRecapView(entries: recapEntries, choices: $recapChoices, weights: $recapWeights,
-                             weightIncreaseChoices: $recapWeightIncreaseChoices,
-                             weightDecreaseChoices: $recapWeightDecreaseChoices) { applyRecapChoices() }
+            WorkoutRecapView(entries: recapEntries, adjustments: $recapWeightAdjustments) { applyRecapChoices() }
         }
     }
 
@@ -1032,75 +1011,27 @@ struct WorkoutLogView: View {
 
             switch d.goalType {
             case .fixedSets:
+                // Every fixedSets exercise gets exactly one RecapEntry now —
+                // WorkoutRecapView's three-state verdict (Missed Target/Hit
+                // Target but not Ceiling/Hit Ceiling) is exhaustive, so
+                // there's no longer a "doesn't qualify for an entry at all"
+                // case the way the old ceiling-only/missed-only dropdowns
+                // had. The verdict itself (and the wheel's initial position)
+                // is computed in the view from `log`/`upperTargetReps`
+                // directly — see WorkoutRecapView.verdict(for:) — reusing
+                // qualifiesForUpperTarget and the already-computed
+                // log.missedTarget (itself from missedAnyTarget above)
+                // rather than recomputing either here.
                 let currentWeights = log.sortedSets.map { d.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
-                if let ceiling = pe.flatMap({ ceiling(for: $0) }) {
-                    // REPLACES the algorithm entirely for this slot. No
-                    // longer auto-applies the configured weightIncreaseAmount
-                    // here — the actual bump is now a per-session choice made
-                    // via WorkoutRecapView's Picker (No Increase/2.5/5/10),
-                    // persisted onto this log itself. streak/requiredStreak
-                    // are 0 so WorkoutRecapView's "Progress to next weight
-                    // jump" row (streak-based, meaningless for this
-                    // single-hit rule) stays hidden.
-                    let qualifies = ProgressionEngine.qualifiesForUpperTarget(log, upperTargetReps: ceiling.upperTargetReps)
-                    // `qualifies` and `log.missedTarget` are never both true
-                    // for a correctly-configured ceiling (upperTargetReps >=
-                    // targetReps on every set forces reps >= upperTargetReps
-                    // to imply reps >= targetReps) — an inverted/misconfigured
-                    // ceiling is the only way both could be true at once,
-                    // since nothing validates that relationship when a
-                    // ceiling is saved (UpperTargetPickerSheet.canSet only
-                    // checks the set COUNT matches). If it somehow happens,
-                    // the increase dropdown wins and the decrease dropdown
-                    // is suppressed below, deliberately — showing both would
-                    // be contradictory UI for what's already bad config data.
-                    let missedForDecrease = !qualifies && log.missedTarget
-                    entries.append(RecapEntry(exerciseName: d.name,
-                                              previousTotal: priorLogs.last?.totalWeightMoved,
-                                              todayTotal: log.totalWeightMoved,
-                                              streak: 0,
-                                              requiredStreak: 0,
-                                              suggestion: nil,
-                                              currentWeights: currentWeights,
-                                              increment: increment,
-                                              ceilingLog: qualifies ? log : nil,
-                                              configuredWeightIncreaseAmount: qualifies ? ceiling.weightIncreaseAmount : nil,
-                                              decreaseLog: missedForDecrease ? log : nil,
-                                              configuredWeightDecreaseDefault: missedForDecrease ? -ceiling.weightIncreaseAmount : nil))
-                } else if log.missedTarget {
-                    // Missed-target dropdown REPLACES the old automatic
-                    // ~5%-backoff suggestion (suggestNextWeights' avgSurplus
-                    // <= -2 branch) here, same as the increase dropdown
-                    // replaced the ceiling's automatic bump — a discrete,
-                    // persisted per-session choice instead of a freeform
-                    // stepper on a suggestion that (like the ceiling one,
-                    // pre-fix) was silently discarded on the next session
-                    // regardless of what was chosen in recap.
-                    entries.append(RecapEntry(exerciseName: d.name,
-                                              previousTotal: priorLogs.last?.totalWeightMoved,
-                                              todayTotal: log.totalWeightMoved,
-                                              streak: 0,
-                                              requiredStreak: 0,
-                                              suggestion: nil,
-                                              currentWeights: currentWeights,
-                                              increment: increment,
-                                              decreaseLog: log,
-                                              configuredWeightDecreaseDefault: nil))
-                } else {
-                    let streak = ProgressionEngine.currentStreak(targetReps: d.targetReps, history: combinedHistory)
-                    let suggestion = ProgressionEngine.suggestNextWeights(
-                        targetReps: d.targetReps, history: combinedHistory,
-                        aggressiveness: agg, roundingIncrement: increment, isBodyweight: d.isBodyweight,
-                        customIncreaseStreak: customIncreaseStreak, customIncreaseAmount: customIncreaseAmount)
-                    entries.append(RecapEntry(exerciseName: d.name,
-                                              previousTotal: priorLogs.last?.totalWeightMoved,
-                                              todayTotal: log.totalWeightMoved,
-                                              streak: streak,
-                                              requiredStreak: ProgressionEngine.requiredStreak(for: agg),
-                                              suggestion: (suggestion != currentWeights) ? suggestion : nil,
-                                              currentWeights: currentWeights,
-                                              increment: increment))
-                }
+                let matchingCeiling = pe.flatMap { ceiling(for: $0) }
+                entries.append(RecapEntry(exerciseName: d.name,
+                                          log: log,
+                                          currentWeights: currentWeights,
+                                          isBodyweight: d.isBodyweight,
+                                          actualReps: log.sortedSets.map(\.reps),
+                                          targetReps: d.targetReps,
+                                          upperTargetReps: matchingCeiling?.upperTargetReps,
+                                          configuredWeightIncreaseAmount: matchingCeiling?.weightIncreaseAmount))
 
             case .repTotal:
                 // repTotal progression is applied automatically (no interactive
@@ -1139,41 +1070,14 @@ struct WorkoutLogView: View {
 
         if !entries.isEmpty {
             recapEntries = entries
-            // Default to accepting the suggested jump/drop — matches the
-            // app's existing "AI suggestion applied unless overridden" pattern.
-            recapChoices = Dictionary(uniqueKeysWithValues: entries.map { ($0.exerciseName, true) })
-            recapWeights = Dictionary(uniqueKeysWithValues: entries.compactMap { entry in
-                entry.suggestion.map { (entry.exerciseName, $0) }
-            })
-            // Initial Picker selection for each ceiling-qualifying entry:
-            // the exercise's own configured default when it's one of the 3
-            // real choices (2.5/5/10), else the nearest of those three —
-            // same out-of-range handling as UpperTargetPickerSheet's own
-            // amount picker. Never defaults to "No Increase" (0) — that's a
-            // deliberate opt-out the user has to actively pick, not
-            // something a misconfigured default should land on.
-            recapWeightIncreaseChoices = Dictionary(uniqueKeysWithValues: entries.compactMap { entry -> (String, Double)? in
-                guard let configured = entry.configuredWeightIncreaseAmount else { return nil }
-                let choices: [Double] = [2.5, 5, 10]
-                let initial = choices.contains(configured)
-                    ? configured
-                    : (choices.min(by: { abs($0 - configured) < abs($1 - configured) }) ?? 5)
-                return (entry.exerciseName, initial)
-            })
-            // Same idea for each missed-target entry's decrease Picker: seed
-            // to the negative of the exercise's configured ceiling amount
-            // when there is one (nearest of -2.5/-5/-10 if out of range,
-            // same handling as the increase Picker above), else "No
-            // Decrease" (0) — a plain missed-target exercise with no ceiling
-            // configured has nothing else to default to.
-            recapWeightDecreaseChoices = Dictionary(uniqueKeysWithValues: entries.compactMap { entry -> (String, Double)? in
-                guard entry.decreaseLog != nil else { return nil }
-                guard let configuredDefault = entry.configuredWeightDecreaseDefault else { return (entry.exerciseName, 0) }
-                let choices: [Double] = [-2.5, -5, -10]
-                let initial = choices.contains(configuredDefault)
-                    ? configuredDefault
-                    : (choices.min(by: { abs($0 - configuredDefault) < abs($1 - configuredDefault) }) ?? -5)
-                return (entry.exerciseName, initial)
+            // Initial wheel position per entry — computed from the same
+            // exhaustive three-state verdict WorkoutRecapView itself
+            // displays (see WorkoutRecapView.initialAdjustment(for:)), so
+            // the wheel's pre-selected value always matches what the
+            // verdict text says. Not a restriction — the wheel offers all 7
+            // values regardless of verdict, this just seeds where it starts.
+            recapWeightAdjustments = Dictionary(uniqueKeysWithValues: entries.map { entry in
+                (entry.exerciseName, WorkoutRecapView.initialAdjustment(for: entry))
             })
             showRecapSheet = true
         } else {
@@ -1184,25 +1088,13 @@ struct WorkoutLogView: View {
 
     private func applyRecapChoices() {
         for entry in recapEntries {
-            // Ceiling entries: persist the Picker's choice (or the seeded
-            // default if the user never touched it) onto THIS session's log
-            // — read by ProgressionEngine.suggestNextWeightsForUpperTarget
-            // next time, ahead of the exercise's configured default.
-            if let ceilingLog = entry.ceilingLog {
-                ceilingLog.selectedWeightIncreaseAmount =
-                    recapWeightIncreaseChoices[entry.exerciseName] ?? entry.configuredWeightIncreaseAmount
-            }
-            // Missed-target entries: same idea, for the decrease Picker —
-            // read by suggestNextWeights/suggestNextWeightsForUpperTarget
-            // next time, ahead of their own automatic suggestions.
-            if let decreaseLog = entry.decreaseLog {
-                decreaseLog.selectedWeightDecreaseAmount =
-                    recapWeightDecreaseChoices[entry.exerciseName] ?? entry.configuredWeightDecreaseDefault ?? 0
-            }
-            guard entry.suggestion != nil, recapChoices[entry.exerciseName] == true,
-                  let weights = recapWeights[entry.exerciseName],
-                  let pe = plannedExercises(for: day).first(where: { $0.exerciseName == entry.exerciseName }) else { continue }
-            pe.suggestedWeights = weights
+            // Persist the wheel's choice (or the seeded default if the user
+            // never touched it) onto THIS session's log — read by
+            // ProgressionEngine.suggestNextWeights/
+            // suggestNextWeightsForUpperTarget next time, unconditionally,
+            // ahead of either function's own computed suggestion.
+            entry.log.selectedWeightAdjustment =
+                recapWeightAdjustments[entry.exerciseName] ?? WorkoutRecapView.initialAdjustment(for: entry)
         }
         try? context.save()
     }
@@ -3537,87 +3429,82 @@ struct PaceRow: View {
 
 struct WorkoutRecapView: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let entries: [WorkoutLogView.RecapEntry]
-    @Binding var choices: [String: Bool]
-    /// Hand-adjustable per-set weights, keyed by exercise name — seeded
-    /// from each entry's `suggestion` before this sheet appears, edited
-    /// here via the +/- stepper on each set.
-    @Binding var weights: [String: [Double]]
-    /// Picker selection for each ceiling-qualifying entry, keyed by
-    /// exercise name — No Increase(0)/2.5/5/10. Seeded by WorkoutLogView
-    /// before this sheet appears; applyRecapChoices persists whatever's
-    /// here (or the entry's own configured default if untouched) onto
-    /// that entry's ExerciseLog.
-    @Binding var weightIncreaseChoices: [String: Double]
-    /// Same idea as `weightIncreaseChoices`, for missed-target entries —
-    /// keyed by exercise name, values are the literal delta to add (<= 0),
-    /// matching ExerciseLog.selectedWeightDecreaseAmount's own convention.
-    @Binding var weightDecreaseChoices: [String: Double]
+    /// Weight-adjustment wheel position per entry, keyed by exercise name —
+    /// one of `adjustmentChoices`. Seeded by WorkoutLogView from each
+    /// entry's own verdict (see `initialAdjustment(for:)`) before this sheet
+    /// appears; applyRecapChoices persists whatever's here onto that
+    /// entry's ExerciseLog.selectedWeightAdjustment.
+    @Binding var adjustments: [String: Double]
     var onDone: () -> Void
 
-    /// Fixed choices, matching UpperTargetPickerSheet's own set plus an
-    /// explicit "No Increase" — a per-session decision needs to be able to
-    /// hold the weight even when the exercise's configured default would
-    /// otherwise bump it.
-    static let increaseAmountChoices: [Double] = [0, 2.5, 5, 10]
-    /// Mirror of `increaseAmountChoices` for the decrease Picker — values
-    /// are already the literal (non-positive) delta, so no sign flip is
-    /// needed anywhere this is consumed.
-    static let decreaseAmountChoices: [Double] = [0, -2.5, -5, -10]
+    /// The one wheel every fixedSets exercise gets, regardless of verdict —
+    /// not restricted to the direction its own verdict suggests (see
+    /// `initialAdjustment(for:)`'s own doc).
+    static let adjustmentChoices: [Double] = [-10, -5, -2.5, 0, 2.5, 5, 10]
+
+    enum Verdict: Equatable {
+        case missedTarget
+        case hitTargetMissedCeiling
+        case hitCeiling
+    }
+
+    /// Exhaustive and mutually exclusive for a fully-logged fixedSets
+    /// exercise — reuses `log.missedTarget` (itself computed from
+    /// missedAnyTarget in WorkoutLogView.finishWorkout, before this entry
+    /// was even built) and ProgressionEngine.qualifiesForUpperTarget
+    /// directly, rather than reimplementing either check. "No ceiling
+    /// configured for this slot at all" (`upperTargetReps == nil`) buckets
+    /// into `.hitTargetMissedCeiling` alongside "a ceiling exists but
+    /// wasn't fully hit this time" — both produce the identical verdict
+    /// text and wheel default, so there's no behavioral fork to justify a
+    /// 4th state.
+    static func verdict(for entry: WorkoutLogView.RecapEntry) -> Verdict {
+        if entry.log.missedTarget { return .missedTarget }
+        if let upperTargetReps = entry.upperTargetReps,
+           ProgressionEngine.qualifiesForUpperTarget(entry.log, upperTargetReps: upperTargetReps) {
+            return .hitCeiling
+        }
+        return .hitTargetMissedCeiling
+    }
+
+    /// The wheel's initial position — NOT a restriction, just where it
+    /// starts; every entry can freely land on any of `adjustmentChoices`
+    /// regardless of its own verdict. An out-of-range configured amount
+    /// (data predating UpperTargetPickerSheet's own 3-choice validation, or
+    /// an import) rounds to the nearest real wheel choice rather than being
+    /// dropped or landing off the wheel entirely.
+    static func initialAdjustment(for entry: WorkoutLogView.RecapEntry) -> Double {
+        switch verdict(for: entry) {
+        case .missedTarget:
+            guard let configured = entry.configuredWeightIncreaseAmount else { return 0 }
+            return nearestChoice(to: -configured)
+        case .hitTargetMissedCeiling:
+            return 0
+        case .hitCeiling:
+            guard let configured = entry.configuredWeightIncreaseAmount else { return 0 }
+            return nearestChoice(to: configured)
+        }
+    }
+
+    private static func nearestChoice(to value: Double) -> Double {
+        adjustmentChoices.min(by: { abs($0 - value) < abs($1 - value) }) ?? 0
+    }
 
     var body: some View {
         NavigationStack {
             List {
                 ForEach(entries) { entry in
                     Section(entry.exerciseName) {
-                        comparisonLabel(for: entry)
-
-                        if entry.ceilingLog != nil {
-                            weightIncreaseRow(for: entry)
+                        SetsGrid(weightLabels: weightLabels(for: entry), repLabels: entry.actualReps.map(String.init))
+                        Text("Target: \(entry.targetReps.map(String.init).joined(separator: "/"))")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        if let upperTargetReps = entry.upperTargetReps {
+                            Text("Ceiling: \(upperTargetReps.map(String.init).joined(separator: "/"))")
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
-                        if entry.decreaseLog != nil {
-                            weightDecreaseRow(for: entry)
-                        }
-
-                        if entry.requiredStreak > 0 {
-                            LabeledContent("Progress to next weight jump") {
-                                Text("\(min(entry.streak, entry.requiredStreak))/\(entry.requiredStreak)")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        if let suggestion = entry.suggestion {
-                            let isJump = (suggestion.first ?? 0) > (entry.currentWeights.first ?? 0)
-                            let accepted = choices[entry.exerciseName] ?? true
-                            Toggle(isJump ? "Apply the suggested jump" : "Apply the suggested drop", isOn: Binding(
-                                get: { accepted },
-                                set: { choices[entry.exerciseName] = $0 }))
-
-                            if accepted {
-                                let setWeights = weights[entry.exerciseName] ?? suggestion
-                                ForEach(setWeights.indices, id: \.self) { i in
-                                    HStack {
-                                        Text("Set \(i + 1)")
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                        Text("\(Formatters.trim(entry.currentWeights[safe: i] ?? 0)) → \(Formatters.trim(setWeights[i]))")
-                                        Stepper("", value: Binding(
-                                            get: { weights[entry.exerciseName]?[safe: i] ?? suggestion[i] },
-                                            set: { newValue in
-                                                var arr = weights[entry.exerciseName] ?? suggestion
-                                                arr[i] = newValue
-                                                weights[entry.exerciseName] = arr
-                                            }), step: entry.increment)
-                                        .labelsHidden()
-                                        .fixedSize()
-                                    }
-                                }
-                            } else {
-                                Text("Stay at \(entry.currentWeights.map { Formatters.trim($0) }.joined(separator: "/"))")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        verdictText(for: entry)
+                        adjustmentWheel(for: entry)
                     }
                 }
             }
@@ -3630,102 +3517,49 @@ struct WorkoutRecapView: View {
         }
     }
 
+    /// Same "BW+n" added-weight convention CompletedSummaryPageView's own
+    /// row uses for a bodyweight exercise — `entry.currentWeights` is
+    /// already added-weight-only for one (see finishWorkout), so labeling
+    /// it as a plain number would misread as the full resolved weight.
+    private func weightLabels(for entry: WorkoutLogView.RecapEntry) -> [String] {
+        entry.currentWeights.map { entry.isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
+    }
+
     @ViewBuilder
-    private func comparisonLabel(for entry: WorkoutLogView.RecapEntry) -> some View {
-        if let previous = entry.previousTotal {
-            if entry.todayTotal > previous {
-                Label("Beat previous workout (\(Formatters.trim(entry.todayTotal - previous)) lbs more)",
-                      systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            } else if entry.todayTotal < previous {
-                Label("Missed previous workout by \(Formatters.trim(previous - entry.todayTotal)) lbs",
-                      systemImage: "xmark.circle")
-                    .foregroundStyle(.red)
-            } else {
-                Label("Tied previous workout", systemImage: "equal.circle")
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            Label("First time logging this exercise", systemImage: "star.fill")
-                .foregroundStyle(.blue)
+    private func verdictText(for entry: WorkoutLogView.RecapEntry) -> some View {
+        switch Self.verdict(for: entry) {
+        case .missedTarget:
+            Text("Missed Target Reps → Decrease Weight?")
+                .font(.subheadline.bold()).foregroundStyle(.red)
+        case .hitTargetMissedCeiling:
+            Text("Hit Target / Missed Ceiling → No Change")
+                .font(.subheadline.bold()).foregroundStyle(.secondary)
+        case .hitCeiling:
+            Text("Hit Ceiling Reps → Increase Weight?")
+                .font(.subheadline.bold()).foregroundStyle(.green)
         }
     }
 
-    /// "Weight increase" + the No Increase/2.5/5/10 Picker — side by side
-    /// normally, but "No Increase" is long enough that squeezing it next to
-    /// the label in one row wraps it mid-word ("In-\ncrea-\ntion") at an
-    /// accessibility Dynamic Type size, same class of overflow as
-    /// ExercisePageView's restTimerSetupNotesRow; stacked vertically
-    /// instead at that size, confirmed by rendering both ways.
-    /// `.fixedSize(horizontal: false, vertical: true)` on the label forces
-    /// it to take its full wrapped height rather than deferring to whatever
-    /// width the row's layout pass happens to propose — without it, this
-    /// exact same VStack structure wraps "Weight increase" cleanly but
-    /// silently TRUNCATES "Weight decrease" one row down at AX5 when its
-    /// Picker's selected value is "No Decrease" (long enough to marginally
-    /// shrink the proposed width below the label's own row) — glyph-width
-    /// fragile, not obviously visible from the code, only found by
-    /// rendering both rows side by side.
-    @ViewBuilder
-    private func weightIncreaseRow(for entry: WorkoutLogView.RecapEntry) -> some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Weight increase").foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                weightIncreasePicker(for: entry)
-            }
-        } else {
-            HStack {
-                Text("Weight increase").foregroundStyle(.secondary)
-                Spacer()
-                weightIncreasePicker(for: entry)
+    /// A real spinning wheel (.pickerStyle(.wheel)), matching
+    /// RestTimePickerSheet's own Minutes/Seconds wheel pattern
+    /// (PhaseBuilderView.swift) rather than the .pickerStyle(.menu) dropdown
+    /// the two controls this replaced used.
+    private func adjustmentWheel(for entry: WorkoutLogView.RecapEntry) -> some View {
+        Picker("Weight adjustment", selection: Binding(
+            get: { adjustments[entry.exerciseName] ?? Self.initialAdjustment(for: entry) },
+            set: { adjustments[entry.exerciseName] = $0 })) {
+            ForEach(Self.adjustmentChoices, id: \.self) { choice in
+                Text(label(for: choice)).tag(choice)
             }
         }
+        .pickerStyle(.wheel)
+        .frame(height: 120)
     }
 
-    private func weightIncreasePicker(for entry: WorkoutLogView.RecapEntry) -> some View {
-        Picker("Weight increase", selection: Binding(
-            get: { weightIncreaseChoices[entry.exerciseName] ?? entry.configuredWeightIncreaseAmount ?? 5 },
-            set: { weightIncreaseChoices[entry.exerciseName] = $0 })) {
-            ForEach(Self.increaseAmountChoices, id: \.self) { choice in
-                Text(choice == 0 ? "No Increase" : "\(Formatters.trim(choice)) lb").tag(choice)
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-    }
-
-    /// Same layout as `weightIncreaseRow`, for a missed-target entry's
-    /// -2.5/-5/-10/No Decrease Picker — see that function's own doc on why
-    /// `.fixedSize` is here too (this is in fact the row where the bug was
-    /// actually found).
-    @ViewBuilder
-    private func weightDecreaseRow(for entry: WorkoutLogView.RecapEntry) -> some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Weight decrease").foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                weightDecreasePicker(for: entry)
-            }
-        } else {
-            HStack {
-                Text("Weight decrease").foregroundStyle(.secondary)
-                Spacer()
-                weightDecreasePicker(for: entry)
-            }
-        }
-    }
-
-    private func weightDecreasePicker(for entry: WorkoutLogView.RecapEntry) -> some View {
-        Picker("Weight decrease", selection: Binding(
-            get: { weightDecreaseChoices[entry.exerciseName] ?? entry.configuredWeightDecreaseDefault ?? 0 },
-            set: { weightDecreaseChoices[entry.exerciseName] = $0 })) {
-            ForEach(Self.decreaseAmountChoices, id: \.self) { choice in
-                Text(choice == 0 ? "No Decrease" : "\(Formatters.trim(choice)) lb").tag(choice)
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
+    private func label(for choice: Double) -> String {
+        guard choice != 0 else { return "No Change" }
+        let sign = choice > 0 ? "+" : ""
+        return "\(sign)\(Formatters.trim(choice)) lb"
     }
 }
 

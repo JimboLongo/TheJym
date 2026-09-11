@@ -46,16 +46,16 @@ enum ProgressionEngine {
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
 
-        // A per-session decrease choice (WorkoutRecapView's Picker, recorded
-        // only when `latest` itself missed a target) overrides everything
-        // below — the streak/aggressiveness jump AND the automatic ~5%
-        // backoff a few lines down — same precedence
-        // ExerciseLog.selectedWeightIncreaseAmount already has over
-        // suggestNextWeightsForUpperTarget's configured default. nil (never
-        // decided — old data, or a session that didn't miss) falls through
-        // to the algorithm unchanged.
-        if let decrease = latest.selectedWeightDecreaseAmount {
-            return latestWeights.map { roundToPlate($0 + decrease, smallest: roundingIncrement) }
+        // A per-session wheel choice (WorkoutRecapView, recorded for every
+        // fixedSets exercise regardless of verdict) overrides everything
+        // below unconditionally — the streak/aggressiveness jump AND the
+        // automatic ~5% backoff a few lines down — not gated on what the
+        // verdict actually was, since the wheel itself isn't restricted by
+        // verdict either (see ExerciseLog.selectedWeightAdjustment's own
+        // doc). nil (never decided — old data predating this field) falls
+        // through to the algorithm unchanged.
+        if let adjustment = latest.selectedWeightAdjustment {
+            return latestWeights.map { roundToPlate($0 + adjustment, smallest: roundingIncrement) }
         }
 
         let streak = currentStreak(targetReps: targetReps, history: history)
@@ -116,11 +116,11 @@ enum ProgressionEngine {
     /// criteria aren't met) so every caller's own fallback behaves
     /// identically either way; only the criteria and the bump differ.
     /// `weightIncreaseAmount` is the exercise's CONFIGURED default bump —
-    /// used only as a fallback. When the qualifying session itself recorded
-    /// a per-session choice (ExerciseLog.selectedWeightIncreaseAmount, set
-    /// via WorkoutRecapView's Picker), that choice wins instead, so "No
-    /// Increase" chosen for a specific qualifying workout actually holds
-    /// the weight rather than being silently overridden by the default.
+    /// used only as a fallback for a qualifying session that predates
+    /// ExerciseLog.selectedWeightAdjustment. A per-session wheel choice, when
+    /// present, wins UNCONDITIONALLY — checked before qualifiesForUpperTarget
+    /// is even consulted, since the wheel isn't restricted to the direction
+    /// its own verdict suggested (see that field's own doc).
     static func suggestNextWeightsForUpperTarget(upperTargetReps: [Int],
                                                   weightIncreaseAmount: Double,
                                                   history: [ExerciseLog],
@@ -130,17 +130,11 @@ enum ProgressionEngine {
         let latestWeights = isBodyweight
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
-        guard qualifiesForUpperTarget(latest, upperTargetReps: upperTargetReps) else {
-            // Didn't qualify — a per-session decrease choice (recorded only
-            // when `latest` itself missed a target; see
-            // ExerciseLog.selectedWeightDecreaseAmount) applies here instead.
-            // nil (not missed, or missed but never decided) holds the weight,
-            // same as before this existed.
-            let decrease = latest.selectedWeightDecreaseAmount ?? 0
-            return latestWeights.map { roundToPlate($0 + decrease, smallest: roundingIncrement) }
+        if let adjustment = latest.selectedWeightAdjustment {
+            return latestWeights.map { roundToPlate($0 + adjustment, smallest: roundingIncrement) }
         }
-        let amount = latest.selectedWeightIncreaseAmount ?? weightIncreaseAmount
-        return latestWeights.map { roundToPlate($0 + amount, smallest: roundingIncrement) }
+        guard qualifiesForUpperTarget(latest, upperTargetReps: upperTargetReps) else { return latestWeights }
+        return latestWeights.map { roundToPlate($0 + weightIncreaseAmount, smallest: roundingIncrement) }
     }
 
     /// Same idea as `startingWeights`, for a slot with the fixed

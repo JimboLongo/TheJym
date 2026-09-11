@@ -1198,6 +1198,21 @@ final class ExerciseLog {
     /// read this off the most recent log and let it override their own
     /// computed suggestion whenever it's set.
     var selectedWeightDecreaseAmount: Double? = nil
+    /// PHASE 1 OF 2 (see migrateWeightAdjustmentFields below): the single
+    /// field replacing both `selectedWeightIncreaseAmount` and
+    /// `selectedWeightDecreaseAmount` — WorkoutRecapView now shows one
+    /// weight-adjustment wheel per fixedSets exercise regardless of verdict
+    /// (missed target / hit target but not ceiling / hit ceiling), so one
+    /// signed field is correct here where two separate UI flows used to
+    /// justify two fields. nil = never decided (predates this field); 0 = an
+    /// explicit "No Change" choice; otherwise the literal delta to ADD to
+    /// next session's weight (positive or negative). ProgressionEngine.
+    /// suggestNextWeights/suggestNextWeightsForUpperTarget read this off the
+    /// most recent log and honor it unconditionally when set — NOT gated by
+    /// qualifiesForUpperTarget/missedAnyTarget, since the wheel itself isn't
+    /// restricted by verdict (someone can freely pick any of the 7 values
+    /// regardless of which verdict they got).
+    var selectedWeightAdjustment: Double? = nil
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
     var sets: [SetLog] = []
@@ -1282,6 +1297,45 @@ final class ExerciseLog {
     var repTotalReached: Bool {
         guard case .repTotal(let target) = goalType else { return false }
         return repTotalSoFar >= target
+    }
+
+    /// PHASE 1 OF 2 for retiring selectedWeightIncreaseAmount/
+    /// selectedWeightDecreaseAmount in favor of selectedWeightAdjustment —
+    /// see that field's own doc. Idempotent, no persisted marker Bool (same
+    /// pattern as WorkoutSession.backfillRestDays): guarded purely on
+    /// `selectedWeightAdjustment == nil`, so re-running on every launch is
+    /// always safe and a no-op once a row's already migrated. Increase
+    /// stays positive, decrease is already negative — both map straight
+    /// across with no sign flip. A row with both old fields set (shouldn't
+    /// happen — see finishWorkout's own note on the two being mutually
+    /// exclusive in the sane case) prefers the increase, arbitrarily but
+    /// harmlessly, since that combination only arises from a misconfigured
+    /// ceiling to begin with.
+    ///
+    /// PHASE 2 (a later, separate deploy, once this one has actually run
+    /// against real device data at least once): delete
+    /// selectedWeightIncreaseAmount/selectedWeightDecreaseAmount and this
+    /// function's call site — SwiftData's automatic migration drops the old
+    /// columns fine once nothing references them, but doing that in THIS
+    /// same build would delete the source data before this function ever
+    /// got a chance to read it.
+    @MainActor
+    static func migrateWeightAdjustmentFields(context: ModelContext) -> Int {
+        let logs = (try? context.fetch(FetchDescriptor<ExerciseLog>())) ?? []
+        var migrated = 0
+        for log in logs where log.selectedWeightAdjustment == nil {
+            if let increase = log.selectedWeightIncreaseAmount {
+                log.selectedWeightAdjustment = increase
+                migrated += 1
+            } else if let decrease = log.selectedWeightDecreaseAmount {
+                log.selectedWeightAdjustment = decrease
+                migrated += 1
+            }
+        }
+        if migrated > 0 {
+            try? context.save()
+        }
+        return migrated
     }
 }
 

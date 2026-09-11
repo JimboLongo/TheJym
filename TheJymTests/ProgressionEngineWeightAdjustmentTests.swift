@@ -1,21 +1,21 @@
 //
-//  ProgressionEngineDecreaseTests.swift
+//  ProgressionEngineWeightAdjustmentTests.swift
 //  TheJymTests
 //
-//  Covers ExerciseLog.selectedWeightDecreaseAmount — the per-session
-//  weight-decrease choice (WorkoutRecapView's Picker, shown whenever a
-//  session missed a target) and how it overrides both
-//  suggestNextWeightsForUpperTarget's (ceiling path) and suggestNextWeights'
-//  (general algorithmic path, including its own automatic ~5% backoff)
-//  otherwise-computed suggestion for the NEXT session. Mirrors
-//  ProgressionEngineUpperTargetTests' coverage of the sibling increase field.
+//  Covers ExerciseLog.selectedWeightAdjustment — the single per-session
+//  weight-adjustment wheel choice (WorkoutRecapView, shown for every
+//  fixedSets exercise regardless of verdict) that replaced the separate
+//  selectedWeightIncreaseAmount/selectedWeightDecreaseAmount fields. Unlike
+//  those two, this one field applies UNCONDITIONALLY whenever set — not
+//  gated by qualifiesForUpperTarget/missedAnyTarget — since the wheel
+//  itself isn't restricted to the direction its own verdict suggested.
 //
 
 import XCTest
 import SwiftData
 @testable import TheJym
 
-final class ProgressionEngineDecreaseTests: XCTestCase {
+final class ProgressionEngineWeightAdjustmentTests: XCTestCase {
     @MainActor
     private func makeContext() -> ModelContext {
         let container = try! ModelContainer(
@@ -45,48 +45,42 @@ final class ProgressionEngineDecreaseTests: XCTestCase {
 
     // MARK: - General path (suggestNextWeights) — no ceiling involved
 
-    /// A persisted decrease choice overrides the algorithm's own suggestion
-    /// entirely — even when the streak/aggressiveness logic would otherwise
-    /// suggest holding or jumping.
     @MainActor
-    func testSuggestNextWeightsAppliesPersistedDecreaseOverridingTheAlgorithm() {
+    func testSuggestNextWeightsAppliesPersistedAdjustmentOverridingTheAlgorithm() {
         let context = makeContext()
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [10, 10, 10],
                         actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        entry.selectedWeightDecreaseAmount = -5
+        entry.selectedWeightAdjustment = -5
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeights(
             targetReps: [8, 8, 8], history: logs, aggressiveness: .aggressive, roundingIncrement: 2.5)
-        XCTAssertEqual(suggestion, [130, 130, 130], "the persisted decrease (-5) wins even though every set beat target and aggressive would otherwise jump")
+        XCTAssertEqual(suggestion, [130, 130, 130], "the persisted adjustment (-5) wins even though every set beat target and aggressive would otherwise jump")
     }
 
-    /// The persisted decrease also overrides the automatic ~5%-backoff
-    /// branch (avgSurplus <= -2) — a decrease of 0 ("No Decrease") holds the
-    /// weight instead of the automatic backoff kicking in.
+    /// An explicit "No Change" (0) overrides the automatic ~5%-backoff
+    /// branch (avgSurplus <= -2) that would otherwise trigger.
     @MainActor
-    func testSuggestNextWeightsExplicitNoDecreaseOverridesTheAutomaticBackoff() {
+    func testSuggestNextWeightsExplicitNoChangeOverridesTheAutomaticBackoff() {
         let context = makeContext()
-        // Missed by 3 reps on every set — would trigger the automatic ~5%
-        // backoff on its own.
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [5, 5, 5],
                         actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        entry.selectedWeightDecreaseAmount = 0
+        entry.selectedWeightAdjustment = 0
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeights(
             targetReps: [8, 8, 8], history: logs, aggressiveness: .moderate, roundingIncrement: 2.5)
-        XCTAssertEqual(suggestion, [135, 135, 135], "explicit No Decrease (0) must hold, not fall back to the automatic backoff")
+        XCTAssertEqual(suggestion, [135, 135, 135], "explicit No Change (0) must hold, not fall back to the automatic backoff")
     }
 
-    /// nil (never decided — old data, or a session that didn't miss) falls
-    /// through to the existing automatic backoff unchanged.
+    /// nil (never decided — old data predating this field) falls through to
+    /// the existing automatic backoff unchanged.
     @MainActor
-    func testSuggestNextWeightsFallsBackToAutomaticBackoffWhenNoDecreaseRecorded() {
+    func testSuggestNextWeightsFallsBackToAutomaticBackoffWhenNoAdjustmentRecorded() {
         let context = makeContext()
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [5, 5, 5],
                         actualWeights: [100, 100, 100], daysAgo: 1, context: context)
-        XCTAssertNil(entry.selectedWeightDecreaseAmount)
+        XCTAssertNil(entry.selectedWeightAdjustment)
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeights(
@@ -94,16 +88,15 @@ final class ProgressionEngineDecreaseTests: XCTestCase {
         XCTAssertEqual(suggestion, [95, 95, 95], "unchanged: the pre-existing ~5% backoff (100 * 0.95, rounded to plate)")
     }
 
-    // MARK: - Ceiling path (suggestNextWeightsForUpperTarget)
+    // MARK: - Ceiling path (suggestNextWeightsForUpperTarget) — applies
+    // unconditionally, regardless of qualifiesForUpperTarget
 
-    /// A persisted decrease choice applies when the session didn't qualify
-    /// for its ceiling.
     @MainActor
     func testSuggestNextWeightsForUpperTargetAppliesPersistedDecreaseWhenNotQualified() {
         let context = makeContext()
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [7, 7, 7],
                         actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        entry.selectedWeightDecreaseAmount = -10
+        entry.selectedWeightAdjustment = -10
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
@@ -111,35 +104,34 @@ final class ProgressionEngineDecreaseTests: XCTestCase {
         XCTAssertEqual(suggestion, [125, 125, 125])
     }
 
-    /// nil (never decided) holds the weight when not qualified — unchanged
-    /// from the pre-decrease-feature behavior.
+    /// The wheel isn't restricted by verdict — a DECREASE chosen for a
+    /// session that actually QUALIFIED for its ceiling still applies,
+    /// overriding the increase that would otherwise be automatic.
     @MainActor
-    func testSuggestNextWeightsForUpperTargetHoldsWhenNotQualifiedAndNoDecreaseRecorded() {
+    func testSuggestNextWeightsForUpperTargetAppliesPersistedDecreaseEvenWhenQualified() {
+        let context = makeContext()
+        let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [10, 10, 10],
+                        actualWeights: [135, 135, 135], daysAgo: 1, context: context)
+        entry.selectedWeightAdjustment = -5
+        let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
+            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 10, history: logs, roundingIncrement: 2.5)
+        XCTAssertEqual(suggestion, [130, 130, 130], "qualified, but the wheel's own -5 choice overrides the automatic +10")
+    }
+
+    /// nil (never decided) holds the weight when not qualified — unchanged
+    /// from the pre-adjustment-field behavior.
+    @MainActor
+    func testSuggestNextWeightsForUpperTargetHoldsWhenNotQualifiedAndNoAdjustmentRecorded() {
         let context = makeContext()
         let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [7, 7, 7],
                         actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        XCTAssertNil(entry.selectedWeightDecreaseAmount)
+        XCTAssertNil(entry.selectedWeightAdjustment)
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
             upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [135, 135, 135])
-    }
-
-    /// A qualifying session's increase amount is unaffected by the decrease
-    /// field's mere existence — they don't collide when both happen to be
-    /// set on old/unrelated logs in the same history.
-    @MainActor
-    func testSuggestNextWeightsForUpperTargetIncreaseStillWinsWhenQualified() {
-        let context = makeContext()
-        let entry = log("Bench Press", targetReps: [8, 8, 8], actualReps: [10, 10, 10],
-                        actualWeights: [135, 135, 135], daysAgo: 1, context: context)
-        entry.selectedWeightIncreaseAmount = 10
-        entry.selectedWeightDecreaseAmount = -10 // stale/irrelevant — qualifies, so decrease is never consulted
-        let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
-
-        let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
-        XCTAssertEqual(suggestion, [145, 145, 145], "qualifies, so the increase path applies — the decrease field is irrelevant here")
     }
 }
