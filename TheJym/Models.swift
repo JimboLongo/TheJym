@@ -1172,46 +1172,22 @@ final class ExerciseLog {
     /// at save time alongside `achievedRank`. Always false for a repTotal
     /// exercise (reaching its total is already required to finish it).
     var missedTarget: Bool = false
-    /// Per-session override of ExerciseDef.repSchemeCeilings' configured
-    /// weightIncreaseAmount, for a session that qualified for its ceiling
-    /// (WorkoutRecapView's weight-increase Picker) — "what I chose to do
-    /// THIS time," not the exercise's standing default. 0 is a genuine "No
-    /// Increase" choice, distinct from nil (never asked — predates this
-    /// field, or this log never qualified). ProgressionEngine.
-    /// suggestNextWeightsForUpperTarget reads this off the most recent
-    /// qualifying log and falls back to the configured default only when
-    /// it's nil.
-    var selectedWeightIncreaseAmount: Double? = nil
-    /// Per-session weight DECREASE, for a session that missed a target
-    /// (WorkoutRecapView's weight-decrease Picker, shown whenever
-    /// `missedTarget` above is true) — same "what I chose to do THIS time"
-    /// convention as `selectedWeightIncreaseAmount`, kept as its own field
-    /// rather than a signed value on that one so the two flows (qualifying
-    /// a ceiling vs. missing a target — mutually exclusive in the sane case,
-    /// see qualifiesForUpperTarget/missedAnyTarget's own invariant note)
-    /// never share a single ambiguous number. Stores the literal delta to
-    /// ADD to next session's weight, so it's always <= 0 (e.g. -5 for a 5lb
-    /// decrease) — consumption is a plain addition, no sign-flip needed. 0
-    /// is a genuine "No Decrease" choice, distinct from nil (never asked —
-    /// predates this field, or this log didn't miss a target).
+    /// Per-session weight-adjustment wheel choice (WorkoutRecapView), shown
+    /// for every fixedSets exercise regardless of verdict (missed target /
+    /// hit target but not ceiling / hit ceiling) — "what I chose to do THIS
+    /// time," not any standing default. nil = never decided (predates this
+    /// field); 0 = an explicit "No Change" choice; otherwise the literal
+    /// delta to ADD to next session's weight (positive or negative).
     /// ProgressionEngine.suggestNextWeights/suggestNextWeightsForUpperTarget
-    /// read this off the most recent log and let it override their own
-    /// computed suggestion whenever it's set.
-    var selectedWeightDecreaseAmount: Double? = nil
-    /// PHASE 1 OF 2 (see migrateWeightAdjustmentFields below): the single
-    /// field replacing both `selectedWeightIncreaseAmount` and
-    /// `selectedWeightDecreaseAmount` — WorkoutRecapView now shows one
-    /// weight-adjustment wheel per fixedSets exercise regardless of verdict
-    /// (missed target / hit target but not ceiling / hit ceiling), so one
-    /// signed field is correct here where two separate UI flows used to
-    /// justify two fields. nil = never decided (predates this field); 0 = an
-    /// explicit "No Change" choice; otherwise the literal delta to ADD to
-    /// next session's weight (positive or negative). ProgressionEngine.
-    /// suggestNextWeights/suggestNextWeightsForUpperTarget read this off the
-    /// most recent log and honor it unconditionally when set — NOT gated by
-    /// qualifiesForUpperTarget/missedAnyTarget, since the wheel itself isn't
-    /// restricted by verdict (someone can freely pick any of the 7 values
-    /// regardless of which verdict they got).
+    /// read this off the most recent log and honor it unconditionally when
+    /// set — NOT gated by qualifiesForUpperTarget/missedAnyTarget, since the
+    /// wheel itself isn't restricted by verdict (any of its 7 values is
+    /// selectable regardless of which verdict a session got). Replaced the
+    /// separate selectedWeightIncreaseAmount/selectedWeightDecreaseAmount
+    /// fields (removed once ExerciseLog.migrateWeightAdjustmentFields, its
+    /// one-time migration, had actually run against real device data — see
+    /// git history around that function's own doc for why the two steps
+    /// couldn't be one build).
     var selectedWeightAdjustment: Double? = nil
 
     @Relationship(deleteRule: .cascade, inverse: \SetLog.exerciseLog)
@@ -1297,45 +1273,6 @@ final class ExerciseLog {
     var repTotalReached: Bool {
         guard case .repTotal(let target) = goalType else { return false }
         return repTotalSoFar >= target
-    }
-
-    /// PHASE 1 OF 2 for retiring selectedWeightIncreaseAmount/
-    /// selectedWeightDecreaseAmount in favor of selectedWeightAdjustment —
-    /// see that field's own doc. Idempotent, no persisted marker Bool (same
-    /// pattern as WorkoutSession.backfillRestDays): guarded purely on
-    /// `selectedWeightAdjustment == nil`, so re-running on every launch is
-    /// always safe and a no-op once a row's already migrated. Increase
-    /// stays positive, decrease is already negative — both map straight
-    /// across with no sign flip. A row with both old fields set (shouldn't
-    /// happen — see finishWorkout's own note on the two being mutually
-    /// exclusive in the sane case) prefers the increase, arbitrarily but
-    /// harmlessly, since that combination only arises from a misconfigured
-    /// ceiling to begin with.
-    ///
-    /// PHASE 2 (a later, separate deploy, once this one has actually run
-    /// against real device data at least once): delete
-    /// selectedWeightIncreaseAmount/selectedWeightDecreaseAmount and this
-    /// function's call site — SwiftData's automatic migration drops the old
-    /// columns fine once nothing references them, but doing that in THIS
-    /// same build would delete the source data before this function ever
-    /// got a chance to read it.
-    @MainActor
-    static func migrateWeightAdjustmentFields(context: ModelContext) -> Int {
-        let logs = (try? context.fetch(FetchDescriptor<ExerciseLog>())) ?? []
-        var migrated = 0
-        for log in logs where log.selectedWeightAdjustment == nil {
-            if let increase = log.selectedWeightIncreaseAmount {
-                log.selectedWeightAdjustment = increase
-                migrated += 1
-            } else if let decrease = log.selectedWeightDecreaseAmount {
-                log.selectedWeightAdjustment = decrease
-                migrated += 1
-            }
-        }
-        if migrated > 0 {
-            try? context.save()
-        }
-        return migrated
     }
 }
 

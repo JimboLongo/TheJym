@@ -123,10 +123,6 @@ struct ContentView: View {
             repairRestDaySessionsMissingPhase()
             WorkoutSession.backfillRestDays(context: context)
             WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
-            let migratedAdjustments = ExerciseLog.migrateWeightAdjustmentFields(context: context)
-            if migratedAdjustments > 0 {
-                print("migrateWeightAdjustmentFields: migrated \(migratedAdjustments) ExerciseLog row(s)")
-            }
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
             repairDuplicatePlannedExerciseSlotIDs()
