@@ -204,10 +204,13 @@ struct ExercisesView: View {
             }
             .sheet(isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
                 if let def = addSetTarget {
-                    AddSetSheet(exerciseName: def.name) { goalType, reps in
+                    AddSetSheet(exerciseName: def.name) { goalType, reps, ceiling, weightIncreaseAmount in
                         switch goalType {
                         case .fixedSets:
                             def.addRepScheme(reps)
+                            if let ceiling, let weightIncreaseAmount {
+                                def.setCeiling(for: reps, upperTargetReps: ceiling, weightIncreaseAmount: weightIncreaseAmount)
+                            }
                         case .repTotal(let target):
                             def.addRepTotalTarget(target)
                         }

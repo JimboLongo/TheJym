@@ -328,7 +328,7 @@ struct PlannedExerciseRow: View {
             Button("Cancel", role: .cancel) { }
         }
         .sheet(isPresented: $showingAddSet) {
-            AddSetSheet(exerciseName: pe.exerciseName) { goalType, reps in
+            AddSetSheet(exerciseName: pe.exerciseName) { goalType, reps, ceiling, weightIncreaseAmount in
                 let targetDef: ExerciseDef
                 if let def {
                     targetDef = def
@@ -339,6 +339,9 @@ struct PlannedExerciseRow: View {
                 switch goalType {
                 case .fixedSets:
                     targetDef.addRepScheme(reps)
+                    if let ceiling, let weightIncreaseAmount {
+                        targetDef.setCeiling(for: reps, upperTargetReps: ceiling, weightIncreaseAmount: weightIncreaseAmount)
+                    }
                     pe.targetReps = reps
                     pe.goalType = .fixedSets
                 case .repTotal(let target):

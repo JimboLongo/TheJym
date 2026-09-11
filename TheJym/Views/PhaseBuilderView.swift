@@ -644,9 +644,12 @@ struct AddExerciseToDayView: View {
             }
             .sheet(isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
                 if let def = addSetTarget {
-                    AddSetSheet(exerciseName: def.name) { goalType, reps in
+                    AddSetSheet(exerciseName: def.name) { goalType, reps, ceiling, weightIncreaseAmount in
                         if case .fixedSets = goalType {
                             def.addRepScheme(reps)
+                            if let ceiling, let weightIncreaseAmount {
+                                def.setCeiling(for: reps, upperTargetReps: ceiling, weightIncreaseAmount: weightIncreaseAmount)
+                            }
                             try? context.save()
                         }
                         onPick(def, reps, goalType)
@@ -662,21 +665,52 @@ struct AddExerciseToDayView: View {
 /// Add a new set to an exercise — either a fixed rep scheme (e.g.
 /// "5/5/5/3/3/3") or, toggled on, a single rep-total target (e.g. "40") for
 /// exercises like Pull-Up where the goal is a running total, not fixed sets.
+/// For Fixed Sets only, also optionally captures a ceiling
+/// (ExerciseDef.repSchemeCeilings) inline — the same "hit this ceiling on
+/// every set, get this weight bump" rule UpperTargetPickerSheet edits after
+/// the fact, offered here at set-creation time so the common case (you
+/// already know you want one) doesn't need a separate trip to the Exercises
+/// tab. Ceiling has no meaning for a repTotal goal (repSchemeCeilings is
+/// keyed by a fixedSets reps array; repTotal's own targets live in a
+/// completely separate repTotalTargets array), so neither field appears
+/// when Rep Total is selected. Both fields are optional even for Fixed
+/// Sets — this doesn't force ceiling configuration on every rep scheme.
 struct AddSetSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let exerciseName: String
     /// `reps` is only meaningful for `.fixedSets` — empty for `.repTotal`.
-    var onAdd: (GoalType, [Int]) -> Void
+    /// The ceiling pair is nil/nil whenever no ceiling was entered (always
+    /// nil/nil for `.repTotal`) — never a half-filled ceiling.
+    var onAdd: (GoalType, [Int], [Int]?, Double?) -> Void
 
     @State private var isRepTotal = false
     @State private var repsText = ""
     @State private var targetText = ""
+    @State private var ceilingRepsText = ""
+    /// Brand-new sheet, no existing ceiling to round to — defaults straight
+    /// to the middle choice, matching UpperTargetPickerSheet's own
+    /// brand-new-sheet default.
+    @State private var weightIncreaseAmount: Double = 5
 
     private var reps: [Int] {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
     }
     private var target: Int? { Int(targetText) }
-    private var canAdd: Bool { isRepTotal ? (target ?? 0) > 0 : !reps.isEmpty }
+    /// Same parse as `reps`/UpperTargetPickerSheet's own.
+    private var ceilingReps: [Int] {
+        ceilingRepsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    }
+    /// Ceiling is entirely optional — blank ceiling text is fine (no
+    /// ceiling requested). Only blocks Add when something was actually
+    /// typed but doesn't parse to exactly the base reps' own count, same
+    /// rule UpperTargetPickerSheet's own canSet enforces.
+    private var canAdd: Bool {
+        guard !isRepTotal else { return (target ?? 0) > 0 }
+        guard !reps.isEmpty else { return false }
+        let ceilingText = ceilingRepsText.trimmingCharacters(in: .whitespaces)
+        return ceilingText.isEmpty || ceilingReps.count == reps.count
+    }
 
     var body: some View {
         NavigationStack {
@@ -697,6 +731,22 @@ struct AddSetSheet: View {
                             .font(.system(.body, design: .monospaced))
                     }
                 }
+                if !isRepTotal {
+                    Section {
+                        TextField("Ceiling reps e.g. 8/8/8/8 (optional)", text: $ceilingRepsText)
+                            .keyboardType(.numbersAndPunctuation)
+                            .font(.system(.body, design: .monospaced))
+                        if !ceilingReps.isEmpty && ceilingReps.count != reps.count {
+                            Label("This set has \(reps.count) set\(reps.count == 1 ? "" : "s") — enter exactly \(reps.count) number\(reps.count == 1 ? "" : "s") to set a ceiling.",
+                                  systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        weightIncreaseRow
+                    } footer: {
+                        Text("Optional — once every set meets or beats its ceiling, this weight bump replaces the usual AI suggestion for this rep scheme, in every phase it's used.")
+                    }
+                }
             }
             .navigationTitle("Add a Set to \(exerciseName)")
             .navigationBarTitleDisplayMode(.inline)
@@ -706,16 +756,54 @@ struct AddSetSheet: View {
                     Button("Add") {
                         if isRepTotal {
                             guard let target, target > 0 else { return }
-                            onAdd(.repTotal(target: target), [])
+                            onAdd(.repTotal(target: target), [], nil, nil)
                         } else {
                             guard !reps.isEmpty else { return }
-                            onAdd(.fixedSets, reps)
+                            let ceiling = ceilingReps.isEmpty ? nil : ceilingReps
+                            onAdd(.fixedSets, reps, ceiling, ceiling != nil ? weightIncreaseAmount : nil)
                         }
                     }
                     .disabled(!canAdd)
                 }
             }
         }
+    }
+
+    /// "Weight increase" + the same fixed 2.5/5/10 menu Picker
+    /// UpperTargetPickerSheet uses (its own `weightIncreaseChoices`, reused
+    /// rather than rebuilt) — stacked vertically at an accessibility
+    /// Dynamic Type size instead of staying in one HStack, same fix
+    /// WorkoutRecapView's own weight-adjustment row needed: squeezing a
+    /// longer label against a menu Picker in one row silently truncates at
+    /// AX5 otherwise. `.fixedSize(horizontal: false, vertical: true)` on
+    /// the label forces it to take its full wrapped height rather than
+    /// deferring to whatever width the row's layout pass happens to
+    /// propose — confirmed necessary by rendering, not assumed.
+    @ViewBuilder
+    private var weightIncreaseRow: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Weight increase").foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                weightIncreasePicker
+            }
+        } else {
+            HStack {
+                Text("Weight increase").foregroundStyle(.secondary)
+                Spacer()
+                weightIncreasePicker
+            }
+        }
+    }
+
+    private var weightIncreasePicker: some View {
+        Picker("Weight increase", selection: $weightIncreaseAmount) {
+            ForEach(UpperTargetPickerSheet.weightIncreaseChoices, id: \.self) { choice in
+                Text("\(Formatters.trim(choice)) lb").tag(choice)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
     }
 }
 

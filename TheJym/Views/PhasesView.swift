@@ -379,12 +379,16 @@ struct PhaseDetailView: View {
             Button("Cancel", role: .cancel) { pickingSetFor = nil }
         }
         .sheet(item: $addingNewSetFor) { target in
-            AddSetSheet(exerciseName: target.effective.exerciseName) { goalType, reps in
+            AddSetSheet(exerciseName: target.effective.exerciseName) { goalType, reps, ceiling, weightIncreaseAmount in
                 let def = exerciseDefs.first { $0.name == target.effective.exerciseName }
                     ?? { let new = ExerciseDef(name: target.effective.exerciseName, isBodyweight: target.effective.isBodyweight)
                          context.insert(new); return new }()
                 switch goalType {
-                case .fixedSets: def.addRepScheme(reps)
+                case .fixedSets:
+                    def.addRepScheme(reps)
+                    if let ceiling, let weightIncreaseAmount {
+                        def.setCeiling(for: reps, upperTargetReps: ceiling, weightIncreaseAmount: weightIncreaseAmount)
+                    }
                 case .repTotal(let total): def.addRepTotalTarget(total)
                 }
                 target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
