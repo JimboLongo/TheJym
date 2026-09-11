@@ -208,7 +208,11 @@ struct PhaseDetailView: View {
     /// than pinned to the leading edge with a gap before it. Scaled down
     /// 10% as a whole (text included, not just the switch) — "the toggle"
     /// here means this one control, matching how it's referred to
-    /// everywhere else in this view.
+    /// everywhere else in this view. Trailing padding shifts the whole
+    /// group further left, off the DisclosureGroup's own chevron — the
+    /// chevron isn't part of this view (DisclosureGroup appends it itself
+    /// outside whatever's returned here), so padding is the only lever
+    /// available to create clearance from it.
     private func deloadToggle(_ cycle: Int) -> some View {
         Toggle("Deload", isOn: isCycleDeload(cycle))
             .toggleStyle(.switch)
@@ -216,6 +220,7 @@ struct PhaseDetailView: View {
             .tint(.green)
             .fixedSize()
             .scaleEffect(0.9)
+            .padding(.trailing, 10)
     }
 
     /// This exact cycle's session for `day`, if logged — what actually
