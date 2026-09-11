@@ -62,9 +62,10 @@ struct TrainingStats {
     /// Every real, exercise-bearing session ever logged — unbounded, same
     /// scope as `allTimeMiles` above rather than `daysSinceStart`'s window.
     var allTimeWorkoutCount: Int
-    /// Hours across every session with a recorded durationSeconds — a
-    /// session logged before duration tracking existed (or one where the
-    /// workout stopwatch was never started) is excluded from this sum
+    /// Hours across every non-deload session with a recorded
+    /// durationSeconds — a session logged before duration tracking existed
+    /// (or one where the workout stopwatch was never started), and any
+    /// deload session regardless of duration, are excluded from this sum
     /// entirely, not counted as 0. StatsView states this scope explicitly
     /// rather than let the number look complete when it isn't.
     var allTimeHoursTrained: Double
@@ -368,15 +369,20 @@ enum StatsEngine {
         let priorYearMtdMiles = milesSum(from: priorYearMonthStart, through: priorYearToday)
         let allTimeMiles = milesEntries.map(\.miles).reduce(0, +)
 
-        // Hours trained — sum of durationSeconds across every session that
-        // has one. A session predating duration tracking (or one where the
-        // workout stopwatch was never started) has durationSeconds == nil
-        // and is excluded from the sum entirely, not counted as 0 — same
-        // "omit rather than show a false number" rule as everywhere else
-        // here. allSessions, not just realSessionDates' filtered set, since
-        // a genuine (non-rest-placeholder) session with no exerciseLogs
-        // shouldn't happen once it has a duration anyway.
-        let allTimeHoursTrained = Double(allSessions.compactMap(\.durationSeconds).reduce(0, +)) / 3600
+        // Hours trained — sum of durationSeconds across every non-deload
+        // session that has one. A session predating duration tracking (or
+        // one where the workout stopwatch was never started) has
+        // durationSeconds == nil and is excluded from the sum entirely, not
+        // counted as 0 — same "omit rather than show a false number" rule
+        // as everywhere else here. A deload session is excluded the same
+        // way: its cut weights already skew comparisons elsewhere (see
+        // comparisons(for:...)'s own deload-matching doc), and its duration
+        // shouldn't quietly pull this average down either — excluded from
+        // the input, not folded in as a 0. allSessions, not just
+        // realSessionDates' filtered set, since a genuine (non-rest-
+        // placeholder) session with no exerciseLogs shouldn't happen once
+        // it has a duration anyway.
+        let allTimeHoursTrained = Double(allSessions.filter { !$0.isDeload }.compactMap(\.durationSeconds).reduce(0, +)) / 3600
 
         // Completed, no-longer-active phases get their own frozen summary,
         // anchored to that phase's own end date (its last session) instead
@@ -873,14 +879,17 @@ enum StatsEngine {
                              estimatedOneRepMaxDate: bestEstimate.date)
     }
 
-    /// Every session logged against day template `name` (matched by
-    /// dayLabel — see dayDurationGroups' own note on why) within `sessions`
-    /// that has a recorded duration — a session with durationSeconds == nil
-    /// (predates duration tracking, or the stopwatch was never started that
-    /// day) is skipped rather than treated as 0.
+    /// Every non-deload session logged against day template `name` (matched
+    /// by dayLabel — see dayDurationGroups' own note on why) within
+    /// `sessions` that has a recorded duration — a session with
+    /// durationSeconds == nil (predates duration tracking, or the stopwatch
+    /// was never started that day) is skipped rather than treated as 0, and
+    /// a deload session is skipped the same way (its cut weights already
+    /// get excluded from comparable history elsewhere; its duration
+    /// shouldn't enter this spread either).
     private static func dayDurationQualifyingSessions(named name: String,
                                                        in sessions: [WorkoutSession]) -> [Int] {
-        sessions.filter { $0.dayLabel == name }.compactMap(\.durationSeconds)
+        sessions.filter { $0.dayLabel == name && !$0.isDeload }.compactMap(\.durationSeconds)
     }
 
     /// One day template's duration spread within `sessions` — nil if none

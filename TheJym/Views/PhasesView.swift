@@ -185,7 +185,7 @@ struct PhaseDetailView: View {
             Toggle("Deload", isOn: isCycleDeload(cycle))
                 .toggleStyle(.button)
                 .font(.caption)
-                .tint(.orange)
+                .tint(.green)
         }
     }
 
