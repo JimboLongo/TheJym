@@ -220,7 +220,7 @@ struct PhaseDetailView: View {
             .tint(.green)
             .fixedSize()
             .scaleEffect(0.9)
-            .padding(.trailing, 10)
+            .padding(.trailing, 25)
     }
 
     /// This exact cycle's session for `day`, if logged — what actually
