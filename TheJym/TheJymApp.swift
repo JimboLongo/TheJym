@@ -123,6 +123,7 @@ struct ContentView: View {
             repairRestDaySessionsMissingPhase()
             WorkoutSession.backfillRestDays(context: context)
             WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
+            WorkoutSession.fillMissingDurationsWithFabricatedValues(context: context)
             backfillBodyweightFlags()
             syncPlannedExerciseBodyweightFlags()
             repairDuplicatePlannedExerciseSlotIDs()

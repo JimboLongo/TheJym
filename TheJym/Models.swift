@@ -1146,6 +1146,59 @@ final class WorkoutSession {
             context.delete(session)
         }
     }
+
+    /// One-time cleanup, deliberately fabricated: every logged workout
+    /// missing a recorded duration (the stopwatch wasn't started, or it was
+    /// logged before durationSeconds existed) gets an independent random
+    /// value in 61-79 minutes (3660-4740s), so the all-time hours stat and
+    /// per-day duration breakdown have a number to work with — at the
+    /// deliberate cost of making these indistinguishable from genuinely
+    /// recorded durations. Idempotent by data shape (guard on
+    /// durationSeconds == nil), same pattern as every other repair in this
+    /// file — no persisted marker Bool, since a second run finds nothing
+    /// left with a nil duration to fabricate one for.
+    ///
+    /// Deliberately excludes two shapes that never represent real training
+    /// time, so this never attributes training time to a day nothing was
+    /// actually trained on:
+    /// - `isBackfilledRestPlaceholder` — the gap-filled "nothing happened"
+    ///   placeholder that property's own doc describes.
+    /// - Any session with NO exercise logs at all, even one day-matched to
+    ///   a real scheduled Rest day — `logPlainRestDay()` (TodayView) and
+    ///   the import gap-fill path (ImportEngine) both create this exact
+    ///   "day set, zero logs" shape, functionally identical to the
+    ///   placeholder above (no work was logged) but reached through a
+    ///   different creation path than `isBackfilledRestPlaceholder`'s own
+    ///   `day == nil` check happens to catch.
+    /// - Any session whose only exercise log(s) are a rest-day activity
+    ///   (ExerciseLog.restDayActivity != nil — a logged walk, etc.): unlike
+    ///   an actual weight workout, where nil genuinely just means the
+    ///   stopwatch wasn't used THAT one time, a rest-day activity has no
+    ///   code path that EVER sets durationSeconds, live or imported —
+    ///   fabricating a gym-session-length duration for a category that can
+    ///   never legitimately have one is a different, bigger fabrication
+    ///   than filling in occasionally-missing data.
+    ///
+    /// Everything else — any session with at least one real (non-rest-
+    /// activity) exercise log, live-logged, manually added, or imported —
+    /// gets a fabricated value.
+    @MainActor
+    @discardableResult
+    static func fillMissingDurationsWithFabricatedValues(context: ModelContext) -> Int {
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        var filled = 0
+        for session in sessions where session.durationSeconds == nil {
+            guard !session.isBackfilledRestPlaceholder,
+                  !session.exerciseLogs.isEmpty,
+                  !session.exerciseLogs.allSatisfy({ $0.restDayActivity != nil }) else { continue }
+            session.durationSeconds = Int.random(in: 3660...4740)
+            filled += 1
+        }
+        if filled > 0 {
+            try? context.save()
+        }
+        return filled
+    }
 }
 
 @Model
