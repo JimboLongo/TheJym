@@ -134,6 +134,7 @@ struct ContentView: View {
             undoPrematurePhaseAutoContinue()
             autoContinueQueuedPhases()
             repairLegacyRestActivityNames()
+            clearDurationsBeforeReliableTracking()
             refreshStreakNotification()
             refreshWeightNotification()
             removeOrphanedExerciseDefs()
@@ -455,6 +456,33 @@ struct ContentView: View {
             changed = true
         }
 
+        if changed { try? context.save() }
+    }
+
+    /// One-time cleanup covering two things at once: the brief shipped
+    /// window (ccb022e, reverted in 5b9f160) where a repair fabricated a
+    /// plausible-but-fake 61-79 minute durationSeconds for any logged
+    /// workout missing one — any value it actually wrote is still sitting
+    /// in the store even after the code revert — and the fact that
+    /// durationSeconds itself had no reliable tracking at all until
+    /// 46136ca (2026-09-08). Clearing every session dated before 9/9/2026
+    /// back to nil covers both: nothing before that date ever had a
+    /// trustworthy recorded duration to begin with, fabricated or
+    /// genuine, and the one shipped build of the fabrication repair only
+    /// ever ran during that same window, so there's no case of a
+    /// fabricated value landing on or after the cutoff. Self-expiring,
+    /// same reasoning as repairLegacyRestActivityNames' own cutoff above —
+    /// once no install has a non-nil duration left before 9/9/2026, this
+    /// is a fast no-op forever after; no didRepair-style Bool.
+    private func clearDurationsBeforeReliableTracking() {
+        let cal = Calendar.current
+        let cutoff = cal.date(from: DateComponents(year: 2026, month: 9, day: 9))!
+        let sessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []
+        var changed = false
+        for session in sessions where session.durationSeconds != nil && session.date < cutoff {
+            session.durationSeconds = nil
+            changed = true
+        }
         if changed { try? context.save() }
     }
 
