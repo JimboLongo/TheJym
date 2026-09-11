@@ -190,21 +190,32 @@ struct PhaseDetailView: View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Cycle \(cycle)").font(.headline)
-                Toggle("Deload", isOn: isCycleDeload(cycle))
-                    .toggleStyle(.switch)
-                    .font(.caption)
-                    .tint(.green)
+                deloadToggle(cycle)
             }
         } else {
             HStack {
                 Text("Cycle \(cycle)").font(.headline)
                 Spacer()
-                Toggle("Deload", isOn: isCycleDeload(cycle))
-                    .toggleStyle(.switch)
-                    .font(.caption)
-                    .tint(.green)
+                deloadToggle(cycle)
             }
         }
+    }
+
+    /// `.switch` style's default view spreads its label and the switch
+    /// apart to fill whatever width it's given (the same way a List row's
+    /// Toggle does) — `.fixedSize()` collapses it back to its own natural
+    /// width instead, so "Deload" sits directly against the switch rather
+    /// than pinned to the leading edge with a gap before it. Scaled down
+    /// 10% as a whole (text included, not just the switch) — "the toggle"
+    /// here means this one control, matching how it's referred to
+    /// everywhere else in this view.
+    private func deloadToggle(_ cycle: Int) -> some View {
+        Toggle("Deload", isOn: isCycleDeload(cycle))
+            .toggleStyle(.switch)
+            .font(.caption)
+            .tint(.green)
+            .fixedSize()
+            .scaleEffect(0.9)
     }
 
     /// This exact cycle's session for `day`, if logged — what actually
