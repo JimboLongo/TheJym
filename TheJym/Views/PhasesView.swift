@@ -109,6 +109,7 @@ private struct OverrideTarget: Identifiable {
 struct PhaseDetailView: View {
     let phase: Phase
     @Environment(\.modelContext) private var context
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \Bar.name) private var bars: [Bar]
     @Query private var settingsList: [AppSettings]
@@ -178,14 +179,31 @@ struct PhaseDetailView: View {
     /// The "Cycle N" bar itself — its own function (not inlined into the
     /// DisclosureGroup's label closure) to keep `body` simple enough for
     /// the type-checker now that it also holds the Deload toggle.
+    /// Stacks vertically at an accessibility Dynamic Type size instead of
+    /// staying in one HStack — switching the toggle to `.switch` style
+    /// (a wider control than the old compact `.button` chip) made an
+    /// already-cramped row measurably worse at AX5, taking "Deload" from a
+    /// 2-line wrap to a 3-line one; confirmed by rendering both ways rather
+    /// than assumed.
+    @ViewBuilder
     private func cycleLabel(_ cycle: Int) -> some View {
-        HStack {
-            Text("Cycle \(cycle)").font(.headline)
-            Spacer()
-            Toggle("Deload", isOn: isCycleDeload(cycle))
-                .toggleStyle(.button)
-                .font(.caption)
-                .tint(.green)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Cycle \(cycle)").font(.headline)
+                Toggle("Deload", isOn: isCycleDeload(cycle))
+                    .toggleStyle(.switch)
+                    .font(.caption)
+                    .tint(.green)
+            }
+        } else {
+            HStack {
+                Text("Cycle \(cycle)").font(.headline)
+                Spacer()
+                Toggle("Deload", isOn: isCycleDeload(cycle))
+                    .toggleStyle(.switch)
+                    .font(.caption)
+                    .tint(.green)
+            }
         }
     }
 
