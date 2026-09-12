@@ -105,6 +105,14 @@ struct StatsView: View {
             }
             .navigationTitle("Stats")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        ClaudeStatsView()
+                    } label: {
+                        Image(systemName: "sparkles")
+                    }
+                    .accessibilityLabel("Claude Stats")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     OverflowMenuButton(overflowTab: $overflowTab)
                 }

@@ -901,6 +901,106 @@ enum StatsEngine {
         let average = Double(durations.reduce(0, +)) / Double(durations.count)
         return DayDurationResult(shortestSeconds: shortest, averageSeconds: average, longestSeconds: longest)
     }
+
+    /// Classifies a single calendar day for the Claude Stats consistency
+    /// heatmap — reuses the same session shapes every other stat already
+    /// reads (WorkoutSession.isDeload, ExerciseLog.restDayActivity) rather
+    /// than inventing a new way to tell what a day was. A day can have more
+    /// than one session (e.g. a bonus session); it counts as `.trained` (or
+    /// `.deload`) the moment ANY of that day's sessions has a real,
+    /// non-rest-activity exercise log — a plain "I rested today" credit and
+    /// a backfilled gap-fill placeholder both have `exerciseLogs` that are
+    /// either empty or restDayActivity-only, so both land in `.rest`
+    /// identically; there's no meaningful difference between them for a
+    /// glance-at-a-heatmap purpose the way there is elsewhere in Stats.
+    static func consistencyDayKind(on date: Date, sessions: [WorkoutSession],
+                                   cal: Calendar = .current) -> ConsistencyDayKind {
+        let daySessions = sessions.filter { cal.isDate($0.date, inSameDayAs: date) }
+        guard !daySessions.isEmpty else { return .empty }
+        let trainedSessions = daySessions.filter { session in
+            session.exerciseLogs.contains { $0.restDayActivity == nil }
+        }
+        guard !trainedSessions.isEmpty else { return .rest }
+        return trainedSessions.contains(where: \.isDeload) ? .deload : .trained
+    }
+}
+
+/// One day's classification on the Claude Stats consistency heatmap — see
+/// StatsEngine.consistencyDayKind for exactly how a day earns each case.
+enum ConsistencyDayKind {
+    case trained
+    case deload
+    case rest
+    case empty
+}
+
+/// The Claude Stats page's one new derived number: a single 0-100 "how am I
+/// doing right now" composite, distinct from anything StatsEngine itself
+/// computes. StatsEngine's own numbers are each exhaustive-and-exact by
+/// design (a lifetime percentage, an unbounded day-delta, a streak count) —
+/// this engine's only job is blending three of them into one glanceable
+/// score, which is a presentation concern, not a new fact about the data.
+enum MomentumEngine {
+    /// Maps an unbounded day-delta (StatsAndPlates.cyclePaceDelta: actual
+    /// sessions vs. scheduled-to-date, can run arbitrarily far either way)
+    /// onto a 0-1 signal — 0 at `ceilingDays` or more behind, 1 at
+    /// `ceilingDays` or more ahead, exactly 0.5 dead on pace, linear between.
+    /// `ceilingDays` defaults to 5: far enough that a single missed/bonus
+    /// session (±1 day) doesn't swing the signal wildly, close enough that a
+    /// full week's slip still reads as close to the floor rather than
+    /// barely denting it.
+    static func normalizedPace(_ delta: Int, ceilingDays: Int = 5) -> Double {
+        guard ceilingDays > 0 else { return 0.5 }
+        let clamped = max(-ceilingDays, min(ceilingDays, delta))
+        return (Double(clamped) / Double(ceilingDays) + 1) / 2
+    }
+
+    /// Maps a streak length onto a 0-1 signal — `streak / ceiling`, clamped
+    /// to 1. `ceiling` defaults to 14 (two weeks): long enough that a normal
+    /// week-to-week streak doesn't instantly max the signal out, short
+    /// enough that a genuinely long streak still saturates it rather than
+    /// asymptotically creeping toward 1 forever.
+    static func normalizedStreak(_ streak: Int, ceiling: Int = 14) -> Double {
+        guard ceiling > 0 else { return 0 }
+        return min(1, Double(streak) / Double(ceiling))
+    }
+
+    /// The composite score itself.
+    ///
+    /// WEIGHTING (a genuine design call, not a fact derivable from the data):
+    /// with an active phase, adherence 50% / pace 30% / streak 20%.
+    /// Adherence carries the most weight because it's already a clean,
+    /// lifetime-scoped 0-100 signal — direct, and hard to swing with just a
+    /// day or two. Pace comes next: it reacts fastest to how THIS block is
+    /// going right now (a couple of missed or bonus days move it visibly),
+    /// which is exactly the "right now" flavor this page wants, but that
+    /// same reactivity makes it noisier than adherence, hence the smaller
+    /// share. Streak gets the least weight on purpose — a single day off
+    /// zeroes it outright, and a score that let a streak break crater the
+    /// whole number would misrepresent someone who's otherwise training
+    /// consistently. It's still included, just as a smaller accent, because
+    /// "on a roll" is real and worth reflecting.
+    ///
+    /// With NO active phase, adherencePercent/cyclePaceDelta are both nil
+    /// (StatsEngine only computes them against a phase's own schedule) —
+    /// pace has no meaning to fall back to, so its 30% share folds into
+    /// adherence, using `percentLogged` (the same daysLogged/daysSinceStart
+    /// ratio TrainingStats always computes, phase or no phase) as the
+    /// lifetime-adherence substitute. Streak keeps its 20%.
+    static func score(adherencePercent: Double?, cyclePaceDelta: Int?,
+                      currentStreak: Int, percentLogged: Double) -> Int {
+        let streak01 = normalizedStreak(currentStreak)
+        let composite: Double
+        if let adherencePercent, let cyclePaceDelta {
+            let adherence01 = min(1, max(0, adherencePercent / 100))
+            let pace01 = normalizedPace(cyclePaceDelta)
+            composite = adherence01 * 0.5 + pace01 * 0.3 + streak01 * 0.2
+        } else {
+            let adherence01 = min(1, max(0, percentLogged))
+            composite = adherence01 * 0.8 + streak01 * 0.2
+        }
+        return Int((composite * 100).rounded())
+    }
 }
 
 // MARK: - Plate Calculator
