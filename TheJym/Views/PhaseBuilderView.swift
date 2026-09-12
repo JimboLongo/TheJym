@@ -748,9 +748,15 @@ struct AddSetSheet: View {
                     }
                 }
             }
-            .navigationTitle("Add a Set to \(exerciseName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Add a Set to \(exerciseName)")
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
@@ -814,6 +820,7 @@ struct AddSetSheet: View {
 /// (PhaseEditView) and the per-cycle override picker (PhasesView).
 struct RestTimePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let exerciseName: String
     var onSet: (Int?) -> Void
 
@@ -851,9 +858,15 @@ struct RestTimePickerSheet: View {
                     .clipped()
                 }
             }
-            .navigationTitle("Rest Time for \(exerciseName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Rest Time for \(exerciseName)")
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .destructiveAction) {
                     Button("Clear") { onSet(nil); dismiss() }
@@ -883,6 +896,7 @@ struct RestTimePickerSheet: View {
 /// view has no idea where that's actually stored.
 struct UpperTargetPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let exerciseName: String
     let setCount: Int
     var onSet: ([Int]?, Double?) -> Void
@@ -962,9 +976,15 @@ struct UpperTargetPickerSheet: View {
                     }
                 }
             }
-            .navigationTitle("Rep Ceiling for \(exerciseName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Rep Ceiling for \(exerciseName)")
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .destructiveAction) {
                     Button("Clear") { onSet(nil, nil); dismiss() }
