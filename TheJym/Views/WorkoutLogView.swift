@@ -734,6 +734,36 @@ struct WorkoutLogView: View {
             .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
     }
 
+    /// The single most recent log for this exercise INCLUDING deload
+    /// sessions — the deliberate counterpart to `history(for:)`, which
+    /// excludes them. A deload's own WEIGHTS stay out of progression (they
+    /// may have been hand-lowered just for that week, and shouldn't become
+    /// the next cycle's starting point), but the Workout Recap wheel choice
+    /// recorded on it is a real decision about what to do NEXT and must
+    /// still be honored — otherwise the recap sheet a deload workout now
+    /// shows (see finishWorkout's own guard) would silently discard
+    /// whatever the user picked. Passed to ProgressionEngine as
+    /// `adjustmentLog`; see suggestNextWeights' doc for that split.
+    /// Bonus sessions stay excluded here for the same reason they are in
+    /// `history(for:)` — an extra session in an already-filled slot isn't
+    /// the cycle's own result.
+    private func latestLogIncludingDeloads(for pe: PlannedExercise) -> ExerciseLog? {
+        allExerciseLogs
+            .filter { log in
+                guard !log.sets.isEmpty, log.exerciseName == pe.exerciseName,
+                      log.session?.isBonusSession != true
+                else { return false }
+                switch pe.goalType {
+                case .fixedSets:
+                    guard case .fixedSets = log.goalType else { return false }
+                    return true
+                case .repTotal:
+                    return log.planKey == pe.planKey
+                }
+            }
+            .max { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
+    }
+
     /// Finest weight jump achievable for this exercise's equipment — the
     /// standard 2.5 lb for barbell/plate work, or a finer dumbbell increment
     /// if the matching attachment is on hand.
@@ -797,12 +827,14 @@ struct WorkoutLogView: View {
                     // slot — see ExerciseDef.repSchemeCeilings' own doc.
                     weights = ProgressionEngine.startingWeightsForUpperTarget(
                         for: pe, upperTargetReps: ceiling.upperTargetReps, weightIncreaseAmount: ceiling.weightIncreaseAmount,
-                        history: logs, aiOn: aiOn, roundingIncrement: increment)
+                        history: logs, aiOn: aiOn, roundingIncrement: increment,
+                        adjustmentLog: latestLogIncludingDeloads(for: pe))
                 } else {
                     weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
                                                                  aggressiveness: agg, roundingIncrement: increment,
                                                                  customIncreaseStreak: customIncreaseStreak,
-                                                                 customIncreaseAmount: customIncreaseAmount)
+                                                                 customIncreaseAmount: customIncreaseAmount,
+                                                                 adjustmentLog: latestLogIncludingDeloads(for: pe))
                 }
                 // A bodyweight exercise with nothing ever suggested for
                 // added weight (no history yet, and the plan itself has no
@@ -861,12 +893,14 @@ struct WorkoutLogView: View {
                 if let ceiling = ceiling(for: pe) {
                     weights = ProgressionEngine.startingWeightsForUpperTarget(
                         for: pe, upperTargetReps: ceiling.upperTargetReps, weightIncreaseAmount: ceiling.weightIncreaseAmount,
-                        history: logs, aiOn: aiOn, roundingIncrement: increment)
+                        history: logs, aiOn: aiOn, roundingIncrement: increment,
+                        adjustmentLog: latestLogIncludingDeloads(for: pe))
                 } else {
                     weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
                                                                  aggressiveness: agg, roundingIncrement: increment,
                                                                  customIncreaseStreak: customIncreaseStreak,
-                                                                 customIncreaseAmount: customIncreaseAmount)
+                                                                 customIncreaseAmount: customIncreaseAmount,
+                                                                 adjustmentLog: latestLogIncludingDeloads(for: pe))
                 }
                 // Same empty-`weights` gap as buildDrafts: a bodyweight
                 // exercise with nothing suggested yet gets "0", not "",
@@ -1009,11 +1043,20 @@ struct WorkoutLogView: View {
                                                planKey: log.planKey, isDeload: isDeloadCycle, allLogs: allExerciseLogs)
             log.missedTarget = missedAnyTarget(for: d)
 
-            // Recap + next-cycle progression — skip during a deload (weights
-            // are intentionally cut, so progression math doesn't apply) or
-            // once the phase is over (no next cycle to jump into). A
-            // standalone quick workout has no phase, so it's never "over".
-            guard !isDeloadCycle, !(phase?.isComplete ?? false) else { continue }
+            // Recap + next-cycle progression — skipped once the phase is
+            // over (no next cycle to jump into). A standalone quick workout
+            // has no phase, so it's never "over".
+            //
+            // A deload cycle USED to be skipped here too, back when deload
+            // halved weights and recap's only job was suggesting
+            // progressive jumps. It no longer cuts weights (805319a), and
+            // recap's three-state verdict plus the weight wheel applies to
+            // a deload workout like any other — so deload sessions get
+            // entries now. Their wheel choice is honored via
+            // latestLogIncludingDeloads(for:), NOT via history(for:), which
+            // still (correctly) keeps a deload's own weights out of
+            // progression — see both of those functions' own docs.
+            guard !(phase?.isComplete ?? false) else { continue }
             let increment = roundingIncrement(for: d.name)
             let combinedHistory = priorLogs + [log]
 

@@ -620,7 +620,29 @@ struct TodayView: View {
                                                   aggressiveness: settings?.aiAggressiveness ?? .moderate,
                                                   roundingIncrement: roundingIncrement(for: pe.exerciseName),
                                                   customIncreaseStreak: customIncreaseStreak,
-                                                  customIncreaseAmount: customIncreaseAmount)
+                                                  customIncreaseAmount: customIncreaseAmount,
+                                                  adjustmentLog: latestLogIncludingDeloads(for: pe))
+    }
+
+    /// Mirrors WorkoutLogView.latestLogIncludingDeloads(for:) exactly — see
+    /// that copy's own doc. Needed here for the same reason history(for:)
+    /// is: the preview has to resolve the identical starting weight opening
+    /// the workout would, including a deload session's recorded wheel choice.
+    private func latestLogIncludingDeloads(for pe: PlannedExercise) -> ExerciseLog? {
+        allExerciseLogsForPreview
+            .filter { log in
+                guard !log.sets.isEmpty, log.exerciseName == pe.exerciseName,
+                      log.session?.isBonusSession != true
+                else { return false }
+                switch pe.goalType {
+                case .fixedSets:
+                    guard case .fixedSets = log.goalType else { return false }
+                    return true
+                case .repTotal:
+                    return log.planKey == pe.planKey
+                }
+            }
+            .max { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
     }
 
     /// One exercise's preview line — name, its reps, and (once every set has

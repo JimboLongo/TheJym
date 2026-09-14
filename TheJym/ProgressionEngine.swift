@@ -34,14 +34,26 @@ enum ProgressionEngine {
     /// below — a flat "streak >= N -> +X lb" rule instead of the
     /// surplus-scaled small/big/huge jumps. Leave both nil (the default)
     /// to keep using the aggressiveness preset.
+    /// `adjustmentLog`: the single most recent log for this exercise
+    /// INCLUDING deload sessions, when that differs from `history.last`.
+    /// The two are deliberately separate inputs: a deload session's own
+    /// WEIGHTS are kept out of `history` entirely (its loads may have been
+    /// hand-lowered for the week, and shouldn't become the next cycle's
+    /// starting point), but its Workout Recap wheel CHOICE is still a real
+    /// decision about what to do next and must be honored — see
+    /// WorkoutLogView.history(for:) / latestLogIncludingDeloads(for:).
+    /// nil (every caller that doesn't distinguish) falls back to
+    /// `history.last`, i.e. byte-identical behavior to before this existed.
     static func suggestNextWeights(targetReps: [Int],
                                    history: [ExerciseLog],
                                    aggressiveness: AIAggressiveness,
                                    roundingIncrement: Double = 2.5,
                                    isBodyweight: Bool = false,
                                    customIncreaseStreak: Int? = nil,
-                                   customIncreaseAmount: Double? = nil) -> [Double]? {
+                                   customIncreaseAmount: Double? = nil,
+                                   adjustmentLog: ExerciseLog? = nil) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
+        let adjustment = (adjustmentLog ?? latest).selectedWeightAdjustment
 
         // A rep-scheme change (different set count, or same count but
         // different reps — e.g. a deload cycle's per-cycle override) breaks
@@ -53,7 +65,8 @@ enum ProgressionEngine {
         // brand-new one anyway. See carriedOverWeight's own doc for
         // exactly which weight that is.
         if latest.targetReps != targetReps {
-            guard let carried = carriedOverWeight(from: latest, isBodyweight: isBodyweight,
+            guard let carried = carriedOverWeight(from: latest, adjustment: adjustment,
+                                                  isBodyweight: isBodyweight,
                                                   roundingIncrement: roundingIncrement) else { return nil }
             return Array(repeating: carried, count: targetReps.count)
         }
@@ -70,7 +83,7 @@ enum ProgressionEngine {
         // verdict either (see ExerciseLog.selectedWeightAdjustment's own
         // doc). nil (never decided — old data predating this field) falls
         // through to the algorithm unchanged.
-        if let adjustment = latest.selectedWeightAdjustment {
+        if let adjustment {
             return latestWeights.map { roundToPlate($0 + adjustment, smallest: roundingIncrement) }
         }
 
@@ -116,14 +129,17 @@ enum ProgressionEngine {
     /// (e.g. 150/150/150/170/170/170 should carry over 150, the actual
     /// working weight, not 170). For the common flat case (every set the
     /// same weight) this is just that weight either way.
-    /// `selectedWeightAdjustment` (the Workout Recap wheel choice), if
-    /// present, is applied on top and rounded — same treatment it already
-    /// gets for a matching scheme.
-    private static func carriedOverWeight(from latest: ExerciseLog, isBodyweight: Bool,
+    /// `adjustment` (the Workout Recap wheel choice — already resolved by
+    /// the caller, since it may come from a deload log that isn't `latest`
+    /// itself; see suggestNextWeights' `adjustmentLog` doc), if present, is
+    /// applied on top and rounded — same treatment it gets for a matching
+    /// scheme.
+    private static func carriedOverWeight(from latest: ExerciseLog, adjustment: Double?,
+                                          isBodyweight: Bool,
                                           roundingIncrement: Double) -> Double? {
         let weights = latest.sortedSets.map { isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
         guard let base = mostFrequentWeight(in: weights) else { return nil }
-        guard let adjustment = latest.selectedWeightAdjustment else { return base }
+        guard let adjustment else { return base }
         return roundToPlate(base + adjustment, smallest: roundingIncrement)
     }
 
@@ -173,20 +189,25 @@ enum ProgressionEngine {
     /// targetReps) — used ONLY to detect a scheme change against `latest`
     /// (same carry-over rule as suggestNextWeights' own doc), never to
     /// judge qualification, which stays keyed to `upperTargetReps` alone.
+    /// `adjustmentLog`: same deload-aware split as suggestNextWeights' own
+    /// parameter of that name — see its doc.
     static func suggestNextWeightsForUpperTarget(upperTargetReps: [Int],
                                                   targetReps: [Int],
                                                   weightIncreaseAmount: Double,
                                                   history: [ExerciseLog],
                                                   roundingIncrement: Double = 2.5,
-                                                  isBodyweight: Bool = false) -> [Double]? {
+                                                  isBodyweight: Bool = false,
+                                                  adjustmentLog: ExerciseLog? = nil) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
+        let adjustment = (adjustmentLog ?? latest).selectedWeightAdjustment
 
         // See suggestNextWeights' own doc on why a scheme change carries
         // over a single broadcast weight instead of running the usual
         // qualifies-for-ceiling check, which needs the OLD scheme's own
         // sets to even evaluate.
         if latest.targetReps != targetReps {
-            guard let carried = carriedOverWeight(from: latest, isBodyweight: isBodyweight,
+            guard let carried = carriedOverWeight(from: latest, adjustment: adjustment,
+                                                  isBodyweight: isBodyweight,
                                                   roundingIncrement: roundingIncrement) else { return nil }
             return Array(repeating: carried, count: targetReps.count)
         }
@@ -194,7 +215,7 @@ enum ProgressionEngine {
         let latestWeights = isBodyweight
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
-        if let adjustment = latest.selectedWeightAdjustment {
+        if let adjustment {
             return latestWeights.map { roundToPlate($0 + adjustment, smallest: roundingIncrement) }
         }
         guard qualifiesForUpperTarget(latest, upperTargetReps: upperTargetReps) else { return latestWeights }
@@ -211,12 +232,14 @@ enum ProgressionEngine {
                                                weightIncreaseAmount: Double,
                                                history: [ExerciseLog],
                                                aiOn: Bool,
-                                               roundingIncrement: Double) -> [Double] {
+                                               roundingIncrement: Double,
+                                               adjustmentLog: ExerciseLog? = nil) -> [Double] {
         if aiOn {
             return suggestNextWeightsForUpperTarget(upperTargetReps: upperTargetReps, targetReps: pe.targetReps,
                                                     weightIncreaseAmount: weightIncreaseAmount,
                                                     history: history, roundingIncrement: roundingIncrement,
-                                                    isBodyweight: pe.isBodyweight)
+                                                    isBodyweight: pe.isBodyweight,
+                                                    adjustmentLog: adjustmentLog)
                 ?? pe.suggestedWeights
         }
         guard let latest = history.last else { return pe.suggestedWeights }
@@ -374,13 +397,15 @@ enum ProgressionEngine {
                                 aggressiveness: AIAggressiveness,
                                 roundingIncrement: Double,
                                 customIncreaseStreak: Int? = nil,
-                                customIncreaseAmount: Double? = nil) -> [Double] {
+                                customIncreaseAmount: Double? = nil,
+                                adjustmentLog: ExerciseLog? = nil) -> [Double] {
         if aiOn {
             return suggestNextWeights(targetReps: pe.targetReps, history: history,
                                       aggressiveness: aggressiveness, roundingIncrement: roundingIncrement,
                                       isBodyweight: pe.isBodyweight,
                                       customIncreaseStreak: customIncreaseStreak,
-                                      customIncreaseAmount: customIncreaseAmount)
+                                      customIncreaseAmount: customIncreaseAmount,
+                                      adjustmentLog: adjustmentLog)
                 ?? pe.suggestedWeights
         }
         guard let latest = history.last else { return pe.suggestedWeights }
