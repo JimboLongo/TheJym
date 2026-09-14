@@ -162,4 +162,48 @@ final class PhaseCycleOverrideTests: XCTestCase {
         XCTAssertEqual(plan.map(\.exerciseName), ["Incline Press", "Barbell Row"],
                        "only Bench Press's own slot should be overridden — Barbell Row must stay untouched")
     }
+
+    /// Regression test for TodayView's "Your Cycle" preview calling
+    /// `plan(for: day)` (no cycle) instead of `plan(for: day, cycle:)` —
+    /// silently showing base-template sets/reps for a cycle with overrides
+    /// configured (e.g. a deload cycle's cut sets), even though the day's
+    /// own "(Deload)" name label was already correct. Both TodayView's
+    /// preview and WorkoutLogView.plannedExercises(for:) must resolve a
+    /// day's plan against `phase.currentCycle` — the actual cycle number
+    /// anything tapped right now would be logged under — never a
+    /// hypothetical "which cycle does this preview position represent"
+    /// number, or the two can disagree about what a phase with real, live
+    /// cycle-4 progress and a cycle-4 override should show.
+    @MainActor
+    func testCurrentCycleWithAnOverrideAppliesWhenResolvedByPhaseCurrentCycle() {
+        let context = makeContext()
+        let (phase, day, base) = makeDay(context: context)
+        day.setCycleOverride(for: base, cycle: 4, exerciseName: "Deload Bench Press",
+                             targetReps: [5, 5, 5], goalType: .fixedSets, isBodyweight: false,
+                             restTimeSeconds: nil,
+                             context: context)
+
+        // Actually advance phase.currentCycle to 4 by fully logging cycles
+        // 1-3's one slot each — not just asserting against a hardcoded
+        // cycle number, so this exercises the SAME live currentCycle both
+        // TodayView and WorkoutLogView read.
+        for cycle in 1...3 {
+            let date = Calendar.current.date(byAdding: .day, value: -(4 - cycle), to: .now)!
+            let session = WorkoutSession(date: date, day: day, dayLabel: day.name, cycleNumber: cycle)
+            session.phase = phase
+            context.insert(session)
+        }
+        XCTAssertEqual(phase.currentCycle, 4, "sanity check: 3 fully-logged cycles should advance to cycle 4")
+
+        // What TodayView's preview (after the fix) and
+        // WorkoutLogView.plannedExercises(for:) both actually call.
+        let resolvedForCurrentCycle = phase.plan(for: day, cycle: phase.currentCycle)
+        XCTAssertEqual(resolvedForCurrentCycle.map(\.exerciseName), ["Deload Bench Press"],
+                       "the preview must reflect cycle 4's own override, not the base plan")
+
+        // Contrast with the actual bug: calling the no-cycle overload
+        // silently ignores any override, regardless of currentCycle.
+        XCTAssertEqual(phase.plan(for: day).map(\.exerciseName), ["Bench Press"],
+                       "plan(for:) with no cycle always returns the base template — this was the bug")
+    }
 }

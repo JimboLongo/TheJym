@@ -21,15 +21,6 @@ private struct DayJumpTarget: Identifiable, Hashable {
     var id: PersistentIdentifier { day.persistentModelID }
 }
 
-/// One entry in "Your Cycle"'s upcoming-days preview, paired with how many
-/// cycle boundaries it sits past `phase.currentCycle` — see
-/// TodayView.upcomingDays's own doc for why this can be nonzero.
-private struct UpcomingDay: Identifiable {
-    let day: PhaseDay
-    let cycleOffset: Int
-    var id: PersistentIdentifier { day.persistentModelID }
-}
-
 struct TodayView: View {
     @Binding var overflowTab: OverflowTab?
     /// Passed down to WorkoutLogView so finishing a workout can jump to the
@@ -158,20 +149,26 @@ struct TodayView: View {
         else { return 2.5 }
         return settings?.dumbbellRoundingIncrement ?? 5
     }
-    /// `cycleOffset` lets a caller previewing AHEAD of today say "the day
-    /// I'm asking about is actually N cycles past phase.currentCycle" —
-    /// see upcomingDays's own doc for why a previewed day isn't always in
-    /// today's own cycle. Defaults to 0 (today's cycle) for every caller
-    /// that isn't specifically walking that wraparound.
-    private func isDeloadCycle(_ phase: Phase, cycleOffset: Int = 0) -> Bool {
-        phase.isDeloadCycle(phase.currentCycle + cycleOffset, aiDeloadEnabled: settings?.deloadWeeksEnabled == true)
+    /// Deliberately always `phase.currentCycle` — NOT some hypothetical
+    /// "which cycle does this previewed day conceptually belong to" number.
+    /// `upcomingDays`'s wraparound can show a day that's positionally past
+    /// the end of the template, but that's purely a rotation-order preview:
+    /// nothing about tapping into ANY row here ever logs against a
+    /// different cycle number than whatever `phase.currentCycle` reads at
+    /// that moment (WorkoutLogView.plannedExercises(for:) uses the exact
+    /// same `phase.currentCycle`, unconditionally, regardless of which
+    /// PhaseDay was opened — see its own doc). Applying an offset here
+    /// would make the preview's deload label disagree with what actually
+    /// happens when you open that workout, which is exactly the mismatch
+    /// this function exists to avoid.
+    private func isDeloadCycle(_ phase: Phase) -> Bool {
+        phase.isDeloadCycle(phase.currentCycle, aiDeloadEnabled: settings?.deloadWeeksEnabled == true)
     }
-    /// A training day's name, tagged "(Deload)" when the cycle it actually
-    /// belongs to (phase.currentCycle + cycleOffset) is a deload cycle — a
+    /// A training day's name, tagged "(Deload)" during a deload cycle — a
     /// Rest day never is, since deload only describes training load. e.g.
     /// "Lower A (Deload)".
-    private func dayDisplayName(_ day: PhaseDay, phase: Phase, cycleOffset: Int = 0) -> String {
-        (!day.isRest && isDeloadCycle(phase, cycleOffset: cycleOffset)) ? "\(day.name) (Deload)" : day.name
+    private func dayDisplayName(_ day: PhaseDay, phase: Phase) -> String {
+        (!day.isRest && isDeloadCycle(phase)) ? "\(day.name) (Deload)" : day.name
     }
     private var customIncreaseStreak: Int? {
         settings?.customWeightIncreaseEnabled == true ? settings?.customWeightIncreaseStreak : nil
@@ -446,12 +443,12 @@ struct TodayView: View {
         Section("Your Cycle") {
             if let nextDay = templateNextDay(phase) {
                 featuredDayRow(phase, nextDay)
-                ForEach(upcomingDays(phase, after: nextDay)) { entry in
-                    collapsibleDayRow(phase, entry.day, cycleOffset: entry.cycleOffset)
+                ForEach(upcomingDays(phase, after: nextDay), id: \.persistentModelID) { day in
+                    collapsibleDayRow(phase, day)
                 }
             } else {
                 ForEach(phase.orderedDays, id: \.persistentModelID) { day in
-                    collapsibleDayRow(phase, day, cycleOffset: 0)
+                    collapsibleDayRow(phase, day)
                 }
             }
         }
@@ -524,26 +521,18 @@ struct TodayView: View {
     /// template order," which could show a day that's really 3 slots away
     /// right after one that's next up in 1.
     ///
-    /// Whenever `nextDay` isn't the template's very first day, this wraps
-    /// past the END of the template (`ordered[..<idx]`) to fill out the rest
-    /// of the list — and once it does, those wrapped days are really the
-    /// NEXT cycle's, not today's, even though they're still shown in this
-    /// same "Your Cycle" list. Each entry's `cycleOffset` records that: 0
-    /// for the remainder of THIS cycle (`ordered[(idx+1)...]`), 1 for the
-    /// wrapped portion — never more than 1, since this only ever shows one
-    /// cycle's worth of days. Callers must add this to `phase.currentCycle`
-    /// (see `isDeloadCycle`/`dayDisplayName`'s own `cycleOffset` param)
-    /// rather than assuming every previewed day shares today's cycle.
-    private func upcomingDays(_ phase: Phase, after nextDay: PhaseDay) -> [UpcomingDay] {
+    /// This can wrap past the END of the template (`ordered[..<idx]`) when
+    /// `nextDay` isn't the template's first day — purely a rotation-order
+    /// preview of "what's coming up," though: every row still resolves its
+    /// plan/deload status against `phase.currentCycle`, same as any other
+    /// row, since that's the one cycle number anything tapped here would
+    /// actually be logged under right now (see `isDeloadCycle`'s own doc).
+    private func upcomingDays(_ phase: Phase, after nextDay: PhaseDay) -> [PhaseDay] {
         let ordered = phase.orderedDays
         guard let idx = ordered.firstIndex(where: { $0.persistentModelID == nextDay.persistentModelID }) else {
-            return ordered
-                .filter { $0.persistentModelID != nextDay.persistentModelID }
-                .map { UpcomingDay(day: $0, cycleOffset: 0) }
+            return ordered.filter { $0.persistentModelID != nextDay.persistentModelID }
         }
-        let restOfThisCycle = ordered[(idx + 1)...].map { UpcomingDay(day: $0, cycleOffset: 0) }
-        let wrappedIntoNextCycle = ordered[..<idx].map { UpcomingDay(day: $0, cycleOffset: 1) }
-        return restOfThisCycle + wrappedIntoNextCycle
+        return Array(ordered[(idx + 1)...] + ordered[..<idx])
     }
 
     /// True once today's featured day has something logged for it — a real
@@ -670,7 +659,7 @@ struct TodayView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             } else {
-                let plan = phase.plan(for: day)
+                let plan = phase.plan(for: day, cycle: phase.currentCycle)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(dayDisplayName(day, phase: phase)).font(.headline).strikethrough(isDone)
                     if plan.isEmpty {
@@ -695,19 +684,13 @@ struct TodayView: View {
     /// Rest day has no exercise list to preview, so it just shows its name
     /// and the log button on one line instead of needing to expand.
     @ViewBuilder
-    private func collapsibleDayRow(_ phase: Phase, _ day: PhaseDay, cycleOffset: Int) -> some View {
+    private func collapsibleDayRow(_ phase: Phase, _ day: PhaseDay) -> some View {
         // Redirected once, up front, to whichever phase actually owns this
         // day going forward — see effectiveDaySource's own doc. `day`
         // itself (not `effective.day`) still keys expand/collapse state
         // and the isRest branch, since those just describe this row's own
         // identity in the list, not what it resolves to when tapped.
         let effective = effectiveDaySource(day, phase: phase)
-        // `cycleOffset` is only meaningful relative to `phase` itself (see
-        // upcomingDays's own doc) — once effectiveDaySource has redirected
-        // to a different, queued next phase, THAT phase's own currentCycle
-        // is already correct on its own and shouldn't have `phase`'s offset
-        // added on top of it.
-        let effectiveCycleOffset = effective.phase === phase ? cycleOffset : 0
         if day.isRest {
             HStack {
                 Label(day.name, systemImage: "moon.zzz").foregroundStyle(.secondary)
@@ -730,7 +713,7 @@ struct TodayView: View {
                     }
                 } label: {
                     HStack {
-                        Text(dayDisplayName(effective.day, phase: effective.phase, cycleOffset: effectiveCycleOffset))
+                        Text(dayDisplayName(effective.day, phase: effective.phase))
                         Spacer()
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption)
@@ -741,7 +724,7 @@ struct TodayView: View {
                 .buttonStyle(.plain)
 
                 if isExpanded {
-                    let plan = effective.phase.plan(for: effective.day)
+                    let plan = effective.phase.plan(for: effective.day, cycle: effective.phase.currentCycle)
                     if plan.isEmpty {
                         Text("No exercises planned for \(effective.day.name).")
                             .font(.caption2).foregroundStyle(.secondary)
