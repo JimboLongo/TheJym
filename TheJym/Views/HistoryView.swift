@@ -276,7 +276,6 @@ struct HistoryView: View {
     }
 
     private func normalExerciseRow(_ log: ExerciseLog) -> some View {
-        let showGoal = !log.targetReps.isEmpty
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(log.exerciseName).font(.subheadline.weight(.semibold))
@@ -305,17 +304,7 @@ struct HistoryView: View {
                         .foregroundStyle(log.repTotalReached ? .green : .secondary)
                 }
             }
-            HStack(alignment: .top, spacing: 6) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("lbs")
-                    if showGoal { Text("target") }
-                    Text("reps")
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary.opacity(0.7))
-
-                liftsGrid(log)
-            }
+            liftsGrid(log)
             if log.isBodyweight, let bw = log.sortedSets.first?.bodyweightAtLog {
                 Text("Bodyweight: \(Formatters.trim(bw)) lb")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -324,46 +313,25 @@ struct HistoryView: View {
         .padding(.vertical, 2)
     }
 
-    /// Weights, goal (target reps), and actual reps stacked in that order,
-    /// laid out in a Grid so each column's width matches its widest value —
-    /// the "/" separators land in the same horizontal spot on every line,
-    /// and each column centers its goal/reps under its weight.
+    /// Weights, goal (target reps), and actual reps stacked in that order —
+    /// see LabeledValuesGrid (WorkoutLogView.swift) for the shared
+    /// label-column + column-alignment logic, also used by
+    /// WorkoutRecapView's own compact table.
     private func liftsGrid(_ log: ExerciseLog) -> some View {
         let sortedSets = log.sortedSets
         let targetReps = log.targetReps
         let showGoal = !targetReps.isEmpty
-        let columnCount = max(sortedSets.count, targetReps.count)
 
-        return Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
-            GridRow {
-                ForEach(0..<columnCount, id: \.self) { idx in
-                    Text(idx < sortedSets.count ? weightLabel(sortedSets[idx]) : "")
-                    if idx < columnCount - 1 {
-                        Text("/").foregroundStyle(.secondary.opacity(0.5))
-                    }
-                }
-            }
-            if showGoal {
-                GridRow {
-                    ForEach(0..<columnCount, id: \.self) { idx in
-                        Text(idx < targetReps.count ? String(targetReps[idx]) : "")
-                        if idx < columnCount - 1 {
-                            Text("/").foregroundStyle(.secondary.opacity(0.5))
-                        }
-                    }
-                }
-            }
-            GridRow {
-                ForEach(0..<columnCount, id: \.self) { idx in
-                    Text(idx < sortedSets.count ? String(sortedSets[idx].reps) : "")
-                    if idx < columnCount - 1 {
-                        Text("/").foregroundStyle(.secondary.opacity(0.5))
-                    }
-                }
-            }
+        var labels = ["lbs"]
+        var rows = [sortedSets.map(weightLabel)]
+        if showGoal {
+            labels.append("target")
+            rows.append(targetReps.map(String.init))
         }
-        .font(.system(.caption, design: .monospaced))
-        .foregroundStyle(.secondary)
+        labels.append("reps")
+        rows.append(sortedSets.map { String($0.reps) })
+
+        return LabeledValuesGrid(labels: labels, rows: rows)
     }
 
     /// `set.weight` already holds the correct effective total for a

@@ -3201,6 +3201,52 @@ struct SetsGrid: View {
     }
 }
 
+/// A leading label column ("lbs"/"target"/"reps", etc.) paired with a
+/// column-aligned "/"-separated grid of values — one row per label, each
+/// column sized to its own widest value across every row (a row with fewer
+/// values than the widest pads blank on the right, e.g. a set with no
+/// corresponding target). Shared behind HistoryView.liftsGrid and
+/// WorkoutRecapView's own compact table so neither reimplements this.
+///
+/// The label and its row's values are cells of the SAME Grid (not a label
+/// VStack sitting beside a separate values Grid) deliberately: Grid only
+/// synchronizes row heights WITHIN itself, so at accessibility Dynamic Type
+/// sizes — where a 3-digit weight can wrap to multiple lines in its
+/// narrow column — a label living in its own sibling VStack would stay
+/// single-line while that row's values grew taller, throwing every
+/// following row out of alignment with its label. Keeping both in one Grid
+/// means a wrapped row grows its label cell right along with it.
+struct LabeledValuesGrid: View {
+    let labels: [String]
+    let rows: [[String]]
+    private var columnCount: Int { rows.map(\.count).max() ?? 0 }
+
+    var body: some View {
+        Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
+            ForEach(rows.indices, id: \.self) { i in
+                GridRow {
+                    Text(labels[i])
+                        .font(.caption2)
+                        .foregroundStyle(.secondary.opacity(0.7))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .gridColumnAlignment(.leading)
+                    ForEach(0..<columnCount, id: \.self) { idx in
+                        Text(idx < rows[i].count ? rows[i][idx] : "")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                        if idx < columnCount - 1 {
+                            Text("/").foregroundStyle(.secondary.opacity(0.5))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - repTotal pace row (sets-to-complete, not reps-to-beat)
 
 struct RepTotalPaceRow: View {
@@ -3414,6 +3460,7 @@ struct PaceRow: View {
 
 struct WorkoutRecapView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let entries: [WorkoutLogView.RecapEntry]
     /// Weight-adjustment wheel position per entry, keyed by exercise name —
     /// one of `adjustmentChoices`. Seeded by WorkoutLogView from each
@@ -3481,15 +3528,8 @@ struct WorkoutRecapView: View {
             List {
                 ForEach(entries) { entry in
                     Section(entry.exerciseName) {
-                        SetsGrid(weightLabels: weightLabels(for: entry), repLabels: entry.actualReps.map(String.init))
-                        Text("Target: \(entry.targetReps.map(String.init).joined(separator: "/"))")
-                            .font(.caption2).foregroundStyle(.secondary)
-                        if let upperTargetReps = entry.upperTargetReps {
-                            Text("Ceiling: \(upperTargetReps.map(String.init).joined(separator: "/"))")
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                        verdictText(for: entry)
-                        adjustmentWheel(for: entry)
+                        recapGrid(for: entry)
+                        verdictAndWheelRow(for: entry)
                     }
                 }
             }
@@ -3508,6 +3548,51 @@ struct WorkoutRecapView: View {
     /// it as a plain number would misread as the full resolved weight.
     private func weightLabels(for entry: WorkoutLogView.RecapEntry) -> [String] {
         entry.currentWeights.map { entry.isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
+    }
+
+    /// "lbs / target / ceiling / reps" — same label-column + column-aligned
+    /// grid shape as HistoryView.normalExerciseRow (LabeledValuesGrid, shared
+    /// rather than reimplemented). The ceiling row only appears when this
+    /// slot actually has one configured — omitted entirely rather than
+    /// shown blank/dashed, same "no ceiling" convention `verdict(for:)`
+    /// already uses.
+    private func recapGrid(for entry: WorkoutLogView.RecapEntry) -> some View {
+        var labels = ["lbs", "target"]
+        var rows: [[String]] = [weightLabels(for: entry), entry.targetReps.map(String.init)]
+        if let upperTargetReps = entry.upperTargetReps {
+            labels.append("ceiling")
+            rows.append(upperTargetReps.map(String.init))
+        }
+        labels.append("reps")
+        rows.append(entry.actualReps.map(String.init))
+        return LabeledValuesGrid(labels: labels, rows: rows)
+    }
+
+    /// Verdict text and the weight wheel side by side at standard Dynamic
+    /// Type sizes. At an accessibility size, the wheel's own row labels
+    /// ("+10 lb", "No Change") grow enough that keeping it beside the
+    /// verdict text would squeeze the text the same way the old "Weight
+    /// decrease" dropdown truncated before it was fixed (30eb4a5) — a wheel
+    /// is a different width profile than that dropdown was, so this is
+    /// checked explicitly (see render verification) rather than assumed:
+    /// it does reproduce the same squeeze, so this falls back to stacking
+    /// verdict text above the wheel at accessibility sizes.
+    @ViewBuilder
+    private func verdictAndWheelRow(for entry: WorkoutLogView.RecapEntry) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                verdictText(for: entry)
+                adjustmentWheel(for: entry)
+            }
+        } else {
+            HStack(alignment: .center, spacing: 8) {
+                verdictText(for: entry)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                adjustmentWheel(for: entry)
+                    .frame(width: 130)
+            }
+        }
     }
 
     @ViewBuilder
