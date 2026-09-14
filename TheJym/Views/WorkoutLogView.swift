@@ -409,25 +409,14 @@ struct WorkoutLogView: View {
                 refreshDrafts()
             }
         }
-        // Outside the GeometryReader/LazyVStack entirely (like the top inset
-        // right below) rather than inside any one page, so it shows on every
-        // page — exercise or Completed summary alike — without being reset
-        // or torn down by a swipe, and so every page's own pageHeight
-        // shrinks to leave room for it instead of it overlapping navBar or
-        // the Completed page's own Finish button.
+        // Outside the GeometryReader/LazyVStack entirely rather than inside
+        // any one page, so it shows on every page — exercise or Completed
+        // summary alike — without being reset or torn down by a swipe, and
+        // so every page's own pageHeight shrinks to leave room for it
+        // instead of it overlapping navBar or the Completed page's own
+        // Finish button.
         .safeAreaInset(edge: .bottom) {
             RestStopwatchBar(stopwatch: restStopwatch)
-        }
-        .safeAreaInset(edge: .top) {
-            if isDeloadCycle {
-                Label("Deload cycle — weights below are cut to ~60% to dissipate fatigue before the next block. Go light, move well, recover.",
-                      systemImage: "arrow.down.heart")
-                    .font(.callout).foregroundStyle(.orange)
-                    .padding(.horizontal)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.orange.opacity(0.12))
-            }
         }
         .overlay {
             // A centered popup card (not a bottom sheet) so it reads as a
@@ -785,13 +774,12 @@ struct WorkoutLogView: View {
                     // slot — see ExerciseDef.repSchemeCeilings' own doc.
                     weights = ProgressionEngine.startingWeightsForUpperTarget(
                         for: pe, upperTargetReps: ceiling.upperTargetReps, weightIncreaseAmount: ceiling.weightIncreaseAmount,
-                        history: logs, aiOn: aiOn, roundingIncrement: increment, isDeloadCycle: isDeloadCycle)
+                        history: logs, aiOn: aiOn, roundingIncrement: increment)
                 } else {
                     weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
                                                                  aggressiveness: agg, roundingIncrement: increment,
                                                                  customIncreaseStreak: customIncreaseStreak,
-                                                                 customIncreaseAmount: customIncreaseAmount,
-                                                                 isDeloadCycle: isDeloadCycle)
+                                                                 customIncreaseAmount: customIncreaseAmount)
                 }
                 // A bodyweight exercise with nothing ever suggested for
                 // added weight (no history yet, and the plan itself has no
@@ -815,8 +803,7 @@ struct WorkoutLogView: View {
             case .repTotal:
                 let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: aiOn,
                                                                    aggressiveness: agg, roundingIncrement: increment,
-                                                                   customIncreaseAmount: customIncreaseAmount,
-                                                                   isDeloadCycle: isDeloadCycle)
+                                                                   customIncreaseAmount: customIncreaseAmount)
                 let sets = [SetDraft(weightText: Formatters.trim(resolved.weight), repsText: "")]
                 drafts.append(ExerciseDraft(name: pe.exerciseName,
                                             targetReps: [],
@@ -851,13 +838,12 @@ struct WorkoutLogView: View {
                 if let ceiling = ceiling(for: pe) {
                     weights = ProgressionEngine.startingWeightsForUpperTarget(
                         for: pe, upperTargetReps: ceiling.upperTargetReps, weightIncreaseAmount: ceiling.weightIncreaseAmount,
-                        history: logs, aiOn: aiOn, roundingIncrement: increment, isDeloadCycle: isDeloadCycle)
+                        history: logs, aiOn: aiOn, roundingIncrement: increment)
                 } else {
                     weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: aiOn,
                                                                  aggressiveness: agg, roundingIncrement: increment,
                                                                  customIncreaseStreak: customIncreaseStreak,
-                                                                 customIncreaseAmount: customIncreaseAmount,
-                                                                 isDeloadCycle: isDeloadCycle)
+                                                                 customIncreaseAmount: customIncreaseAmount)
                 }
                 // Same empty-`weights` gap as buildDrafts: a bodyweight
                 // exercise with nothing suggested yet gets "0", not "",
@@ -873,8 +859,7 @@ struct WorkoutLogView: View {
             case .repTotal:
                 let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: aiOn,
                                                                    aggressiveness: agg, roundingIncrement: increment,
-                                                                   customIncreaseAmount: customIncreaseAmount,
-                                                                   isDeloadCycle: isDeloadCycle)
+                                                                   customIncreaseAmount: customIncreaseAmount)
                 if !drafts[idx].sets.isEmpty {
                     drafts[idx].sets[0].weightText = Formatters.trim(resolved.weight)
                 }

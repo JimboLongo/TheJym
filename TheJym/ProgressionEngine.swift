@@ -138,17 +138,17 @@ enum ProgressionEngine {
     }
 
     /// Same idea as `startingWeights`, for a slot with the fixed
-    /// upperTargetReps rule configured — same AI-on/off and deload-halving
-    /// wrapper behavior, sourcing the actual suggestion from
-    /// `suggestNextWeightsForUpperTarget` instead of `suggestNextWeights`.
+    /// upperTargetReps rule configured — same AI-on/off wrapper behavior,
+    /// sourcing the actual suggestion from `suggestNextWeightsForUpperTarget`
+    /// instead of `suggestNextWeights`. A deload cycle uses this exact same
+    /// result — see `startingWeights`'s own doc for why.
     static func startingWeightsForUpperTarget(for pe: PlannedExercise,
                                                upperTargetReps: [Int],
                                                weightIncreaseAmount: Double,
                                                history: [ExerciseLog],
                                                aiOn: Bool,
-                                               roundingIncrement: Double,
-                                               isDeloadCycle: Bool = false) -> [Double] {
-        var weights = aiOn
+                                               roundingIncrement: Double) -> [Double] {
+        aiOn
             ? (suggestNextWeightsForUpperTarget(upperTargetReps: upperTargetReps,
                                                 weightIncreaseAmount: weightIncreaseAmount,
                                                 history: history, roundingIncrement: roundingIncrement,
@@ -156,10 +156,6 @@ enum ProgressionEngine {
                ?? pe.suggestedWeights)
             : (history.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
                ?? pe.suggestedWeights)
-        if isDeloadCycle, !weights.isEmpty {
-            weights = deloadWeights(from: weights)
-        }
-        return weights
     }
 
     // MARK: - Shared performance checks (used by suggestNextWeights + recap)
@@ -284,11 +280,6 @@ enum ProgressionEngine {
         return totalCycles                          // last cycle of the phase
     }
 
-    /// Deload weights: ~60% of the most recent working weights, half the sets' reps kept easy.
-    static func deloadWeights(from lastWeights: [Double]) -> [Double] {
-        lastWeights.map { roundToPlate($0 * 0.6) }
-    }
-
     // MARK: - Starting weights (single source of truth for "what would this
     // exercise actually start at right now" — shared by WorkoutLogView's
     // draft setup and the Train tab's preview, so the preview never shows a
@@ -298,16 +289,18 @@ enum ProgressionEngine {
     /// the AI's next-cycle suggestion when the AI Assistant is on (falling
     /// back to the plan's own `suggestedWeights` if it has no opinion yet —
     /// e.g. no history), or last time's actual weights when it's off (same
-    /// fallback) — then halved for a deload cycle.
+    /// fallback). A deload cycle uses this exact same result — deload no
+    /// longer cuts the suggested weight (see WorkoutLogView's own doc on
+    /// `isDeloadCycle`, which still exists for History/comparison purposes,
+    /// just not this one).
     static func startingWeights(for pe: PlannedExercise,
                                 history: [ExerciseLog],
                                 aiOn: Bool,
                                 aggressiveness: AIAggressiveness,
                                 roundingIncrement: Double,
                                 customIncreaseStreak: Int? = nil,
-                                customIncreaseAmount: Double? = nil,
-                                isDeloadCycle: Bool = false) -> [Double] {
-        var weights = aiOn
+                                customIncreaseAmount: Double? = nil) -> [Double] {
+        aiOn
             ? (suggestNextWeights(targetReps: pe.targetReps, history: history,
                                   aggressiveness: aggressiveness, roundingIncrement: roundingIncrement,
                                   isBodyweight: pe.isBodyweight,
@@ -316,22 +309,18 @@ enum ProgressionEngine {
                ?? pe.suggestedWeights)
             : (history.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
                ?? pe.suggestedWeights)
-        if isDeloadCycle, !weights.isEmpty {
-            weights = deloadWeights(from: weights)
-        }
-        return weights
     }
 
     /// Same idea as `startingWeights`, for a repTotal exercise — a single
     /// starting weight plus whatever rep total it'd actually start at (the
-    /// AI may bump the target itself instead of the weight).
+    /// AI may bump the target itself instead of the weight). Same
+    /// no-longer-cut-for-deload behavior as `startingWeights`.
     static func startingRepTotal(for pe: PlannedExercise,
                                  history: [ExerciseLog],
                                  aiOn: Bool,
                                  aggressiveness: AIAggressiveness,
                                  roundingIncrement: Double,
-                                 customIncreaseAmount: Double? = nil,
-                                 isDeloadCycle: Bool = false) -> (weight: Double, target: Int) {
+                                 customIncreaseAmount: Double? = nil) -> (weight: Double, target: Int) {
         var effectiveTarget = pe.repTotalTarget
         var startWeight = pe.suggestedWeights.first ?? 0
         if aiOn, let suggestion = suggestRepTotalProgression(history: history, aggressiveness: aggressiveness,
@@ -342,9 +331,6 @@ enum ProgressionEngine {
             if let newWeight = suggestion.newAddedWeight { startWeight = newWeight }
         } else if !aiOn, let lastSet = history.last?.sortedSets.last {
             startWeight = pe.isBodyweight ? (lastSet.addedWeight ?? 0) : lastSet.weight
-        }
-        if isDeloadCycle, startWeight > 0 {
-            startWeight = deloadWeights(from: [startWeight]).first ?? startWeight
         }
         return (startWeight, effectiveTarget)
     }

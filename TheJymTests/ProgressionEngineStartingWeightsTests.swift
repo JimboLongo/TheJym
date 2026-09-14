@@ -66,15 +66,38 @@ final class ProgressionEngineStartingWeightsTests: XCTestCase {
         XCTAssertEqual(weights, [135, 135, 135])
     }
 
-    /// A deload cycle halves (roughly — rounded to plate) whatever weights
-    /// would otherwise have been resolved.
-    func testStartingWeightsHalvesForADeloadCycle() {
+    /// A deload cycle no longer cuts the resolved weight at all — the
+    /// `isDeloadCycle` parameter was removed from this function entirely
+    /// once its only effect was the ~60% halving below, so there's no longer
+    /// even a way to ask for the old cut (WorkoutLogView.isDeloadCycle
+    /// itself still exists, just for History/comparison purposes — see its
+    /// own doc). AI on with a qualifying streak would have suggested a
+    /// weight jump either way; this confirms a deload cycle keeps that exact
+    /// jump instead of cutting it — the inverse of the old
+    /// testStartingWeightsHalvesForADeloadCycle, which this replaces.
+    @MainActor
+    func testStartingWeightsNoLongerCutsForADeloadCycle() {
+        let context = makeContext()
+        // 3 sessions exceeding target at the same weight -> moderate
+        // aggressiveness triggers a jump (avgSurplus < 2 -> smallJump 2.5).
+        for daysAgo in [21, 14, 7] {
+            log("Bench Press", targetReps: [8, 8, 8], actualWeights: [100, 100, 100], daysAgo: daysAgo, context: context)
+        }
+        let logs = try! context.fetch(FetchDescriptor<ExerciseLog>()).sorted {
+            $0.session!.date < $1.session!.date
+        }
+        // Match each logged set's reps to just past target so avgSurplus is
+        // small (triggers smallJump, not the -2 backoff or a hold).
+        for l in logs {
+            for s in l.sortedSets { s.reps = 9 }
+        }
+
         let pe = PlannedExercise(order: 0, exerciseName: "Bench Press", targetReps: [8, 8, 8],
                                  suggestedWeights: [100, 100, 100])
-        let weights = ProgressionEngine.startingWeights(for: pe, history: [], aiOn: false,
-                                                         aggressiveness: .moderate, roundingIncrement: 2.5,
-                                                         isDeloadCycle: true)
-        XCTAssertEqual(weights, [60, 60, 60])
+        let weights = ProgressionEngine.startingWeights(for: pe, history: logs, aiOn: true,
+                                                         aggressiveness: .moderate, roundingIncrement: 2.5)
+        XCTAssertEqual(weights, [102.5, 102.5, 102.5],
+                      "the full +2.5 jump, not (100 + 2.5) * 0.6 — a deload cycle can no longer ask this function to cut it")
     }
 
     /// repTotal, AI off, no history: falls back to suggestedWeights.first
@@ -111,5 +134,31 @@ final class ProgressionEngineStartingWeightsTests: XCTestCase {
                                                            aggressiveness: .moderate, roundingIncrement: 2.5,
                                                            customIncreaseAmount: 10)
         XCTAssertEqual(resolved.weight, 60, "50 + the custom 10 lb rule, not the default 2.5/5 bump")
+    }
+
+    /// Same no-longer-cuts-for-deload fix as startingWeights/
+    /// startingWeightsForUpperTarget, for the repTotal shape — `isDeloadCycle`
+    /// was removed from this function too, so a deload cycle keeps this
+    /// exact bumped weight instead of the old ~60% cut.
+    @MainActor
+    func testStartingRepTotalNoLongerCutsForADeloadCycle() {
+        let context = makeContext()
+        let date = Calendar.current.date(byAdding: .day, value: -7, to: .now)!
+        let session = WorkoutSession(date: date, dayLabel: "Day", cycleNumber: 1)
+        context.insert(session)
+        let log = ExerciseLog(exerciseName: "Farmer's Carry", targetReps: [], order: 0, goalType: .repTotal(target: 40))
+        log.session = session
+        context.insert(log)
+        let set = SetLog(index: 0, weight: 50, reps: 40)
+        set.exerciseLog = log
+        context.insert(set)
+        let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
+
+        let pe = PlannedExercise(order: 0, exerciseName: "Farmer's Carry", targetReps: [],
+                                 suggestedWeights: [50], goalType: .repTotal(target: 40))
+        let resolved = ProgressionEngine.startingRepTotal(for: pe, history: logs, aiOn: true,
+                                                           aggressiveness: .moderate, roundingIncrement: 2.5,
+                                                           customIncreaseAmount: 10)
+        XCTAssertEqual(resolved.weight, 60, "the full 50 + 10 bump, not cut to 36 for a deload cycle")
     }
 }

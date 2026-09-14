@@ -575,8 +575,9 @@ struct TodayView: View {
     /// now — an in-progress draft's own (possibly hand-edited) weights when
     /// one exists and covers every set, otherwise the same resolution
     /// WorkoutLogView's draft setup uses to seed a fresh one (AI suggestion
-    /// or last time's actuals, deload-adjusted). Either way, this preview
-    /// can never show something different than the workout itself will.
+    /// or last time's actuals — same either way for a deload cycle, which no
+    /// longer cuts this). Either way, this preview can never show something
+    /// different than the workout itself will.
     private func resolvedWeights(for pe: PlannedExercise, phase: Phase, day: PhaseDay) -> [Double] {
         if let draft = inProgressDraft(phase: phase, day: day),
            let match = draft.first(where: { $0.name == pe.exerciseName && $0.targetReps == pe.targetReps }) {
@@ -590,8 +591,7 @@ struct TodayView: View {
                                                   aggressiveness: settings?.aiAggressiveness ?? .moderate,
                                                   roundingIncrement: roundingIncrement(for: pe.exerciseName),
                                                   customIncreaseStreak: customIncreaseStreak,
-                                                  customIncreaseAmount: customIncreaseAmount,
-                                                  isDeloadCycle: isDeloadCycle(phase))
+                                                  customIncreaseAmount: customIncreaseAmount)
     }
 
     /// One exercise's preview line — name, its reps, and (once every set has

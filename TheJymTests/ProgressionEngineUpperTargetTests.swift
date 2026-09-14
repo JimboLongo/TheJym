@@ -223,8 +223,15 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         XCTAssertEqual(weights, [140, 140, 140])
     }
 
+    /// A deload cycle no longer cuts this bump at all — `isDeloadCycle` was
+    /// removed from this function entirely once its only effect was the old
+    /// ~60% halving. Inverse of the old
+    /// testStartingWeightsForUpperTargetHalvesForADeloadCycle, which this
+    /// replaces: same setup, but the qualifying bump now survives intact,
+    /// identical to testStartingWeightsForUpperTargetBumpsWhenAIOnAndQualified
+    /// above.
     @MainActor
-    func testStartingWeightsForUpperTargetHalvesForADeloadCycle() {
+    func testStartingWeightsForUpperTargetNoLongerCutsForADeloadCycle() {
         let context = makeContext()
         log("Bench Press", targetReps: [8, 8, 8], actualReps: [10, 10, 10],
             actualWeights: [100, 100, 100], daysAgo: 1, context: context)
@@ -233,8 +240,8 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let pe = PlannedExercise(order: 0, exerciseName: "Bench Press", targetReps: [8, 8, 8])
         let weights = ProgressionEngine.startingWeightsForUpperTarget(
             for: pe, upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5,
-            history: logs, aiOn: true, roundingIncrement: 2.5, isDeloadCycle: true)
-        XCTAssertEqual(weights, [62.5, 62.5, 62.5], "(100 + 5 = 105) * 0.6 rounded to plate")
+            history: logs, aiOn: true, roundingIncrement: 2.5)
+        XCTAssertEqual(weights, [105, 105, 105], "the full 100 + 5 bump, not cut to 62.5 for a deload cycle")
     }
 
     func testStartingWeightsForUpperTargetFallsBackToSuggestedWeightsWithoutHistory() {
