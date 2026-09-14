@@ -42,6 +42,22 @@ enum ProgressionEngine {
                                    customIncreaseStreak: Int? = nil,
                                    customIncreaseAmount: Double? = nil) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
+
+        // A rep-scheme change (different set count, or same count but
+        // different reps — e.g. a deload cycle's per-cycle override) breaks
+        // any per-set correspondence with the new scheme: a 3rd set in a
+        // 3x6 scheme isn't "the 3rd set" of a 4x9 scheme. Carry over a
+        // single broadcast weight instead of running the streak/
+        // aggressiveness math below, which needs the OLD scheme's own
+        // targetReps to even evaluate and wouldn't mean anything against a
+        // brand-new one anyway. See carriedOverWeight's own doc for
+        // exactly which weight that is.
+        if latest.targetReps != targetReps {
+            guard let carried = carriedOverWeight(from: latest, isBodyweight: isBodyweight,
+                                                  roundingIncrement: roundingIncrement) else { return nil }
+            return Array(repeating: carried, count: targetReps.count)
+        }
+
         let latestWeights = isBodyweight
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
@@ -90,6 +106,38 @@ enum ProgressionEngine {
         return latestWeights.map { roundToPlate($0 + increment, smallest: roundingIncrement) }
     }
 
+    /// The single carried-over weight to seed a NEW rep scheme that doesn't
+    /// match `latest`'s own scheme (see suggestNextWeights' own doc on why
+    /// this collapses to one scalar instead of trying to map per-set).
+    /// Uses the MOST FREQUENT weight among `latest`'s own sets, ties broken
+    /// toward whichever value appears EARLIEST in the session — deliberately
+    /// NOT the last/heaviest set, which would silently carry over a ramp-up
+    /// scheme's top set as if it were the whole session's working weight
+    /// (e.g. 150/150/150/170/170/170 should carry over 150, the actual
+    /// working weight, not 170). For the common flat case (every set the
+    /// same weight) this is just that weight either way.
+    /// `selectedWeightAdjustment` (the Workout Recap wheel choice), if
+    /// present, is applied on top and rounded — same treatment it already
+    /// gets for a matching scheme.
+    private static func carriedOverWeight(from latest: ExerciseLog, isBodyweight: Bool,
+                                          roundingIncrement: Double) -> Double? {
+        let weights = latest.sortedSets.map { isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+        guard let base = mostFrequentWeight(in: weights) else { return nil }
+        guard let adjustment = latest.selectedWeightAdjustment else { return base }
+        return roundToPlate(base + adjustment, smallest: roundingIncrement)
+    }
+
+    /// The most frequently occurring value in `weights`, ties broken toward
+    /// whichever candidate appears FIRST — i.e. earliest in the original
+    /// (already set-index-ordered) sequence.
+    private static func mostFrequentWeight(in weights: [Double]) -> Double? {
+        guard !weights.isEmpty else { return nil }
+        var counts: [Double: Int] = [:]
+        for w in weights { counts[w, default: 0] += 1 }
+        let maxCount = counts.values.max() ?? 0
+        return weights.first { counts[$0] == maxCount }
+    }
+
     // MARK: - Fixed upper-target rule (replaces suggestNextWeights entirely
     // for a slot with PlannedExercise.upperTargetReps configured — see its
     // own doc. Deliberately separate from suggestNextWeights/startingWeights
@@ -121,12 +169,28 @@ enum ProgressionEngine {
     /// present, wins UNCONDITIONALLY — checked before qualifiesForUpperTarget
     /// is even consulted, since the wheel isn't restricted to the direction
     /// its own verdict suggested (see that field's own doc).
+    /// `targetReps` is the slot's own base rep scheme (PlannedExercise.
+    /// targetReps) — used ONLY to detect a scheme change against `latest`
+    /// (same carry-over rule as suggestNextWeights' own doc), never to
+    /// judge qualification, which stays keyed to `upperTargetReps` alone.
     static func suggestNextWeightsForUpperTarget(upperTargetReps: [Int],
+                                                  targetReps: [Int],
                                                   weightIncreaseAmount: Double,
                                                   history: [ExerciseLog],
                                                   roundingIncrement: Double = 2.5,
                                                   isBodyweight: Bool = false) -> [Double]? {
         guard let latest = history.last, !latest.sets.isEmpty else { return nil }
+
+        // See suggestNextWeights' own doc on why a scheme change carries
+        // over a single broadcast weight instead of running the usual
+        // qualifies-for-ceiling check, which needs the OLD scheme's own
+        // sets to even evaluate.
+        if latest.targetReps != targetReps {
+            guard let carried = carriedOverWeight(from: latest, isBodyweight: isBodyweight,
+                                                  roundingIncrement: roundingIncrement) else { return nil }
+            return Array(repeating: carried, count: targetReps.count)
+        }
+
         let latestWeights = isBodyweight
             ? latest.sortedSets.map { $0.addedWeight ?? 0 }
             : latest.sortedSets.map(\.weight)
@@ -148,14 +212,25 @@ enum ProgressionEngine {
                                                history: [ExerciseLog],
                                                aiOn: Bool,
                                                roundingIncrement: Double) -> [Double] {
-        aiOn
-            ? (suggestNextWeightsForUpperTarget(upperTargetReps: upperTargetReps,
-                                                weightIncreaseAmount: weightIncreaseAmount,
-                                                history: history, roundingIncrement: roundingIncrement,
-                                                isBodyweight: pe.isBodyweight)
-               ?? pe.suggestedWeights)
-            : (history.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
-               ?? pe.suggestedWeights)
+        if aiOn {
+            return suggestNextWeightsForUpperTarget(upperTargetReps: upperTargetReps, targetReps: pe.targetReps,
+                                                    weightIncreaseAmount: weightIncreaseAmount,
+                                                    history: history, roundingIncrement: roundingIncrement,
+                                                    isBodyweight: pe.isBodyweight)
+                ?? pe.suggestedWeights
+        }
+        guard let latest = history.last else { return pe.suggestedWeights }
+        // AI off: same carry-over-a-single-broadcast-weight rule as the AI-on
+        // path above, minus selectedWeightAdjustment — AI off never applies
+        // that wheel choice even when the scheme matches (see
+        // startingWeights' own doc), so a scheme change doesn't newly start
+        // applying it either.
+        if latest.targetReps != pe.targetReps {
+            let weights = latest.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+            guard let carried = mostFrequentWeight(in: weights) else { return pe.suggestedWeights }
+            return Array(repeating: carried, count: pe.targetReps.count)
+        }
+        return latest.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
     }
 
     // MARK: - Shared performance checks (used by suggestNextWeights + recap)
@@ -300,15 +375,25 @@ enum ProgressionEngine {
                                 roundingIncrement: Double,
                                 customIncreaseStreak: Int? = nil,
                                 customIncreaseAmount: Double? = nil) -> [Double] {
-        aiOn
-            ? (suggestNextWeights(targetReps: pe.targetReps, history: history,
-                                  aggressiveness: aggressiveness, roundingIncrement: roundingIncrement,
-                                  isBodyweight: pe.isBodyweight,
-                                  customIncreaseStreak: customIncreaseStreak,
-                                  customIncreaseAmount: customIncreaseAmount)
-               ?? pe.suggestedWeights)
-            : (history.last?.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
-               ?? pe.suggestedWeights)
+        if aiOn {
+            return suggestNextWeights(targetReps: pe.targetReps, history: history,
+                                      aggressiveness: aggressiveness, roundingIncrement: roundingIncrement,
+                                      isBodyweight: pe.isBodyweight,
+                                      customIncreaseStreak: customIncreaseStreak,
+                                      customIncreaseAmount: customIncreaseAmount)
+                ?? pe.suggestedWeights
+        }
+        guard let latest = history.last else { return pe.suggestedWeights }
+        // AI off: same carry-over-a-single-broadcast-weight rule as the
+        // AI-on path, minus selectedWeightAdjustment — AI off never applies
+        // that wheel choice even when the scheme matches below, so a scheme
+        // change doesn't newly start applying it either.
+        if latest.targetReps != pe.targetReps {
+            let weights = latest.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
+            guard let carried = mostFrequentWeight(in: weights) else { return pe.suggestedWeights }
+            return Array(repeating: carried, count: pe.targetReps.count)
+        }
+        return latest.sortedSets.map { pe.isBodyweight ? ($0.addedWeight ?? 0) : $0.weight }
     }
 
     /// Same idea as `startingWeights`, for a repTotal exercise — a single

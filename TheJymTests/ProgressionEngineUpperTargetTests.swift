@@ -94,7 +94,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
 
     func testSuggestNextWeightsForUpperTargetReturnsNilWithoutHistory() {
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: [])
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: [])
         XCTAssertNil(suggestion)
     }
 
@@ -106,7 +106,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [140, 145, 140])
     }
 
@@ -118,7 +118,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [135, 135, 135], "no bump earned — hold, don't fall back to a smaller bump")
     }
 
@@ -139,7 +139,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs,
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs,
             roundingIncrement: 2.5, isBodyweight: true)
         XCTAssertEqual(suggestion, [30, 30, 30], "bumps ADDED weight (25 + 5), never the resolved bodyweight total")
     }
@@ -158,7 +158,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [145, 145, 145], "the recorded per-session choice (10) wins over the configured default (5)")
     }
 
@@ -174,7 +174,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [135, 135, 135], "explicit No Change (0) must hold the weight, not fall back to the configured default")
     }
 
@@ -189,7 +189,7 @@ final class ProgressionEngineUpperTargetTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [140, 140, 140])
     }
 

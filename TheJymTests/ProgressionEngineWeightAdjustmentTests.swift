@@ -100,7 +100,7 @@ final class ProgressionEngineWeightAdjustmentTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [125, 125, 125])
     }
 
@@ -116,7 +116,7 @@ final class ProgressionEngineWeightAdjustmentTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 10, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 10, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [130, 130, 130], "qualified, but the wheel's own -5 choice overrides the automatic +10")
     }
 
@@ -131,7 +131,7 @@ final class ProgressionEngineWeightAdjustmentTests: XCTestCase {
         let logs = try! context.fetch(FetchDescriptor<ExerciseLog>())
 
         let suggestion = ProgressionEngine.suggestNextWeightsForUpperTarget(
-            upperTargetReps: [10, 10, 10], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
+            upperTargetReps: [10, 10, 10], targetReps: [8, 8, 8], weightIncreaseAmount: 5, history: logs, roundingIncrement: 2.5)
         XCTAssertEqual(suggestion, [135, 135, 135])
     }
 }

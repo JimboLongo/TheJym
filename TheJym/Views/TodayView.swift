@@ -134,13 +134,24 @@ struct TodayView: View {
         return (phase, day)
     }
 
-    /// This exercise's logs, same plan key, any phase — mirrors
-    /// WorkoutLogView.history(for:) exactly, since the preview needs to
-    /// resolve the same starting weight opening the workout would.
+    /// This exercise's logs, any phase — mirrors WorkoutLogView.history(for:)
+    /// exactly (including its widened fixedSets-matched-by-name-not-scheme
+    /// rule — see that copy's own doc), since the preview needs to resolve
+    /// the same starting weight opening the workout would.
     private func history(for pe: PlannedExercise) -> [ExerciseLog] {
         allExerciseLogsForPreview
-            .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty
-                     && $0.session?.isDeload != true && $0.session?.isBonusSession != true }
+            .filter { log in
+                guard !log.sets.isEmpty, log.exerciseName == pe.exerciseName,
+                      log.session?.isDeload != true, log.session?.isBonusSession != true
+                else { return false }
+                switch pe.goalType {
+                case .fixedSets:
+                    guard case .fixedSets = log.goalType else { return false }
+                    return true
+                case .repTotal:
+                    return log.planKey == pe.planKey
+                }
+            }
             .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
     }
     private func roundingIncrement(for exerciseName: String) -> Double {

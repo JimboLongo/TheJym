@@ -699,15 +699,38 @@ struct WorkoutLogView: View {
 
     // MARK: Setup
 
-    /// This exercise's logs, same plan key, any phase (progression looks at
-    /// your whole training history, not just the current block). Excludes
-    /// bonus sessions (an extra session logged after that cycle's slot for
-    /// the day was already filled) so the AI progression math still sees
-    /// exactly one log per cycle per exercise, same as before slots existed.
+    /// This exercise's logs, any phase (progression looks at your whole
+    /// training history, not just the current block). Excludes bonus
+    /// sessions (an extra session logged after that cycle's slot for the
+    /// day was already filled) so the AI progression math still sees
+    /// exactly one log per cycle per exercise, same as before slots
+    /// existed, and deload sessions (their cut weights shouldn't seed
+    /// progression math either).
+    ///
+    /// A fixedSets exercise is matched by NAME alone, not the exact
+    /// planKey/rep scheme — a per-cycle override that changes set count or
+    /// reps (most commonly a deload) shouldn't reset weight history to
+    /// zero. ProgressionEngine itself detects a scheme mismatch against
+    /// `latest` and carries over a single broadcast weight instead of
+    /// running its usual per-scheme math — see suggestNextWeights' own doc.
+    /// A repTotal exercise stays matched by its exact planKey (name + total
+    /// target) — a different total is a different goal to work toward, not
+    /// a carried-over scheme change, and out of scope for that carry-over
+    /// rule.
     private func history(for pe: PlannedExercise) -> [ExerciseLog] {
         allExerciseLogs
-            .filter { $0.planKey == pe.planKey && !$0.sets.isEmpty
-                     && $0.session?.isDeload != true && $0.session?.isBonusSession != true }
+            .filter { log in
+                guard !log.sets.isEmpty, log.exerciseName == pe.exerciseName,
+                      log.session?.isDeload != true, log.session?.isBonusSession != true
+                else { return false }
+                switch pe.goalType {
+                case .fixedSets:
+                    guard case .fixedSets = log.goalType else { return false }
+                    return true
+                case .repTotal:
+                    return log.planKey == pe.planKey
+                }
+            }
             .sorted { ($0.session?.date ?? .distantPast) < ($1.session?.date ?? .distantPast) }
     }
 
