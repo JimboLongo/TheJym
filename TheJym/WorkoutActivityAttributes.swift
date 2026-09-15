@@ -14,7 +14,7 @@
 //  snapshot, so the Dynamic Island's timer text can tick natively via
 //  SwiftUI's Text(timerInterval:) — no per-second updates need to be pushed
 //  from the app while a rest period is actually counting down, only on each
-//  resetAndStart/retarget (see RestActivityController).
+//  resetAndStart (see RestActivityController).
 //
 
 import ActivityKit
@@ -22,15 +22,15 @@ import Foundation
 
 struct RestActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
-        /// nil = counting up from 0 with no target (the current exercise
-        /// has no rest time set); non-nil = counting down from this many
-        /// seconds — matching RestStopwatch.targetSeconds.
+        /// nil = counting up from 0 with no target (the exercise whose
+        /// set was just logged has no rest time set); non-nil = counting
+        /// down from this many seconds — matching RestStopwatch.targetSeconds.
         var targetSeconds: Int?
         /// When the CURRENT run started counting from `accumulatedSeconds`
         /// — nil while paused, matching RestStopwatch's own startDate.
         var startDate: Date?
-        /// Time banked from any previous run(s) since the last reset/
-        /// retarget — matching RestStopwatch's own accumulated.
+        /// Time banked from any previous run(s) since the last reset —
+        /// matching RestStopwatch's own accumulated.
         var accumulatedSeconds: Double
         var isRunning: Bool
     }

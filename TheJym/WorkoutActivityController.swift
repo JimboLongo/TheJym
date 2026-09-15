@@ -8,8 +8,8 @@
 //  one-instance-per-active-workout scope (hoisted to WorkoutLogView).
 //  Deliberately kept separate from RestStopwatch itself (which knows
 //  nothing about ActivityKit) — WorkoutLogView calls `sync` after every
-//  resetAndStart (a logged set) and retarget (a swipe to a different
-//  exercise), and `end` whenever there's nothing left to track: the workout
+//  resetAndStart (a logged set, the only thing that changes the countdown),
+//  and `end` whenever there's nothing left to track: the workout
 //  finishes, is discarded, or the workout screen goes away entirely (see
 //  RestStopwatch's own doc on why it's never persisted, unlike
 //  WorkoutStopwatch — there's no saved state to adopt an existing Activity
@@ -28,8 +28,8 @@ final class RestActivityController {
     private var activity: Activity<RestActivityAttributes>?
 
     /// Starts a new Activity if none exists yet, or updates the existing
-    /// one to match `state` — safe to call after every resetAndStart/
-    /// retarget, a no-op beyond the one Activity update each needs.
+    /// one to match `state` — safe to call after every resetAndStart, a
+    /// no-op beyond the one Activity update it needs.
     func sync(_ state: (targetSeconds: Int?, accumulatedSeconds: TimeInterval, startDate: Date?, isRunning: Bool)) {
         let contentState = RestActivityAttributes.ContentState(
             targetSeconds: state.targetSeconds,

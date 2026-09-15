@@ -41,11 +41,12 @@ final class RestStopwatch: ObservableObject {
     /// TimerEngine.tickToken.
     @Published private var tickToken = 0
 
-    /// nil = counting up from 0 with no target (the current exercise has no
-    /// rest time set); non-nil = counting down from this many seconds,
-    /// floored at 0.
+    /// nil = counting up from 0 with no target (the exercise whose set was
+    /// just logged has no rest time set); non-nil = counting down from this
+    /// many seconds, floored at 0. Only ever set by
+    /// `resetAndStart(targetSeconds:)` — see its own doc.
     private(set) var targetSeconds: Int?
-    /// Time banked from any previous run(s) since the last reset/retarget —
+    /// Time banked from any previous run(s) since the last reset —
     /// frozen (not advancing) whenever `startDate` is nil.
     private var accumulated: TimeInterval = 0
     /// When the current run started counting from `accumulated` — nil while
@@ -103,7 +104,7 @@ final class RestStopwatch: ObservableObject {
     /// TimerAudioEngine.shared (this app's one audio path; see its own file
     /// for why nothing here talks to AVAudioSession/AVAudioEngine directly).
     /// Overridable so tests can substitute a no-op: driving a target of 5s
-    /// or less through resetAndStart/retarget synchronously calls this on
+    /// or less through resetAndStart synchronously calls this on
     /// the calling thread, and the real engine's AVAudioSession activation
     /// has no business running inside a unit test — it isn't a real device
     /// audio route, and it has hung the test process rather than failing
@@ -120,9 +121,15 @@ final class RestStopwatch: ObservableObject {
     /// `targetSeconds` (that exercise's own rest time, or nil to fall back
     /// to counting up) and restarts from the top, overriding a manual pause
     /// if one was in effect, since the whole point is "time since/until the
-    /// last completed set." Re-anchors elapsed to 0 — for changing the
-    /// target WITHOUT touching elapsed (e.g. swiping to a different
-    /// exercise), use `retarget(to:)` instead.
+    /// last completed set." Re-anchors elapsed to 0.
+    ///
+    /// This is the ONLY way `targetSeconds` ever changes. The countdown is
+    /// pinned to whichever exercise's reps were just entered and stays
+    /// there — swiping to a different exercise page deliberately does NOT
+    /// re-target it (there was briefly a `retarget(to:)` for exactly that,
+    /// since removed). You're resting from the set you actually did, so
+    /// that set's own rest time is the one that matters, regardless of
+    /// what you happen to be looking at while you wait.
     func resetAndStart(targetSeconds: Int?) {
         self.targetSeconds = targetSeconds
         accumulated = 0
@@ -130,18 +137,6 @@ final class RestStopwatch: ObservableObject {
         isRunning = true
         firedThresholds.removeAll()
         startTicking()
-        evaluateAudioCues()
-    }
-
-    /// Changes which duration is being counted down to/from WITHOUT
-    /// touching the elapsed-time anchor — for when the exercise being
-    /// VIEWED changes (a swipe) rather than one being logged against.
-    /// Elapsed time since the last logged set is the invariant; the target
-    /// is just whichever exercise is currently on screen. A no-op if the
-    /// target isn't actually changing.
-    func retarget(to targetSeconds: Int?) {
-        guard targetSeconds != self.targetSeconds else { return }
-        self.targetSeconds = targetSeconds
         evaluateAudioCues()
     }
 
@@ -212,17 +207,20 @@ final class RestStopwatch: ObservableObject {
     // double-tick or silently skip a cue entirely on a gap. Tracking which
     // thresholds have already fired for the current approach sidesteps the
     // double-tick case for free (the threshold's already consumed, so
-    // nothing plays again). For a gap — or a discontinuous jump from
-    // retargeting, or a target that starts at 5s or less in the first
-    // place — only the single nearest still-live threshold plays; the ones
-    // it skipped over are marked fired without sound, since they were never
-    // actually the "current" number on the way down (e.g. a fresh 3-second
-    // target was never at 5 or 4 seconds remaining; a swipe that drops
-    // remaining from 40s to -10s didn't audibly pass through 5,4,3,2,1
-    // either). `firedThresholds` un-fires a threshold the moment `remaining`
-    // rises back above it (see its own doc), so retargeting to a longer
-    // duration (this file's `retarget(to:)`) or hitting Reset both make the
-    // whole final approach eligible to play out again from scratch.
+    // nothing plays again). For a gap — or a target that starts at 5s or
+    // less in the first place — only the single nearest still-live
+    // threshold plays; the ones it skipped over are marked fired without
+    // sound, since they were never actually the "current" number on the
+    // way down (e.g. a fresh 3-second target was never at 5 or 4 seconds
+    // remaining).
+    //
+    // The `remaining <= Double($0)` filter below un-fires a threshold if
+    // `remaining` ever rises back above it. Nothing reaches that today:
+    // `remaining` only rises when the target grows or elapsed shrinks, and
+    // since `retarget(to:)` was removed both paths (resetAndStart, reset)
+    // clear `firedThresholds` outright anyway. Kept as-is rather than
+    // pruned — it's the correct invariant for a derived-live value, and
+    // costs nothing.
     private func evaluateAudioCues() {
         guard let targetSeconds else {
             firedThresholds.removeAll()

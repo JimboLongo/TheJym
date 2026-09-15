@@ -3,10 +3,10 @@
 //  TheJymTests
 //
 //  Covers the pause/resume/reset bookkeeping, the countdown-vs-count-up
-//  modes, retargeting without re-anchoring, and the final-approach audio
-//  cues — displaySeconds is wall-clock derived (no injectable clock here
-//  either, same as TimerEngine), so assertions use small tolerances rather
-//  than exact values.
+//  modes, the target staying pinned to the set that was actually logged,
+//  and the final-approach audio cues — displaySeconds is wall-clock
+//  derived (no injectable clock here either, same as TimerEngine), so
+//  assertions use small tolerances rather than exact values.
 //
 //  Every stopwatch here gets a no-op `playCue` — the real one goes through
 //  TimerAudioEngine's actual AVAudioSession/AVAudioEngine, which has no
@@ -154,7 +154,7 @@ final class RestStopwatchTests: XCTestCase {
         XCTAssertFalse(sw.isAtZero)
     }
 
-    func testRetargetingOnANewSetSwitchesModesCleanly() {
+    func testANewLoggedSetSwitchesModesCleanly() {
         let sw = makeStopwatch()
         sw.resetAndStart(targetSeconds: nil)
         Thread.sleep(forTimeInterval: 0.2)
@@ -162,53 +162,66 @@ final class RestStopwatchTests: XCTestCase {
         XCTAssertEqual(sw.displaySeconds, 45, accuracy: 0.1, "A fresh set on a different exercise should retarget, not keep the old mode")
     }
 
-    // MARK: retarget(to:) — the exercise being VIEWED, not re-anchoring
+    // MARK: The target is pinned to the logged set — swiping never moves it
+    //
+    // These replace an earlier `retarget(to:)` suite that asserted the
+    // opposite (the countdown following whichever exercise was on screen).
+    // That method is gone: `resetAndStart(targetSeconds:)` is now the only
+    // way `targetSeconds` ever changes, so there is deliberately no API a
+    // page swipe could call to move the target. What's left to pin down is
+    // that the target genuinely holds still on its own.
 
-    func testRetargetChangesRemainingWithoutTouchingElapsed() {
+    func testTargetHoldsItsOriginalValueAsTimeElapses() {
+        let sw = makeStopwatch()
+        sw.resetAndStart(targetSeconds: 60)
+        XCTAssertEqual(sw.targetSeconds, 60)
+        Thread.sleep(forTimeInterval: 0.3)
+        // Still counting down from the SAME 60, just further along — a
+        // swipe to an exercise with a different rest time can't change
+        // either half of this.
+        XCTAssertEqual(sw.targetSeconds, 60)
+        XCTAssertEqual(sw.displaySeconds, 59.7, accuracy: 0.1)
+    }
+
+    func testOnlyANewLoggedSetChangesTheTarget() {
         let sw = makeStopwatch()
         sw.resetAndStart(targetSeconds: 60)
         Thread.sleep(forTimeInterval: 0.2)
-        sw.retarget(to: 120)
-        // Same elapsed (~0.2s), new target -> remaining jumps up by 60.
-        XCTAssertEqual(sw.displaySeconds, 119.8, accuracy: 0.1)
+        // Every other public control leaves the target exactly where it is.
+        sw.stop()
+        XCTAssertEqual(sw.targetSeconds, 60)
+        sw.resume()
+        XCTAssertEqual(sw.targetSeconds, 60)
+        sw.reset()
+        XCTAssertEqual(sw.targetSeconds, 60, "Reset returns to the top of the SAME target, it doesn't clear it")
+        // Only logging a set against a different exercise moves it.
+        sw.resetAndStart(targetSeconds: 90)
+        XCTAssertEqual(sw.targetSeconds, 90)
     }
 
-    func testRetargetFromExpiredExerciseToLongerOneClearsExpiredState() {
+    func testExpiredStateIsClearedOnlyByANewLoggedSetNotBySwiping() {
         let sw = makeStopwatch()
         sw.resetAndStart(targetSeconds: 0)
         XCTAssertTrue(sw.isAtZero)
-        sw.retarget(to: 30)
+        // The countdown holds at 0:00 (blinking red) until the NEXT set is
+        // logged — it no longer leaves that state just because a longer
+        // exercise came on screen.
+        Thread.sleep(forTimeInterval: 0.2)
+        XCTAssertTrue(sw.isAtZero, "Must hold at zero, not recover on its own")
+        sw.resetAndStart(targetSeconds: 30)
         XCTAssertFalse(sw.isAtZero, "isAtZero must be derived live, not latched from the previous target")
         XCTAssertEqual(sw.displaySeconds, 30, accuracy: 0.1)
     }
 
-    func testRetargetToNilFallsBackToCountUp() {
+    func testANewLoggedSetWithNoRestTimeFallsBackToCountUp() {
         let sw = makeStopwatch()
         sw.resetAndStart(targetSeconds: 60)
         Thread.sleep(forTimeInterval: 0.2)
-        sw.retarget(to: nil)
-        XCTAssertEqual(sw.displaySeconds, 0.2, accuracy: 0.1, "No target should show elapsed time since the last set")
+        sw.resetAndStart(targetSeconds: nil)
+        XCTAssertNil(sw.targetSeconds)
+        XCTAssertEqual(sw.displaySeconds, 0, accuracy: 0.1, "Count-up re-anchors from 0 — this is a logged set, not a swipe")
         XCTAssertFalse(sw.isUrgent)
         XCTAssertFalse(sw.isAtZero)
-    }
-
-    func testRetargetDoesNotReanchorElapsed() {
-        let sw = makeStopwatch()
-        sw.resetAndStart(targetSeconds: 60)
-        Thread.sleep(forTimeInterval: 0.3)
-        sw.retarget(to: 90)
-        Thread.sleep(forTimeInterval: 0.2)
-        // elapsed should be ~0.5s total across both sleeps, not reset to 0
-        // by the retarget in between.
-        XCTAssertEqual(sw.displaySeconds, 89.5, accuracy: 0.1)
-    }
-
-    func testRetargetToSameValueIsANoOp() {
-        let sw = makeStopwatch()
-        sw.resetAndStart(targetSeconds: 60)
-        let before = sw.displaySeconds
-        sw.retarget(to: 60)
-        XCTAssertEqual(sw.displaySeconds, before, accuracy: 0.01)
     }
 
     // MARK: Audio cues
@@ -239,39 +252,27 @@ final class RestStopwatchTests: XCTestCase {
         XCTAssertEqual(durations.filter { $0 == 3.0 }.count, 1, "Exactly one 3-second tone at 0")
     }
 
-    func testCuesDoNotRefireOnRepeatedEvaluationAtTheSameRemaining() {
-        let sw = makeStopwatch()
-        var fireCount = 0
-        sw.playCue = { _, _, _ in fireCount += 1 }
-        sw.resetAndStart(targetSeconds: 2)
-        let afterFirst = fireCount
-        // retarget(to:) with the SAME value is a no-op and shouldn't
-        // re-evaluate/re-fire anything already consumed.
-        sw.retarget(to: 2)
-        XCTAssertEqual(fireCount, afterFirst)
-    }
-
-    func testRisingBackAboveAThresholdMakesItEligibleToFireAgain() {
+    /// Re-entering the final window on a NEW logged set lets the same cue
+    /// fire again — previously exercised by swiping a target back up and
+    /// down via retarget(to:), which no longer exists.
+    func testTheSameCueFiresAgainOnTheNextLoggedSet() {
         let sw = makeStopwatch()
         var fireCount = 0
         sw.playCue = { _, _, _ in fireCount += 1 }
         sw.resetAndStart(targetSeconds: 2) // fires the "2" cue immediately
         XCTAssertEqual(fireCount, 1)
-        sw.retarget(to: 30) // rises back above 5 -> "2" becomes eligible again
-        XCTAssertEqual(fireCount, 1, "Rising back above the window shouldn't itself fire anything")
-        sw.retarget(to: 2) // re-enters at remaining == 2
-        XCTAssertEqual(fireCount, 2, "Re-entering the final window should let the same cue fire again")
+        sw.resetAndStart(targetSeconds: 2) // next set, same short rest time
+        XCTAssertEqual(fireCount, 2, "A fresh set at the same target should let the cue fire again")
     }
 
-    func test0ToneIsEligibleAgainAfterRetargetingBackUpAndDown() {
+    func test0ToneIsEligibleAgainOnTheNextLoggedSet() {
         let sw = makeStopwatch()
         var zeroToneCount = 0
         sw.playCue = { _, duration, _ in if duration == 3.0 { zeroToneCount += 1 } }
         sw.resetAndStart(targetSeconds: 0) // expires immediately
         XCTAssertEqual(zeroToneCount, 1)
-        sw.retarget(to: 30) // swipe to a longer exercise
-        sw.retarget(to: 0) // swipe back to (effectively) expired again
-        XCTAssertEqual(zeroToneCount, 2, "The 0-second tone must be eligible again once remaining re-reaches 0")
+        sw.resetAndStart(targetSeconds: 0) // next set, expires immediately again
+        XCTAssertEqual(zeroToneCount, 2, "The 0-second tone must be eligible again on a fresh set")
     }
 
     func testNoCuesFireWhilePaused() {
@@ -280,7 +281,9 @@ final class RestStopwatchTests: XCTestCase {
         sw.stop()
         var fireCount = 0
         sw.playCue = { _, _, _ in fireCount += 1 }
-        sw.retarget(to: 2) // still paused; would cross into a fresh threshold if running
+        // reset() re-evaluates cues (and clears firedThresholds), so this
+        // would fire the "3" cue if the paused guard weren't holding.
+        sw.reset()
         XCTAssertEqual(fireCount, 0, "Paused shouldn't play cues even if bookkeeping updates")
     }
 
