@@ -259,10 +259,12 @@ struct StatsView: View {
         }
     }
 
-    /// One row per calendar year with anything in it, newest first. The
-    /// Workouts column counts walks alongside training (both are real
-    /// sessions) but not Rest Day placeholders — see StatsEngine.compute's
-    /// own note on exactly which shapes qualify.
+    /// One column per calendar year with anything in it, newest first.
+    /// "Active days" counts distinct DAYS on which anything was logged —
+    /// training or a rest-day activity, with both on the same date
+    /// counting once — so it deliberately doesn't match the session-based
+    /// "All-time workouts" in Milestones below. See StatsEngine.compute's
+    /// own note for which sessions qualify and why the two differ.
     private var yearlyTotalsSection: some View {
         Section {
             YearlyTotalsTable(rows: stats.yearlyTotals,
@@ -272,8 +274,8 @@ struct StatsView: View {
             Text("By Year")
         } footer: {
             Text(stats.currentYearProjection == nil
-                 ? "Workouts include rest-day activities. The current year is to date."
-                 : "Workouts include rest-day activities. The current year is to date; Proj. extends its pace to a full year.")
+                 ? "An active day is any day you trained or logged a rest-day activity; both on one day still counts once. The current year is to date."
+                 : "An active day is any day you trained or logged a rest-day activity; both on one day still counts once. The current year is to date; Proj. extends its pace to a full year.")
         }
     }
 
@@ -653,7 +655,7 @@ struct YearlyTotalsTable: View {
     private struct Column: Identifiable {
         let id: String
         let header: String
-        let workoutCount: Int
+        let activeDayCount: Int
         let miles: Double
     }
 
@@ -663,10 +665,10 @@ struct YearlyTotalsTable: View {
             // locale-grouped "2,026".
             let yearText = String(row.year)
             var out = [Column(id: yearText, header: yearText,
-                              workoutCount: row.workoutCount, miles: row.milesWalked)]
+                              activeDayCount: row.activeDayCount, miles: row.milesWalked)]
             if let projection, projection.year == row.year {
                 out.append(Column(id: "\(yearText)-proj", header: "\(yearText) Proj.",
-                                  workoutCount: projection.workoutCount, miles: projection.milesWalked))
+                                  activeDayCount: projection.activeDayCount, miles: projection.milesWalked))
             }
             return out
         }
@@ -679,8 +681,8 @@ struct YearlyTotalsTable: View {
     var body: some View {
         if dynamicTypeSize.isAccessibilitySize {
             ForEach(columns) { column in
-                LabeledContent("\(column.header) — Workouts") {
-                    valueText("\(column.workoutCount)")
+                LabeledContent("\(column.header) — Active days") {
+                    valueText("\(column.activeDayCount)")
                 }
                 LabeledContent("\(column.header) — Miles") {
                     valueText(milesLabel(column.miles))
@@ -697,9 +699,9 @@ struct YearlyTotalsTable: View {
                     }
                 }
                 GridRow {
-                    Text("Workouts").font(.caption).foregroundStyle(.secondary)
+                    Text("Active days").font(.caption).foregroundStyle(.secondary)
                     ForEach(columns) { column in
-                        valueText("\(column.workoutCount)")
+                        valueText("\(column.activeDayCount)")
                             .fixedSize()
                             .gridColumnAlignment(.center)
                     }

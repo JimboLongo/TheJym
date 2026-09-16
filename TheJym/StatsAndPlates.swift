@@ -207,11 +207,15 @@ struct BigLiftResult: Identifiable {
 struct YearTotal: Identifiable {
     var id: Int { year }
     let year: Int
-    /// Everything the user actually DID that year: training sessions plus
-    /// rest-day activities (walks). Counted straight off `sessionDates`,
-    /// the same input `allTimeWorkoutCount` uses — see compute's own note
-    /// for exactly which session shapes that does and doesn't include.
-    let workoutCount: Int
+    /// DISTINCT CALENDAR DAYS on which the user did something that year —
+    /// trained, walked, or both. Deliberately a day count, not a session
+    /// count: a training session and a walk logged on the same date are
+    /// one active day, not two. That makes this diverge from
+    /// `allTimeWorkoutCount` (which counts sessions) — see compute's own
+    /// note for why, and StatsView's label, which says "Active days"
+    /// rather than "Workouts" so the two aren't mistaken for the same
+    /// quantity disagreeing.
+    let activeDayCount: Int
     /// Same `milesSum(from:through:)` helper every other miles figure on
     /// the page goes through, just bounded to this year — so this column
     /// can never disagree with allTimeMiles/ytdMiles.
@@ -397,30 +401,42 @@ enum StatsEngine {
         let allTimeMiles = milesEntries.map(\.miles).reduce(0, +)
 
         // Per-year totals, newest first. A year qualifies on having either
-        // a session or any miles — no padding of empty years between
+        // an active day or any miles — no padding of empty years between
         // sparse ones, and a year with nothing in it never appears.
         //
-        // The workout count buckets `sessionDates` itself, the exact same
-        // input `allTimeWorkoutCount` above sums, so the two can't drift:
-        // that's every exercise-bearing session, which INCLUDES rest-day
-        // activities (a walk gets a real ExerciseLog just like training —
-        // see the activityRestSet note further up) and EXCLUDES both
-        // backfilled Rest Day placeholders and plain "Log Rest Day"
-        // credits, since neither has any exercise log at all (StatsView's
-        // realSessionDates does that filtering before we ever see it).
+        // The first column counts DISTINCT CALENDAR DAYS, not sessions.
+        // Which sessions qualify is `sessionDates` — every exercise-bearing
+        // session, which INCLUDES rest-day activities (a walk gets a real
+        // ExerciseLog just like training — see the activityRestSet note
+        // further up) and EXCLUDES both backfilled Rest Day placeholders
+        // and plain "Log Rest Day" credits, since neither has any exercise
+        // log at all (StatsView's realSessionDates filters those before we
+        // ever see them). Those qualifying sessions are then collapsed to
+        // one entry per calendar day.
+        //
+        // That collapse is the whole point and is why this does NOT sum to
+        // `allTimeWorkoutCount` above: a training session and a walk logged
+        // on the same date are two sessions but one active day. Real data
+        // had 224 qualifying 2025 sessions across 167 distinct days — 57
+        // dates carrying exactly one training session plus one walk each,
+        // all from a CSV import that wrote the walk as its own session.
+        // Both numbers are defensible; this table reports days, and its
+        // label says so.
+        //
         // Miles go through milesSum, same as every other miles figure
         // here, just bounded to the year.
-        let yearsWithSessions = Set(sessionDates.map { cal.component(.year, from: $0) })
+        let activeDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
+        let activeDayYears = activeDays.map { cal.component(.year, from: $0) }
+        let yearsWithActiveDays = Set(activeDayYears)
         let yearsWithMiles = Set(milesEntries.map { cal.component(.year, from: $0.day) })
-        let sessionYears = sessionDates.map { cal.component(.year, from: $0) }
-        let yearlyTotals: [YearTotal] = yearsWithSessions.union(yearsWithMiles)
+        let yearlyTotals: [YearTotal] = yearsWithActiveDays.union(yearsWithMiles)
             .sorted(by: >)
             .compactMap { year -> YearTotal? in
                 guard let yearFirstDay = cal.date(from: DateComponents(year: year, month: 1, day: 1)),
                       let yearLastDay = cal.date(from: DateComponents(year: year, month: 12, day: 31))
                 else { return nil }
                 return YearTotal(year: year,
-                                 workoutCount: sessionYears.filter { $0 == year }.count,
+                                 activeDayCount: activeDayYears.filter { $0 == year }.count,
                                  milesWalked: milesSum(from: yearFirstDay, through: yearLastDay))
             }
 
@@ -451,7 +467,7 @@ enum StatsEngine {
             guard daysElapsed >= 14, daysElapsed < daysInYear else { return nil }
             let rate = Double(daysInYear) / Double(daysElapsed)
             return YearTotal(year: currentYear,
-                             workoutCount: Int((Double(actual.workoutCount) * rate).rounded()),
+                             activeDayCount: Int((Double(actual.activeDayCount) * rate).rounded()),
                              milesWalked: actual.milesWalked * rate)
         }()
 

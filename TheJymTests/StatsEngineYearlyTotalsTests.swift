@@ -3,10 +3,12 @@
 //  TheJymTests
 //
 //  Covers TrainingStats.yearlyTotals — the Stats page's per-year table.
-//  Two things worth pinning down: the year bucketing (which years appear,
-//  in what order, with no padding), and the classification of what counts
-//  as a "workout" for that column, which is the subtle part — walks count,
-//  Rest Day placeholders don't.
+//  Three things worth pinning down: the year bucketing (which years appear,
+//  in what order, with no padding), the classification of which sessions
+//  qualify (walks count, Rest Day placeholders don't), and the collapse of
+//  multiple qualifying sessions on one date into a single ACTIVE DAY —
+//  the last of which is why this column deliberately doesn't match the
+//  session-based allTimeWorkoutCount.
 //
 //  Note on the classification: yearlyTotals buckets `sessionDates`, which
 //  StatsView derives as `sessions.filter { !$0.exerciseLogs.isEmpty }`.
@@ -57,7 +59,7 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
         let result = stats(sessionDates: [date(2025, 4, 10), date(2025, 8, 1), date(2026, 2, 2)],
                            startDate: date(2025, 4, 10), now: date(2026, 9, 16))
         XCTAssertEqual(result.yearlyTotals.map(\.year), [2026, 2025], "descending, newest first")
-        XCTAssertEqual(result.yearlyTotals.map(\.workoutCount), [1, 2])
+        XCTAssertEqual(result.yearlyTotals.map(\.activeDayCount), [1, 2])
     }
 
     /// A year with nothing at all never gets a row, and sparse years are
@@ -85,7 +87,7 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
                            startDate: date(2025, 6, 1), now: date(2026, 9, 16))
         XCTAssertEqual(result.yearlyTotals.map(\.year), [2026, 2025])
         let y2025 = result.yearlyTotals.first { $0.year == 2025 }
-        XCTAssertEqual(y2025?.workoutCount, 0)
+        XCTAssertEqual(y2025?.activeDayCount, 0)
         XCTAssertEqual(y2025?.milesWalked ?? 0, 3.5, accuracy: 0.001)
     }
 
@@ -94,9 +96,9 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
     func testYearBoundariesAreInclusiveOnBothEnds() {
         let result = stats(sessionDates: [date(2025, 1, 1), date(2025, 12, 31), date(2026, 1, 1)],
                            startDate: date(2025, 1, 1), now: date(2026, 9, 16))
-        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2025 }?.workoutCount, 2,
+        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2025 }?.activeDayCount, 2,
                        "Jan 1 and Dec 31 2025 both belong to 2025")
-        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.workoutCount, 1)
+        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.activeDayCount, 1)
     }
 
     // MARK: - Miles column agrees with the page's other miles figures
@@ -153,7 +155,7 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
 
         let result = stats(sessionDates: realSessionDates([session]),
                            startDate: date(2026, 1, 1), now: date(2026, 9, 16))
-        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.workoutCount, 1)
+        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.activeDayCount, 1)
     }
 
     /// A walk — mirrors TodayView.logActivity's shape (a real session whose
@@ -176,7 +178,7 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
 
         let result = stats(sessionDates: realSessionDates([session]), restActivities: [activity],
                            startDate: date(2026, 1, 1), now: date(2026, 9, 16))
-        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.workoutCount, 1,
+        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.activeDayCount, 1,
                        "a logged walk is something the user actually did — it counts")
     }
 
@@ -245,43 +247,117 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
         let result = stats(sessionDates: realSessionDates(all), restActivities: [activity],
                            startDate: date(2026, 1, 1), now: date(2026, 9, 16))
 
-        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.workoutCount, 2,
+        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.activeDayCount, 2,
                        "training + walk count; placeholder + plain rest credit do not")
         XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.milesWalked ?? 0, 2.5, accuracy: 0.001)
     }
 
-    /// The per-year counts must sum to allTimeWorkoutCount — they're
-    /// derived from the same input, so any drift here means the bucketing
-    /// dropped or double-counted something.
+    // MARK: - Active DAYS, not sessions
+    //
+    // The distinction this column turns on, and the reason it deliberately
+    // does not agree with the session-based allTimeWorkoutCount. Real data
+    // had 224 qualifying 2025 sessions across 167 distinct days — 57 dates
+    // carrying a training session AND a walk, from a CSV import that wrote
+    // the walk as its own session.
+
+    /// Two qualifying sessions on the same date are ONE active day.
+    func testTwoSessionsOnTheSameDateCountAsOneActiveDay() {
+        let result = stats(sessionDates: [date(2026, 3, 1), date(2026, 3, 1)],
+                           startDate: date(2026, 1, 1), now: date(2026, 9, 16))
+        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.activeDayCount, 1)
+    }
+
+    /// Same-day collapse ignores the time of day — two sessions hours
+    /// apart are still one date.
+    func testSessionsAtDifferentTimesOnOneDateStillCountOnce() {
+        let morning = Calendar.current.date(byAdding: .hour, value: 7, to: date(2026, 3, 1))!
+        let evening = Calendar.current.date(byAdding: .hour, value: 19, to: date(2026, 3, 1))!
+        let result = stats(sessionDates: [morning, evening],
+                           startDate: date(2026, 1, 1), now: date(2026, 9, 16))
+        XCTAssertEqual(result.yearlyTotals.first { $0.year == 2026 }?.activeDayCount, 1)
+    }
+
+    /// The real-data shape, reproduced: a training session and a walk on
+    /// the same date are two sessions but one active day — and the miles
+    /// from that walk still count in full.
     @MainActor
-    func testPerYearCountsSumToAllTimeWorkoutCount() {
+    func testATrainingSessionAndAWalkOnOneDateAreOneActiveDay() {
+        let context = makeContext()
+
+        let training = WorkoutSession(date: date(2026, 3, 1), dayLabel: "Push Day", cycleNumber: 1)
+        context.insert(training)
+        let trainingLog = ExerciseLog(exerciseName: "Bench Press", targetReps: [8], order: 0)
+        trainingLog.session = training
+        context.insert(trainingLog)
+        let trainingSet = SetLog(index: 0, weight: 135, reps: 8)
+        trainingSet.exerciseLog = trainingLog
+        context.insert(trainingSet)
+
+        let activity = RestDayActivity(date: date(2026, 3, 1), name: "Walk", distance: 2.5)
+        context.insert(activity)
+        let walk = WorkoutSession(date: date(2026, 3, 1), dayLabel: "Rest", cycleNumber: 1)
+        context.insert(walk)
+        let walkLog = ExerciseLog(exerciseName: "Walk", targetReps: [], order: 0)
+        walkLog.session = walk
+        walkLog.restDayActivity = activity
+        context.insert(walkLog)
+        let walkSet = SetLog(index: 0, weight: 2.5, reps: 1)
+        walkSet.exerciseLog = walkLog
+        context.insert(walkSet)
+
+        let result = stats(sessionDates: realSessionDates([training, walk]), restActivities: [activity],
+                           startDate: date(2026, 1, 1), now: date(2026, 9, 16))
+        let y = result.yearlyTotals.first { $0.year == 2026 }
+        XCTAssertEqual(y?.activeDayCount, 1, "two sessions, one date, one active day")
+        XCTAssertEqual(y?.milesWalked ?? 0, 2.5, accuracy: 0.001, "the walk's miles still count in full")
+    }
+
+    /// Stated explicitly so the divergence is a documented decision rather
+    /// than something that looks like a bug later: the per-year day counts
+    /// are LOWER than allTimeWorkoutCount whenever any date carries more
+    /// than one qualifying session.
+    func testActiveDaysDeliberatelyDoNotSumToAllTimeWorkoutCount() {
+        let result = stats(sessionDates: [date(2025, 4, 10), date(2025, 4, 10), date(2026, 2, 2)],
+                           startDate: date(2025, 4, 10), now: date(2026, 9, 16))
+        XCTAssertEqual(result.allTimeWorkoutCount, 3, "three sessions")
+        XCTAssertEqual(result.yearlyTotals.map(\.activeDayCount).reduce(0, +), 2, "across two active days")
+    }
+
+    /// With at most one session per date the two measures coincide — the
+    /// divergence above is caused by same-day pairs, nothing else.
+    func testActiveDaysEqualSessionCountWhenNoDateRepeats() {
         let result = stats(sessionDates: [date(2025, 4, 10), date(2025, 8, 1),
                                           date(2026, 2, 2), date(2026, 7, 7)],
                            startDate: date(2025, 4, 10), now: date(2026, 9, 16))
-        XCTAssertEqual(result.yearlyTotals.map(\.workoutCount).reduce(0, +), result.allTimeWorkoutCount)
+        XCTAssertEqual(result.yearlyTotals.map(\.activeDayCount).reduce(0, +), result.allTimeWorkoutCount)
     }
 
     // MARK: - Current-year projection
 
-    /// Straight-line run rate: 50 logged with the year ~half elapsed
+    /// Consecutive dates so each is its own active day.
+    private func consecutiveDates(count: Int, from start: Date) -> [Date] {
+        (0..<count).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    /// Straight-line run rate: 50 active days with the year ~half elapsed
     /// projects to ~100. July 2 2026 is day 183 of 365, so the multiplier
     /// is 365/183 and 50 -> 100 (rounded).
     ///
-    /// One of the sessions is dated `now` on purpose. The denominator is
+    /// The last date is `now` on purpose. The denominator is
     /// `effectiveToday`, not `today` — until something is logged for
     /// today, StatsEngine treats "now" as yesterday everywhere (see
     /// daysSinceStart/cyclePaceDelta), so an unlogged today would make
     /// this day 182, not 183. Logging today pins it. See
     /// testProjectionTreatsAnUnloggedTodayAsNotYetElapsed for that case.
     func testProjectionScalesByTheShareOfTheYearElapsed() {
-        let dates = Array(repeating: date(2026, 3, 1), count: 49) + [date(2026, 7, 2)]
+        let dates = consecutiveDates(count: 49, from: date(2026, 1, 1)) + [date(2026, 7, 2)]
         let result = stats(sessionDates: dates, startDate: date(2026, 1, 1), now: date(2026, 7, 2))
-        let projection = result.currentYearProjection
-        XCTAssertEqual(projection?.year, 2026)
-        XCTAssertEqual(projection?.workoutCount, 100)
+        XCTAssertEqual(result.yearlyTotals.first?.activeDayCount, 50, "50 distinct dates")
+        XCTAssertEqual(result.currentYearProjection?.year, 2026)
+        XCTAssertEqual(result.currentYearProjection?.activeDayCount, 100)
     }
 
-    /// Miles project on the same run rate as the count.
+    /// Miles project on the same run rate as the day count.
     @MainActor
     func testProjectionScalesMilesOnTheSameRate() {
         let context = makeContext()
@@ -296,23 +372,22 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
 
     /// The pending-today rule, stated directly: with nothing logged for
     /// today, today isn't counted as elapsed, so the same data projects
-    /// off a denominator one day smaller (and therefore slightly higher).
+    /// off a denominator one day smaller — and therefore no lower.
     func testProjectionTreatsAnUnloggedTodayAsNotYetElapsed() {
-        let logged = Array(repeating: date(2026, 3, 1), count: 49) + [date(2026, 7, 2)]
-        let unlogged = Array(repeating: date(2026, 3, 1), count: 50)
+        let base = consecutiveDates(count: 49, from: date(2026, 1, 1))
+        let withToday = stats(sessionDates: base + [date(2026, 7, 2)],
+                              startDate: date(2026, 1, 1), now: date(2026, 7, 2))
+        let withoutToday = stats(sessionDates: base + [date(2026, 3, 1)],
+                                 startDate: date(2026, 1, 1), now: date(2026, 7, 2))
 
-        let withToday = stats(sessionDates: logged, startDate: date(2026, 1, 1), now: date(2026, 7, 2))
-        let withoutToday = stats(sessionDates: unlogged, startDate: date(2026, 1, 1), now: date(2026, 7, 2))
-
-        // Same 50 sessions either way; only the denominator differs
+        // 50 active days either way; only the denominator differs
         // (day 183 vs day 182).
-        XCTAssertEqual(withToday.yearlyTotals.first?.workoutCount, 50)
-        XCTAssertEqual(withoutToday.yearlyTotals.first?.workoutCount, 50)
-        XCTAssertEqual(withToday.currentYearProjection?.milesWalked ?? 0, 0, accuracy: 0.001)
-        XCTAssertGreaterThan(
-            Double(withoutToday.currentYearProjection?.workoutCount ?? 0),
-            Double(withToday.currentYearProjection?.workoutCount ?? 0) - 1,
-            "an unlogged today shortens the elapsed window, so the projected rate is no lower")
+        XCTAssertEqual(withToday.yearlyTotals.first?.activeDayCount, 50)
+        XCTAssertEqual(withoutToday.yearlyTotals.first?.activeDayCount, 50)
+        XCTAssertGreaterThanOrEqual(
+            withoutToday.currentYearProjection?.activeDayCount ?? 0,
+            withToday.currentYearProjection?.activeDayCount ?? 0,
+            "an unlogged today shortens the elapsed window, so the projected total is no lower")
     }
 
     /// Only the CURRENT year is projected — a prior year is already
@@ -362,9 +437,10 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
     /// A projection never reads as lower than what's already banked — it
     /// extends the year, it doesn't discount it.
     func testProjectionIsNeverBelowTheActualSoFar() {
-        let dates = (0..<40).map { _ in date(2026, 2, 1) }
+        let dates = consecutiveDates(count: 40, from: date(2026, 2, 1))
         let result = stats(sessionDates: dates, startDate: date(2026, 1, 1), now: date(2026, 9, 16))
         let actual = result.yearlyTotals.first { $0.year == 2026 }
-        XCTAssertGreaterThanOrEqual(result.currentYearProjection?.workoutCount ?? 0, actual?.workoutCount ?? 0)
+        XCTAssertEqual(actual?.activeDayCount, 40)
+        XCTAssertGreaterThanOrEqual(result.currentYearProjection?.activeDayCount ?? 0, actual?.activeDayCount ?? 0)
     }
 }
