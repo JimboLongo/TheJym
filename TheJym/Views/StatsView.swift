@@ -86,6 +86,9 @@ struct StatsView: View {
                     progressFallbackSection(fallback)
                 }
                 yearMonthSection
+                if !stats.yearlyTotals.isEmpty {
+                    yearlyTotalsSection
+                }
                 milestonesSection
                 if !stats.bigLiftGroups.isEmpty {
                     bigLiftsSection
@@ -253,6 +256,20 @@ struct StatsView: View {
                 }
                 .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             }
+        }
+    }
+
+    /// One row per calendar year with anything in it, newest first. The
+    /// Workouts column counts walks alongside training (both are real
+    /// sessions) but not Rest Day placeholders — see StatsEngine.compute's
+    /// own note on exactly which shapes qualify.
+    private var yearlyTotalsSection: some View {
+        Section {
+            YearlyTotalsTable(rows: stats.yearlyTotals, milesLabel: milesLabel)
+        } header: {
+            Text("By Year")
+        } footer: {
+            Text("Workouts include rest-day activities. The current year is to date.")
         }
     }
 
@@ -600,5 +617,67 @@ struct DayDurationGroupTable: View {
         }
         .padding(.vertical, 4)
         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+    }
+}
+
+/// The per-year table inside the Stats page's "By Year" section: Year x
+/// Workouts x Miles, one row per year plus a header row, newest first —
+/// same Grid/GridRow structure and accessibility fallback as
+/// BigLiftGroupTable/DayDurationGroupTable (see BigLiftGroupTable's own doc
+/// for why a multi-value-column table falls back to one label/value row per
+/// value at an accessibility Dynamic Type size). Its own `struct` (not a
+/// private StatsView method) so a test can render it directly with
+/// synthetic data.
+///
+/// The current year's row is shown plainly, with no "(YTD)" marker — the
+/// table is newest-first, so the top row being the year still in progress
+/// is already evident, and annotating exactly one row would be the only
+/// thing making the Year column ragged.
+struct YearlyTotalsTable: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let rows: [YearTotal]
+    /// Same formatting every other miles figure on the page uses — passed
+    /// in rather than re-derived here so this table can't drift from them.
+    let milesLabel: (Double) -> String
+
+    private func valueText(_ s: String) -> Text {
+        Text(s).font(.system(.subheadline, design: .monospaced)).bold()
+    }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            ForEach(rows) { row in
+                LabeledContent("\(String(row.year)) — Workouts") {
+                    valueText("\(row.workoutCount)")
+                }
+                LabeledContent("\(String(row.year)) — Miles") {
+                    valueText(milesLabel(row.milesWalked))
+                }
+            }
+        } else {
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    Text("Year").font(.caption2.bold()).foregroundStyle(.secondary)
+                    Text("Workouts").font(.caption2.bold()).foregroundStyle(.secondary)
+                        .gridColumnAlignment(.center)
+                    Text("Miles").font(.caption2.bold()).foregroundStyle(.secondary)
+                        .gridColumnAlignment(.center)
+                }
+                ForEach(rows) { row in
+                    GridRow {
+                        // String(_:), not "\(row.year)" — the latter would
+                        // render a locale-grouped "2,026".
+                        Text(String(row.year)).font(.caption).foregroundStyle(.secondary)
+                        valueText("\(row.workoutCount)")
+                            .fixedSize()
+                            .gridColumnAlignment(.center)
+                        valueText(milesLabel(row.milesWalked))
+                            .fixedSize()
+                            .gridColumnAlignment(.center)
+                    }
+                }
+            }
+            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+        }
     }
 }

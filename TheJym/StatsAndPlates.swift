@@ -86,6 +86,10 @@ struct TrainingStats {
     /// StatsEngine.compute's own note on exactly how each group's rows are
     /// built.
     var dayDurationGroups: [DayDurationGroup]
+
+    /// One row per calendar year that has at least one session or any
+    /// miles, newest first — see StatsEngine.compute's own note.
+    var yearlyTotals: [YearTotal]
 }
 
 /// The actual calendar range a streak covered, plus its boundary days —
@@ -189,6 +193,23 @@ struct BigLiftResult: Identifiable {
     /// a different set (and date) than heaviestDate, since the two numbers
     /// aren't necessarily won by the same set.
     let estimatedOneRepMaxDate: Date
+}
+
+/// One calendar year's row in the Stats page's "By Year" table. Only years
+/// that actually have something in them get one — see StatsEngine.compute's
+/// own note on how the year set is assembled.
+struct YearTotal: Identifiable {
+    var id: Int { year }
+    let year: Int
+    /// Everything the user actually DID that year: training sessions plus
+    /// rest-day activities (walks). Counted straight off `sessionDates`,
+    /// the same input `allTimeWorkoutCount` uses — see compute's own note
+    /// for exactly which session shapes that does and doesn't include.
+    let workoutCount: Int
+    /// Same `milesSum(from:through:)` helper every other miles figure on
+    /// the page goes through, just bounded to this year — so this column
+    /// can never disagree with allTimeMiles/ytdMiles.
+    let milesWalked: Double
 }
 
 /// One day-template-grouped block in the Stats page's "Workout Duration"
@@ -368,6 +389,34 @@ enum StatsEngine {
         let priorYearYtdMiles = milesSum(from: priorYearStart, through: priorYearToday)
         let priorYearMtdMiles = milesSum(from: priorYearMonthStart, through: priorYearToday)
         let allTimeMiles = milesEntries.map(\.miles).reduce(0, +)
+
+        // Per-year totals, newest first. A year qualifies on having either
+        // a session or any miles — no padding of empty years between
+        // sparse ones, and a year with nothing in it never appears.
+        //
+        // The workout count buckets `sessionDates` itself, the exact same
+        // input `allTimeWorkoutCount` above sums, so the two can't drift:
+        // that's every exercise-bearing session, which INCLUDES rest-day
+        // activities (a walk gets a real ExerciseLog just like training —
+        // see the activityRestSet note further up) and EXCLUDES both
+        // backfilled Rest Day placeholders and plain "Log Rest Day"
+        // credits, since neither has any exercise log at all (StatsView's
+        // realSessionDates does that filtering before we ever see it).
+        // Miles go through milesSum, same as every other miles figure
+        // here, just bounded to the year.
+        let yearsWithSessions = Set(sessionDates.map { cal.component(.year, from: $0) })
+        let yearsWithMiles = Set(milesEntries.map { cal.component(.year, from: $0.day) })
+        let sessionYears = sessionDates.map { cal.component(.year, from: $0) }
+        let yearlyTotals: [YearTotal] = yearsWithSessions.union(yearsWithMiles)
+            .sorted(by: >)
+            .compactMap { year -> YearTotal? in
+                guard let yearFirstDay = cal.date(from: DateComponents(year: year, month: 1, day: 1)),
+                      let yearLastDay = cal.date(from: DateComponents(year: year, month: 12, day: 31))
+                else { return nil }
+                return YearTotal(year: year,
+                                 workoutCount: sessionYears.filter { $0 == year }.count,
+                                 milesWalked: milesSum(from: yearFirstDay, through: yearLastDay))
+            }
 
         // Hours trained — sum of durationSeconds across every non-deload
         // session that has one. A session predating duration tracking (or
@@ -559,7 +608,8 @@ enum StatsEngine {
                              allTimeHoursTrained: allTimeHoursTrained,
                              completedPhaseSummaries: completedPhaseSummaries,
                              bigLiftGroups: bigLiftGroups,
-                             dayDurationGroups: dayDurationGroups)
+                             dayDurationGroups: dayDurationGroups,
+                             yearlyTotals: yearlyTotals)
     }
 
     /// Fallback progress stat for when there's no active phase to judge
