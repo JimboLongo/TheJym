@@ -87,9 +87,15 @@ struct TrainingStats {
     /// built.
     var dayDurationGroups: [DayDurationGroup]
 
-    /// One row per calendar year that has at least one session or any
+    /// One entry per calendar year that has at least one session or any
     /// miles, newest first — see StatsEngine.compute's own note.
     var yearlyTotals: [YearTotal]
+    /// A straight-line full-year projection of the CURRENT year, or nil
+    /// when there isn't enough of the year on record to extrapolate from
+    /// (see compute's own note for the run-rate and the minimum window).
+    /// Its `year` is the current year — the same one it's projecting —
+    /// so the Stats table can sit it next to that year's actuals.
+    var currentYearProjection: YearTotal?
 }
 
 /// The actual calendar range a streak covered, plus its boundary days —
@@ -418,6 +424,37 @@ enum StatsEngine {
                                  milesWalked: milesSum(from: yearFirstDay, through: yearLastDay))
             }
 
+        // Straight-line full-year projection of the current year: scale
+        // what's on record so far by (days in year / days elapsed). No
+        // seasonality or trend weighting — a run-rate is the honest read
+        // of "keep going exactly like this," and anything fancier would
+        // imply a confidence this data can't support.
+        //
+        // Denominator uses effectiveToday, not today, for the same reason
+        // daysSinceStart/cyclePaceDelta do: until something's logged for
+        // today, counting it as a full elapsed day would drag the rate
+        // down by a day that hasn't happened yet.
+        //
+        // nil in two cases, both deliberate: fewer than 14 days elapsed
+        // (a run-rate off one or two days extrapolates to nonsense — two
+        // weeks is the shortest window where a training rate means
+        // anything), and the year already being complete (on Dec 31 the
+        // "projection" is just the actual, so there's nothing to add).
+        let currentYear = cal.component(.year, from: today)
+        let currentYearProjection: YearTotal? = {
+            guard let actual = yearlyTotals.first(where: { $0.year == currentYear }),
+                  let yearFirstDay = cal.date(from: DateComponents(year: currentYear, month: 1, day: 1)),
+                  let yearLastDay = cal.date(from: DateComponents(year: currentYear, month: 12, day: 31))
+            else { return nil }
+            let daysElapsed = (cal.dateComponents([.day], from: yearFirstDay, to: effectiveToday).day ?? 0) + 1
+            let daysInYear = (cal.dateComponents([.day], from: yearFirstDay, to: yearLastDay).day ?? 364) + 1
+            guard daysElapsed >= 14, daysElapsed < daysInYear else { return nil }
+            let rate = Double(daysInYear) / Double(daysElapsed)
+            return YearTotal(year: currentYear,
+                             workoutCount: Int((Double(actual.workoutCount) * rate).rounded()),
+                             milesWalked: actual.milesWalked * rate)
+        }()
+
         // Hours trained — sum of durationSeconds across every non-deload
         // session that has one. A session predating duration tracking (or
         // one where the workout stopwatch was never started) has
@@ -609,7 +646,8 @@ enum StatsEngine {
                              completedPhaseSummaries: completedPhaseSummaries,
                              bigLiftGroups: bigLiftGroups,
                              dayDurationGroups: dayDurationGroups,
-                             yearlyTotals: yearlyTotals)
+                             yearlyTotals: yearlyTotals,
+                             currentYearProjection: currentYearProjection)
     }
 
     /// Fallback progress stat for when there's no active phase to judge

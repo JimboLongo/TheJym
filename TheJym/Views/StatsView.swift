@@ -265,11 +265,15 @@ struct StatsView: View {
     /// own note on exactly which shapes qualify.
     private var yearlyTotalsSection: some View {
         Section {
-            YearlyTotalsTable(rows: stats.yearlyTotals, milesLabel: milesLabel)
+            YearlyTotalsTable(rows: stats.yearlyTotals,
+                              projection: stats.currentYearProjection,
+                              milesLabel: milesLabel)
         } header: {
             Text("By Year")
         } footer: {
-            Text("Workouts include rest-day activities. The current year is to date.")
+            Text(stats.currentYearProjection == nil
+                 ? "Workouts include rest-day activities. The current year is to date."
+                 : "Workouts include rest-day activities. The current year is to date; Proj. extends its pace to a full year.")
         }
     }
 
@@ -620,25 +624,53 @@ struct DayDurationGroupTable: View {
     }
 }
 
-/// The per-year table inside the Stats page's "By Year" section: Year x
-/// Workouts x Miles, one row per year plus a header row, newest first —
-/// same Grid/GridRow structure and accessibility fallback as
-/// BigLiftGroupTable/DayDurationGroupTable (see BigLiftGroupTable's own doc
-/// for why a multi-value-column table falls back to one label/value row per
-/// value at an accessibility Dynamic Type size). Its own `struct` (not a
-/// private StatsView method) so a test can render it directly with
+/// The per-year table inside the Stats page's "By Year" section. Metrics
+/// run down the side (Workouts, Miles) and years run across the top,
+/// newest first, with the current year's full-year projection sitting
+/// immediately to the right of that year's own actuals so the two read as
+/// a pair. Same Grid/GridRow structure and accessibility fallback as
+/// BigLiftGroupTable/DayDurationGroupTable (see BigLiftGroupTable's own
+/// doc for why a multi-value-column table falls back to one label/value
+/// row per value at an accessibility Dynamic Type size). Its own `struct`
+/// (not a private StatsView method) so a test can render it directly with
 /// synthetic data.
 ///
-/// The current year's row is shown plainly, with no "(YTD)" marker — the
-/// table is newest-first, so the top row being the year still in progress
-/// is already evident, and annotating exactly one row would be the only
-/// thing making the Year column ragged.
+/// Only the projection column is annotated. The actual-year columns are
+/// left plain — newest-first ordering already makes the in-progress year
+/// evident, and the projection beside it is what actually needs calling
+/// out, since it's the one column that isn't a measured number.
 struct YearlyTotalsTable: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let rows: [YearTotal]
+    /// Rendered as an extra column right after whichever year it projects.
+    /// nil when there isn't enough of the year on record yet — see
+    /// StatsEngine.compute's own note.
+    let projection: YearTotal?
     /// Same formatting every other miles figure on the page uses — passed
     /// in rather than re-derived here so this table can't drift from them.
     let milesLabel: (Double) -> String
+
+    private struct Column: Identifiable {
+        let id: String
+        let header: String
+        let workoutCount: Int
+        let miles: Double
+    }
+
+    private var columns: [Column] {
+        rows.flatMap { row -> [Column] in
+            // String(_:), not "\(row.year)" — the latter renders a
+            // locale-grouped "2,026".
+            let yearText = String(row.year)
+            var out = [Column(id: yearText, header: yearText,
+                              workoutCount: row.workoutCount, miles: row.milesWalked)]
+            if let projection, projection.year == row.year {
+                out.append(Column(id: "\(yearText)-proj", header: "\(yearText) Proj.",
+                                  workoutCount: projection.workoutCount, miles: projection.milesWalked))
+            }
+            return out
+        }
+    }
 
     private func valueText(_ s: String) -> Text {
         Text(s).font(.system(.subheadline, design: .monospaced)).bold()
@@ -646,32 +678,36 @@ struct YearlyTotalsTable: View {
 
     var body: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            ForEach(rows) { row in
-                LabeledContent("\(String(row.year)) — Workouts") {
-                    valueText("\(row.workoutCount)")
+            ForEach(columns) { column in
+                LabeledContent("\(column.header) — Workouts") {
+                    valueText("\(column.workoutCount)")
                 }
-                LabeledContent("\(String(row.year)) — Miles") {
-                    valueText(milesLabel(row.milesWalked))
+                LabeledContent("\(column.header) — Miles") {
+                    valueText(milesLabel(column.miles))
                 }
             }
         } else {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 GridRow {
-                    Text("Year").font(.caption2.bold()).foregroundStyle(.secondary)
-                    Text("Workouts").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.center)
-                    Text("Miles").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.center)
-                }
-                ForEach(rows) { row in
-                    GridRow {
-                        // String(_:), not "\(row.year)" — the latter would
-                        // render a locale-grouped "2,026".
-                        Text(String(row.year)).font(.caption).foregroundStyle(.secondary)
-                        valueText("\(row.workoutCount)")
+                    Text("")
+                    ForEach(columns) { column in
+                        Text(column.header).font(.caption2.bold()).foregroundStyle(.secondary)
                             .fixedSize()
                             .gridColumnAlignment(.center)
-                        valueText(milesLabel(row.milesWalked))
+                    }
+                }
+                GridRow {
+                    Text("Workouts").font(.caption).foregroundStyle(.secondary)
+                    ForEach(columns) { column in
+                        valueText("\(column.workoutCount)")
+                            .fixedSize()
+                            .gridColumnAlignment(.center)
+                    }
+                }
+                GridRow {
+                    Text("Miles").font(.caption).foregroundStyle(.secondary)
+                    ForEach(columns) { column in
+                        valueText(milesLabel(column.miles))
                             .fixedSize()
                             .gridColumnAlignment(.center)
                     }

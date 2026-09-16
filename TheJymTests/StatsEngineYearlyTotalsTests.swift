@@ -260,4 +260,111 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
                            startDate: date(2025, 4, 10), now: date(2026, 9, 16))
         XCTAssertEqual(result.yearlyTotals.map(\.workoutCount).reduce(0, +), result.allTimeWorkoutCount)
     }
+
+    // MARK: - Current-year projection
+
+    /// Straight-line run rate: 50 logged with the year ~half elapsed
+    /// projects to ~100. July 2 2026 is day 183 of 365, so the multiplier
+    /// is 365/183 and 50 -> 100 (rounded).
+    ///
+    /// One of the sessions is dated `now` on purpose. The denominator is
+    /// `effectiveToday`, not `today` — until something is logged for
+    /// today, StatsEngine treats "now" as yesterday everywhere (see
+    /// daysSinceStart/cyclePaceDelta), so an unlogged today would make
+    /// this day 182, not 183. Logging today pins it. See
+    /// testProjectionTreatsAnUnloggedTodayAsNotYetElapsed for that case.
+    func testProjectionScalesByTheShareOfTheYearElapsed() {
+        let dates = Array(repeating: date(2026, 3, 1), count: 49) + [date(2026, 7, 2)]
+        let result = stats(sessionDates: dates, startDate: date(2026, 1, 1), now: date(2026, 7, 2))
+        let projection = result.currentYearProjection
+        XCTAssertEqual(projection?.year, 2026)
+        XCTAssertEqual(projection?.workoutCount, 100)
+    }
+
+    /// Miles project on the same run rate as the count.
+    @MainActor
+    func testProjectionScalesMilesOnTheSameRate() {
+        let context = makeContext()
+        let walk = RestDayActivity(date: date(2026, 3, 1), name: "Walk", distance: 30.0)
+        context.insert(walk)
+
+        // Today logged, so day 183 of 365 — see the note above.
+        let result = stats(sessionDates: [date(2026, 3, 1), date(2026, 7, 2)], restActivities: [walk],
+                           startDate: date(2026, 1, 1), now: date(2026, 7, 2))
+        XCTAssertEqual(result.currentYearProjection?.milesWalked ?? 0, 30.0 * 365.0 / 183.0, accuracy: 0.001)
+    }
+
+    /// The pending-today rule, stated directly: with nothing logged for
+    /// today, today isn't counted as elapsed, so the same data projects
+    /// off a denominator one day smaller (and therefore slightly higher).
+    func testProjectionTreatsAnUnloggedTodayAsNotYetElapsed() {
+        let logged = Array(repeating: date(2026, 3, 1), count: 49) + [date(2026, 7, 2)]
+        let unlogged = Array(repeating: date(2026, 3, 1), count: 50)
+
+        let withToday = stats(sessionDates: logged, startDate: date(2026, 1, 1), now: date(2026, 7, 2))
+        let withoutToday = stats(sessionDates: unlogged, startDate: date(2026, 1, 1), now: date(2026, 7, 2))
+
+        // Same 50 sessions either way; only the denominator differs
+        // (day 183 vs day 182).
+        XCTAssertEqual(withToday.yearlyTotals.first?.workoutCount, 50)
+        XCTAssertEqual(withoutToday.yearlyTotals.first?.workoutCount, 50)
+        XCTAssertEqual(withToday.currentYearProjection?.milesWalked ?? 0, 0, accuracy: 0.001)
+        XCTAssertGreaterThan(
+            Double(withoutToday.currentYearProjection?.workoutCount ?? 0),
+            Double(withToday.currentYearProjection?.workoutCount ?? 0) - 1,
+            "an unlogged today shortens the elapsed window, so the projected rate is no lower")
+    }
+
+    /// Only the CURRENT year is projected — a prior year is already
+    /// complete and has nothing to extrapolate.
+    func testOnlyTheCurrentYearIsProjected() {
+        let result = stats(sessionDates: [date(2025, 6, 1), date(2026, 3, 1)],
+                           startDate: date(2025, 6, 1), now: date(2026, 7, 2))
+        XCTAssertEqual(result.currentYearProjection?.year, 2026)
+    }
+
+    /// Too early in the year to extrapolate from — a run rate off a
+    /// handful of days would project to nonsense, so there's no column.
+    func testNoProjectionInTheFirstTwoWeeksOfTheYear() {
+        let result = stats(sessionDates: [date(2026, 1, 2), date(2026, 1, 3)],
+                           startDate: date(2026, 1, 1), now: date(2026, 1, 8))
+        XCTAssertNil(result.currentYearProjection,
+                     "8 days in is not enough of a year to extrapolate a full-year total from")
+    }
+
+    /// Right at the 14-day threshold the projection appears. Today is
+    /// logged so the window is a full 14 days — see the effectiveToday
+    /// note above.
+    func testProjectionAppearsOnceFourteenDaysHaveElapsed() {
+        let result = stats(sessionDates: [date(2026, 1, 2), date(2026, 1, 14)],
+                           startDate: date(2026, 1, 1), now: date(2026, 1, 14))
+        XCTAssertNotNil(result.currentYearProjection)
+    }
+
+    /// Once the year is genuinely complete the "projection" would just
+    /// restate the actual, so it's omitted rather than shown as a
+    /// duplicate column.
+    func testNoProjectionOnceTheYearIsComplete() {
+        let result = stats(sessionDates: [date(2026, 3, 1), date(2026, 12, 31)],
+                           startDate: date(2026, 1, 1), now: date(2026, 12, 31))
+        XCTAssertNil(result.currentYearProjection)
+    }
+
+    /// A current year with no sessions and no miles has no row, so there's
+    /// nothing to project from either.
+    func testNoProjectionWhenTheCurrentYearHasNoRowAtAll() {
+        let result = stats(sessionDates: [date(2025, 6, 1)],
+                           startDate: date(2025, 6, 1), now: date(2026, 7, 2))
+        XCTAssertEqual(result.yearlyTotals.map(\.year), [2025])
+        XCTAssertNil(result.currentYearProjection)
+    }
+
+    /// A projection never reads as lower than what's already banked — it
+    /// extends the year, it doesn't discount it.
+    func testProjectionIsNeverBelowTheActualSoFar() {
+        let dates = (0..<40).map { _ in date(2026, 2, 1) }
+        let result = stats(sessionDates: dates, startDate: date(2026, 1, 1), now: date(2026, 9, 16))
+        let actual = result.yearlyTotals.first { $0.year == 2026 }
+        XCTAssertGreaterThanOrEqual(result.currentYearProjection?.workoutCount ?? 0, actual?.workoutCount ?? 0)
+    }
 }
