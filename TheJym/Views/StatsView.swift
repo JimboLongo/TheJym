@@ -70,6 +70,14 @@ struct StatsView: View {
         "\(Formatters.trim(miles)) mi"
     }
 
+    /// By Year's own miles format: one decimal, no unit — that table's row
+    /// is already labelled "Miles", and a fixed decimal keeps the column
+    /// aligned. Deliberately separate from `milesLabel` above, which still
+    /// carries "mi" everywhere else on the page.
+    private func yearlyMilesLabel(_ miles: Double) -> String {
+        String(format: "%.1f", miles)
+    }
+
     private func hoursLabel(_ hours: Double) -> String {
         String(format: "%.1f hr", hours)
     }
@@ -262,20 +270,20 @@ struct StatsView: View {
     /// One column per calendar year with anything in it, newest first.
     /// "Active days" counts distinct DAYS on which anything was logged —
     /// training or a rest-day activity, with both on the same date
-    /// counting once — so it deliberately doesn't match the session-based
-    /// "All-time workouts" in Milestones below. See StatsEngine.compute's
-    /// own note for which sessions qualify and why the two differ.
+    /// counting once. Same basis as "All-time active days" in Milestones
+    /// below, so these columns sum to it. See StatsEngine.compute's own
+    /// note for which sessions qualify.
     private var yearlyTotalsSection: some View {
         Section {
             YearlyTotalsTable(rows: stats.yearlyTotals,
                               projection: stats.currentYearProjection,
-                              milesLabel: milesLabel)
+                              milesLabel: yearlyMilesLabel)
         } header: {
             Text("By Year")
         } footer: {
             Text(stats.currentYearProjection == nil
                  ? "An active day is any day you trained or logged a rest-day activity; both on one day still counts once. The current year is to date."
-                 : "An active day is any day you trained or logged a rest-day activity; both on one day still counts once. The current year is to date; Proj. extends its pace to a full year.")
+                 : "An active day is any day you trained or logged a rest-day activity; both on one day still counts once. The current year is to date; Proj. adds your last 3 months' pace across the days remaining.")
         }
     }
 
@@ -296,7 +304,7 @@ struct StatsView: View {
                 // (since-start) rather than merged into it.
                 ("All-time miles", milesLabel(stats.allTimeMiles)),
                 ("Best month all-time", stats.bestMonthLabel.map { "\($0) (\(stats.bestMonthWorkouts))" } ?? "—"),
-                ("All-time workouts", "\(stats.allTimeWorkoutCount)"),
+                ("All-time active days", "\(stats.allTimeActiveDayCount)"),
                 ("All-time hours trained", hoursLabel(stats.allTimeHoursTrained)),
             ])
         } header: {

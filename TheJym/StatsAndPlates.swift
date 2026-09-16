@@ -59,9 +59,12 @@ struct TrainingStats {
     var mtdMiles: Double
     var priorYearMtdMiles: Double
     var allTimeMiles: Double        // unbounded — every "mi" entry in history
-    /// Every real, exercise-bearing session ever logged — unbounded, same
-    /// scope as `allTimeMiles` above rather than `daysSinceStart`'s window.
-    var allTimeWorkoutCount: Int
+    /// Distinct calendar days with at least one real, exercise-bearing
+    /// session ever logged — unbounded, same scope as `allTimeMiles`
+    /// above rather than `daysSinceStart`'s window. A day count, not a
+    /// session count: training and a walk on the same date is one active
+    /// day. Same basis as `yearlyTotals`, so the two agree.
+    var allTimeActiveDayCount: Int
     /// Hours across every non-deload session with a recorded
     /// durationSeconds — a session logged before duration tracking existed
     /// (or one where the workout stopwatch was never started), and any
@@ -90,9 +93,10 @@ struct TrainingStats {
     /// One entry per calendar year that has at least one session or any
     /// miles, newest first — see StatsEngine.compute's own note.
     var yearlyTotals: [YearTotal]
-    /// A straight-line full-year projection of the CURRENT year, or nil
-    /// when there isn't enough of the year on record to extrapolate from
-    /// (see compute's own note for the run-rate and the minimum window).
+    /// A full-year projection of the CURRENT year — what's banked so far
+    /// plus the trailing 3-month pace applied to the days remaining — or
+    /// nil when there isn't enough of the year on record to extrapolate
+    /// from (see compute's own note for the window and the minimum).
     /// Its `year` is the current year — the same one it's projecting —
     /// so the Stats table can sit it next to that year's actuals.
     var currentYearProjection: YearTotal?
@@ -210,11 +214,9 @@ struct YearTotal: Identifiable {
     /// DISTINCT CALENDAR DAYS on which the user did something that year —
     /// trained, walked, or both. Deliberately a day count, not a session
     /// count: a training session and a walk logged on the same date are
-    /// one active day, not two. That makes this diverge from
-    /// `allTimeWorkoutCount` (which counts sessions) — see compute's own
-    /// note for why, and StatsView's label, which says "Active days"
-    /// rather than "Workouts" so the two aren't mistaken for the same
-    /// quantity disagreeing.
+    /// one active day, not two. Same basis as
+    /// `TrainingStats.allTimeActiveDayCount`, so the per-year column sums
+    /// to that lifetime figure.
     let activeDayCount: Int
     /// Same `milesSum(from:through:)` helper every other miles figure on
     /// the page goes through, just bounded to this year — so this column
@@ -330,10 +332,13 @@ enum StatsEngine {
         let weeks = Double(daysSinceStart) / 7.0
         let perWeek = weeks > 0 ? Double(daysLogged) / weeks : 0
 
-        // YTD/MTD: "worked out" means an actual training session, not a rest
-        // day activity — separate from loggedDays above (which is streak math).
-        let workoutDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
-        let allTimeWorkoutCount = sessionDates.count
+        // Distinct calendar days with a qualifying session on them — the
+        // shared basis for YTD/MTD counts, allTimeActiveDayCount, and
+        // yearlyTotals, so all three mean the same thing. Collapsing to
+        // days is what makes a training session and a walk logged on the
+        // same date count once rather than twice.
+        let activeDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
+        let allTimeActiveDayCount = activeDays.count
 
         // Perfect-cycle progress needs an active phase to judge cycles
         // against its split pattern — with none, fall back to a simpler,
@@ -359,7 +364,7 @@ enum StatsEngine {
             perfectCycleLifetimeCount = nil
             perfectCycleCurrentStreak = nil
             activePhaseCycleProgress = nil
-            perfectWeekFallback = computePerfectWeekFallback(workoutDays: workoutDays, start: start, today: today,
+            perfectWeekFallback = computePerfectWeekFallback(workoutDays: activeDays, start: start, today: today,
                                                              trainingDaysPerWeekChanges: trainingDaysPerWeekChanges,
                                                              defaultTrainingDaysPerWeek: defaultTrainingDaysPerWeek)
         }
@@ -370,7 +375,7 @@ enum StatsEngine {
         let priorYearToday = cal.date(byAdding: .year, value: -1, to: effectiveToday) ?? effectiveToday
 
         func dayCount(from windowStart: Date, through windowEnd: Date) -> Int {
-            workoutDays.filter { $0 >= windowStart && $0 <= windowEnd }.count
+            activeDays.filter { $0 >= windowStart && $0 <= windowEnd }.count
         }
         let yearStart = cal.date(from: cal.dateComponents([.year], from: today)) ?? today
         let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today
@@ -414,18 +419,16 @@ enum StatsEngine {
         // ever see them). Those qualifying sessions are then collapsed to
         // one entry per calendar day.
         //
-        // That collapse is the whole point and is why this does NOT sum to
-        // `allTimeWorkoutCount` above: a training session and a walk logged
-        // on the same date are two sessions but one active day. Real data
-        // had 224 qualifying 2025 sessions across 167 distinct days — 57
-        // dates carrying exactly one training session plus one walk each,
-        // all from a CSV import that wrote the walk as its own session.
-        // Both numbers are defensible; this table reports days, and its
-        // label says so.
+        // That collapse is the whole point: a training session and a walk
+        // logged on the same date are two sessions but one active day.
+        // Real data had 224 qualifying 2025 sessions across 167 distinct
+        // days — 57 dates carrying exactly one training session plus one
+        // walk each, all from a CSV import that wrote the walk as its own
+        // session. `allTimeActiveDayCount` is built from the same
+        // `activeDays` set, so these per-year figures sum to it exactly.
         //
         // Miles go through milesSum, same as every other miles figure
         // here, just bounded to the year.
-        let activeDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
         let activeDayYears = activeDays.map { cal.component(.year, from: $0) }
         let yearsWithActiveDays = Set(activeDayYears)
         let yearsWithMiles = Set(milesEntries.map { cal.component(.year, from: $0.day) })
@@ -440,22 +443,36 @@ enum StatsEngine {
                                  milesWalked: milesSum(from: yearFirstDay, through: yearLastDay))
             }
 
-        // Straight-line full-year projection of the current year: scale
-        // what's on record so far by (days in year / days elapsed). No
-        // seasonality or trend weighting — a run-rate is the honest read
-        // of "keep going exactly like this," and anything fancier would
-        // imply a confidence this data can't support.
+        // Full-year projection of the current year, built off a ROLLING
+        // 3-MONTH pace rather than the whole year's average: whatever is
+        // already banked, plus the last 3 months' per-day rate applied to
+        // the days still left in the year.
         //
-        // Denominator uses effectiveToday, not today, for the same reason
-        // daysSinceStart/cyclePaceDelta do: until something's logged for
-        // today, counting it as a full elapsed day would drag the rate
-        // down by a day that hasn't happened yet.
+        // Banked actuals are never re-estimated — only the remaining days
+        // are projected — so the projection can never read below what's
+        // already happened, and a strong start doesn't get averaged away
+        // by a quiet stretch (or vice versa). Using the trailing window
+        // rather than the year-to-date rate is the point: it answers
+        // "where does my CURRENT pace land me," which is what changes
+        // week to week.
+        //
+        // The window clamps to Jan 1, so for the first three months of a
+        // year it's simply the year so far — which makes this a strict
+        // generalization of the plain year-to-date run rate it replaced,
+        // not a different rule that kicks in at some threshold.
+        //
+        // Both the window's end and daysElapsed use effectiveToday, not
+        // today, for the same reason daysSinceStart/cyclePaceDelta do:
+        // until something's logged for today, counting it as a full
+        // elapsed day would drag the rate down by a day that hasn't
+        // happened yet.
         //
         // nil in two cases, both deliberate: fewer than 14 days elapsed
-        // (a run-rate off one or two days extrapolates to nonsense — two
-        // weeks is the shortest window where a training rate means
-        // anything), and the year already being complete (on Dec 31 the
-        // "projection" is just the actual, so there's nothing to add).
+        // in the year (a rate off one or two days extrapolates to
+        // nonsense — two weeks is the shortest window where a training
+        // rate means anything), and the year already being complete (on
+        // Dec 31 there are no remaining days to project into, so the
+        // "projection" would just restate the actual).
         let currentYear = cal.component(.year, from: today)
         let currentYearProjection: YearTotal? = {
             guard let actual = yearlyTotals.first(where: { $0.year == currentYear }),
@@ -465,10 +482,22 @@ enum StatsEngine {
             let daysElapsed = (cal.dateComponents([.day], from: yearFirstDay, to: effectiveToday).day ?? 0) + 1
             let daysInYear = (cal.dateComponents([.day], from: yearFirstDay, to: yearLastDay).day ?? 364) + 1
             guard daysElapsed >= 14, daysElapsed < daysInYear else { return nil }
-            let rate = Double(daysInYear) / Double(daysElapsed)
+
+            let threeMonthsBack = cal.date(byAdding: .month, value: -3, to: effectiveToday) ?? yearFirstDay
+            let windowStart = max(yearFirstDay, threeMonthsBack)
+            let windowDays = (cal.dateComponents([.day], from: windowStart, to: effectiveToday).day ?? 0) + 1
+            guard windowDays >= 1 else { return nil }
+
+            let windowActiveDays = activeDays.filter { $0 >= windowStart && $0 <= effectiveToday }.count
+            let windowMiles = milesSum(from: windowStart, through: effectiveToday)
+            let daysRemaining = Double(daysInYear - daysElapsed)
+            let activeDaysPerDay = Double(windowActiveDays) / Double(windowDays)
+            let milesPerDay = windowMiles / Double(windowDays)
+
             return YearTotal(year: currentYear,
-                             activeDayCount: Int((Double(actual.activeDayCount) * rate).rounded()),
-                             milesWalked: actual.milesWalked * rate)
+                             activeDayCount: actual.activeDayCount
+                                 + Int((activeDaysPerDay * daysRemaining).rounded()),
+                             milesWalked: actual.milesWalked + milesPerDay * daysRemaining)
         }()
 
         // Hours trained — sum of durationSeconds across every non-deload
@@ -579,7 +608,7 @@ enum StatsEngine {
             iterations += 1
             let scheduledRest = isScheduledRestDay(walk, schedules: phaseSchedules, cal: cal)
             let isTrainingDay = scheduledRest == false
-            let wasLogged = workoutDays.contains(walk)
+            let wasLogged = activeDays.contains(walk)
             let weekKey = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: walk)
             let monthKey = cal.dateComponents([.year, .month], from: walk)
 
@@ -610,7 +639,7 @@ enum StatsEngine {
         // real history (e.g. from an import) shouldn't be invisible just
         // because it happened before that setting's date.
         var allTimeMonthCounts: [DateComponents: Int] = [:]
-        for dayLogged in workoutDays {
+        for dayLogged in activeDays {
             let monthKey = cal.dateComponents([.year, .month], from: dayLogged)
             allTimeMonthCounts[monthKey, default: 0] += 1
         }
@@ -657,7 +686,7 @@ enum StatsEngine {
                              mtdMiles: mtdMiles,
                              priorYearMtdMiles: priorYearMtdMiles,
                              allTimeMiles: allTimeMiles,
-                             allTimeWorkoutCount: allTimeWorkoutCount,
+                             allTimeActiveDayCount: allTimeActiveDayCount,
                              allTimeHoursTrained: allTimeHoursTrained,
                              completedPhaseSummaries: completedPhaseSummaries,
                              bigLiftGroups: bigLiftGroups,

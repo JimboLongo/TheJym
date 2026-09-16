@@ -6,9 +6,9 @@
 //  Three things worth pinning down: the year bucketing (which years appear,
 //  in what order, with no padding), the classification of which sessions
 //  qualify (walks count, Rest Day placeholders don't), and the collapse of
-//  multiple qualifying sessions on one date into a single ACTIVE DAY —
-//  the last of which is why this column deliberately doesn't match the
-//  session-based allTimeWorkoutCount.
+//  multiple qualifying sessions on one date into a single ACTIVE DAY,
+//  which is the same basis allTimeActiveDayCount uses — so the per-year
+//  figures sum to that lifetime number.
 //
 //  Note on the classification: yearlyTotals buckets `sessionDates`, which
 //  StatsView derives as `sessions.filter { !$0.exerciseLogs.isEmpty }`.
@@ -254,11 +254,10 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
 
     // MARK: - Active DAYS, not sessions
     //
-    // The distinction this column turns on, and the reason it deliberately
-    // does not agree with the session-based allTimeWorkoutCount. Real data
-    // had 224 qualifying 2025 sessions across 167 distinct days — 57 dates
-    // carrying a training session AND a walk, from a CSV import that wrote
-    // the walk as its own session.
+    // The distinction this column turns on. Real data had 224 qualifying
+    // 2025 sessions across 167 distinct days — 57 dates carrying a
+    // training session AND a walk, from a CSV import that wrote the walk
+    // as its own session.
 
     /// Two qualifying sessions on the same date are ONE active day.
     func testTwoSessionsOnTheSameDateCountAsOneActiveDay() {
@@ -312,82 +311,95 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
         XCTAssertEqual(y?.milesWalked ?? 0, 2.5, accuracy: 0.001, "the walk's miles still count in full")
     }
 
-    /// Stated explicitly so the divergence is a documented decision rather
-    /// than something that looks like a bug later: the per-year day counts
-    /// are LOWER than allTimeWorkoutCount whenever any date carries more
-    /// than one qualifying session.
-    func testActiveDaysDeliberatelyDoNotSumToAllTimeWorkoutCount() {
+    /// allTimeActiveDayCount is built from the same day-collapsed set, so
+    /// it's a DAY count too — three sessions across two dates is two.
+    func testAllTimeActiveDayCountCollapsesSameDaySessions() {
         let result = stats(sessionDates: [date(2025, 4, 10), date(2025, 4, 10), date(2026, 2, 2)],
                            startDate: date(2025, 4, 10), now: date(2026, 9, 16))
-        XCTAssertEqual(result.allTimeWorkoutCount, 3, "three sessions")
-        XCTAssertEqual(result.yearlyTotals.map(\.activeDayCount).reduce(0, +), 2, "across two active days")
+        XCTAssertEqual(result.allTimeActiveDayCount, 2, "three sessions, two distinct dates")
     }
 
-    /// With at most one session per date the two measures coincide — the
-    /// divergence above is caused by same-day pairs, nothing else.
-    func testActiveDaysEqualSessionCountWhenNoDateRepeats() {
-        let result = stats(sessionDates: [date(2025, 4, 10), date(2025, 8, 1),
-                                          date(2026, 2, 2), date(2026, 7, 7)],
-                           startDate: date(2025, 4, 10), now: date(2026, 9, 16))
-        XCTAssertEqual(result.yearlyTotals.map(\.activeDayCount).reduce(0, +), result.allTimeWorkoutCount)
+    /// The per-year column and the lifetime figure must agree — same
+    /// basis, so this holds whether or not any date repeats.
+    func testPerYearActiveDaysSumToAllTimeActiveDayCount() {
+        let withRepeats = stats(sessionDates: [date(2025, 4, 10), date(2025, 4, 10),
+                                               date(2025, 8, 1), date(2026, 2, 2)],
+                                startDate: date(2025, 4, 10), now: date(2026, 9, 16))
+        XCTAssertEqual(withRepeats.yearlyTotals.map(\.activeDayCount).reduce(0, +),
+                       withRepeats.allTimeActiveDayCount)
+
+        let noRepeats = stats(sessionDates: [date(2025, 4, 10), date(2025, 8, 1),
+                                             date(2026, 2, 2), date(2026, 7, 7)],
+                              startDate: date(2025, 4, 10), now: date(2026, 9, 16))
+        XCTAssertEqual(noRepeats.yearlyTotals.map(\.activeDayCount).reduce(0, +),
+                       noRepeats.allTimeActiveDayCount)
     }
 
-    // MARK: - Current-year projection
+    // MARK: - Current-year projection (rolling 3-month pace)
+    //
+    // The projection is whatever is already banked plus the trailing
+    // 3-month per-day rate applied to the days still left in the year.
+    // The window clamps to Jan 1, so early in a year it degenerates to
+    // "the year so far".
 
     /// Consecutive dates so each is its own active day.
     private func consecutiveDates(count: Int, from start: Date) -> [Date] {
         (0..<count).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: start) }
     }
 
-    /// Straight-line run rate: 50 active days with the year ~half elapsed
-    /// projects to ~100. July 2 2026 is day 183 of 365, so the multiplier
-    /// is 365/183 and 50 -> 100 (rounded).
-    ///
-    /// The last date is `now` on purpose. The denominator is
-    /// `effectiveToday`, not `today` — until something is logged for
-    /// today, StatsEngine treats "now" as yesterday everywhere (see
-    /// daysSinceStart/cyclePaceDelta), so an unlogged today would make
-    /// this day 182, not 183. Logging today pins it. See
-    /// testProjectionTreatsAnUnloggedTodayAsNotYetElapsed for that case.
-    func testProjectionScalesByTheShareOfTheYearElapsed() {
-        let dates = consecutiveDates(count: 49, from: date(2026, 1, 1)) + [date(2026, 7, 2)]
-        let result = stats(sessionDates: dates, startDate: date(2026, 1, 1), now: date(2026, 7, 2))
-        XCTAssertEqual(result.yearlyTotals.first?.activeDayCount, 50, "50 distinct dates")
-        XCTAssertEqual(result.currentYearProjection?.year, 2026)
-        XCTAssertEqual(result.currentYearProjection?.activeDayCount, 100)
+    /// Active every day so far, with the window clamped to Jan 1 (only 14
+    /// days into the year): rate is 1.0/day, so the projection fills every
+    /// remaining day and lands on the full 365.
+    func testAFullPaceEarlyInTheYearProjectsToTheWholeYear() {
+        let result = stats(sessionDates: consecutiveDates(count: 14, from: date(2026, 1, 1)),
+                           startDate: date(2026, 1, 1), now: date(2026, 1, 14))
+        XCTAssertEqual(result.yearlyTotals.first?.activeDayCount, 14)
+        XCTAssertEqual(result.currentYearProjection?.activeDayCount, 365,
+                       "14 banked + 351 remaining days at a 1.0/day pace")
     }
 
-    /// Miles project on the same run rate as the day count.
+    /// The whole point of the rolling window: a strong start that has since
+    /// gone quiet projects off the RECENT pace, not the year's average. Here
+    /// the trailing 3 months are empty, so nothing is added to what's banked.
+    func testAQuietRecentStretchProjectsNoFurtherGrowth() {
+        // Active every day of Jan-Mar, nothing since.
+        let result = stats(sessionDates: consecutiveDates(count: 90, from: date(2026, 1, 1)),
+                           startDate: date(2026, 1, 1), now: date(2026, 9, 16))
+        let actual = result.yearlyTotals.first { $0.year == 2026 }
+        XCTAssertEqual(actual?.activeDayCount, 90)
+        XCTAssertEqual(result.currentYearProjection?.activeDayCount, 90,
+                       "the trailing 3 months are empty, so the projection is just what's banked — "
+                       + "a year-to-date rate would instead have inflated this to ~127")
+    }
+
+    /// The mirror case: a quiet start that has recently picked up projects
+    /// off the recent pace, so it grows well past the year-to-date rate.
+    func testARecentSurgeProjectsOffTheRecentPaceNotTheYearAverage() {
+        // Nothing until mid-June, then active every day through Sep 16.
+        let dates = consecutiveDates(count: 93, from: date(2026, 6, 16))
+        let result = stats(sessionDates: dates, startDate: date(2026, 1, 1), now: date(2026, 9, 16))
+        let actual = result.yearlyTotals.first { $0.year == 2026 }
+        let projected = result.currentYearProjection?.activeDayCount ?? 0
+        XCTAssertEqual(actual?.activeDayCount, 93)
+        // Trailing window is ~fully active, so ~every remaining day is added.
+        XCTAssertGreaterThan(projected, 180,
+                             "a full recent pace should project far past the 93 banked")
+    }
+
+    /// Miles use the same window and the same per-day rate as the day count.
     @MainActor
-    func testProjectionScalesMilesOnTheSameRate() {
+    func testProjectionUsesTheSameWindowForMiles() {
         let context = makeContext()
-        let walk = RestDayActivity(date: date(2026, 3, 1), name: "Walk", distance: 30.0)
-        context.insert(walk)
+        // 2 miles a day for the first 14 days of the year.
+        let walkDates = consecutiveDates(count: 14, from: date(2026, 1, 1))
+        let walks = walkDates.map { RestDayActivity(date: $0, name: "Walk", distance: 2.0) }
+        walks.forEach(context.insert)
 
-        // Today logged, so day 183 of 365 — see the note above.
-        let result = stats(sessionDates: [date(2026, 3, 1), date(2026, 7, 2)], restActivities: [walk],
-                           startDate: date(2026, 1, 1), now: date(2026, 7, 2))
-        XCTAssertEqual(result.currentYearProjection?.milesWalked ?? 0, 30.0 * 365.0 / 183.0, accuracy: 0.001)
-    }
-
-    /// The pending-today rule, stated directly: with nothing logged for
-    /// today, today isn't counted as elapsed, so the same data projects
-    /// off a denominator one day smaller — and therefore no lower.
-    func testProjectionTreatsAnUnloggedTodayAsNotYetElapsed() {
-        let base = consecutiveDates(count: 49, from: date(2026, 1, 1))
-        let withToday = stats(sessionDates: base + [date(2026, 7, 2)],
-                              startDate: date(2026, 1, 1), now: date(2026, 7, 2))
-        let withoutToday = stats(sessionDates: base + [date(2026, 3, 1)],
-                                 startDate: date(2026, 1, 1), now: date(2026, 7, 2))
-
-        // 50 active days either way; only the denominator differs
-        // (day 183 vs day 182).
-        XCTAssertEqual(withToday.yearlyTotals.first?.activeDayCount, 50)
-        XCTAssertEqual(withoutToday.yearlyTotals.first?.activeDayCount, 50)
-        XCTAssertGreaterThanOrEqual(
-            withoutToday.currentYearProjection?.activeDayCount ?? 0,
-            withToday.currentYearProjection?.activeDayCount ?? 0,
-            "an unlogged today shortens the elapsed window, so the projected total is no lower")
+        let result = stats(sessionDates: walkDates, restActivities: walks,
+                           startDate: date(2026, 1, 1), now: date(2026, 1, 14))
+        XCTAssertEqual(result.yearlyTotals.first?.milesWalked ?? 0, 28, accuracy: 0.001)
+        // 28 banked + 351 remaining days at 2.0/day.
+        XCTAssertEqual(result.currentYearProjection?.milesWalked ?? 0, 28 + 702, accuracy: 0.001)
     }
 
     /// Only the CURRENT year is projected — a prior year is already
@@ -398,8 +410,8 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
         XCTAssertEqual(result.currentYearProjection?.year, 2026)
     }
 
-    /// Too early in the year to extrapolate from — a run rate off a
-    /// handful of days would project to nonsense, so there's no column.
+    /// Too early in the year to extrapolate from — a rate off a handful of
+    /// days would project to nonsense, so there's no column.
     func testNoProjectionInTheFirstTwoWeeksOfTheYear() {
         let result = stats(sessionDates: [date(2026, 1, 2), date(2026, 1, 3)],
                            startDate: date(2026, 1, 1), now: date(2026, 1, 8))
@@ -407,18 +419,22 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
                      "8 days in is not enough of a year to extrapolate a full-year total from")
     }
 
-    /// Right at the 14-day threshold the projection appears. Today is
-    /// logged so the window is a full 14 days — see the effectiveToday
-    /// note above.
-    func testProjectionAppearsOnceFourteenDaysHaveElapsed() {
-        let result = stats(sessionDates: [date(2026, 1, 2), date(2026, 1, 14)],
+    /// The elapsed-days count uses effectiveToday: today only counts once
+    /// something's been logged for it, which is exactly what tips this over
+    /// the 14-day threshold.
+    func testTodayCountsAsElapsedOnlyOnceSomethingIsLoggedForIt() {
+        let logged = stats(sessionDates: [date(2026, 1, 2), date(2026, 1, 14)],
                            startDate: date(2026, 1, 1), now: date(2026, 1, 14))
-        XCTAssertNotNil(result.currentYearProjection)
+        let unlogged = stats(sessionDates: [date(2026, 1, 2), date(2026, 1, 13)],
+                             startDate: date(2026, 1, 1), now: date(2026, 1, 14))
+        XCTAssertNotNil(logged.currentYearProjection, "14 elapsed days")
+        XCTAssertNil(unlogged.currentYearProjection,
+                     "13 elapsed days — today isn't counted until something's logged for it")
     }
 
-    /// Once the year is genuinely complete the "projection" would just
-    /// restate the actual, so it's omitted rather than shown as a
-    /// duplicate column.
+    /// Once the year is genuinely complete there are no remaining days to
+    /// project into, so the column is omitted rather than restating the
+    /// actual.
     func testNoProjectionOnceTheYearIsComplete() {
         let result = stats(sessionDates: [date(2026, 3, 1), date(2026, 12, 31)],
                            startDate: date(2026, 1, 1), now: date(2026, 12, 31))
@@ -434,13 +450,15 @@ final class StatsEngineYearlyTotalsTests: XCTestCase {
         XCTAssertNil(result.currentYearProjection)
     }
 
-    /// A projection never reads as lower than what's already banked — it
-    /// extends the year, it doesn't discount it.
+    /// Banked actuals are never re-estimated — only the remaining days are
+    /// projected — so a projection can never read below what already
+    /// happened, however quiet the recent window is.
     func testProjectionIsNeverBelowTheActualSoFar() {
-        let dates = consecutiveDates(count: 40, from: date(2026, 2, 1))
-        let result = stats(sessionDates: dates, startDate: date(2026, 1, 1), now: date(2026, 9, 16))
+        let result = stats(sessionDates: consecutiveDates(count: 40, from: date(2026, 2, 1)),
+                           startDate: date(2026, 1, 1), now: date(2026, 9, 16))
         let actual = result.yearlyTotals.first { $0.year == 2026 }
         XCTAssertEqual(actual?.activeDayCount, 40)
-        XCTAssertGreaterThanOrEqual(result.currentYearProjection?.activeDayCount ?? 0, actual?.activeDayCount ?? 0)
+        XCTAssertGreaterThanOrEqual(result.currentYearProjection?.activeDayCount ?? 0,
+                                    actual?.activeDayCount ?? 0)
     }
 }
