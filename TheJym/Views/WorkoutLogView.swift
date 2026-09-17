@@ -1992,13 +1992,37 @@ struct ExercisePageView: View {
     }
     /// Selectable values for the inline weight wheel, spaced by weightStep.
     ///
-    /// Note this is not offset by the bar's own weight, so with a 45 lb bar
-    /// the truly loadable totals are 45/50/55... while the wheel still
-    /// offers 0/5/10... The step is right; the phase isn't. Deliberately
-    /// left alone — fixing it means changing the wheel's RANGE, not just
-    /// which values fall inside it.
+    /// Offset by the bar's own weight so every offered value is a total
+    /// you could actually load: a 45 lb bar with 2.5 lb steps runs
+    /// 45/47.5/50..., not 0/2.5/5... This matches PlateCalculator.plates
+    /// exactly by construction — it solves
+    /// `perSide = (target - barWeight) / sides`, so it returns leftover 0
+    /// precisely when `target == barWeight + k x (smallestPlate x sides)`,
+    /// which is this stride. (True for a plate inventory where each size is
+    /// a multiple of the smallest, as the default one is; the calculator's
+    /// greedy fill is exact there.)
+    ///
+    /// 0 is kept as a first entry ahead of the bar-weight run, and not only
+    /// as an "unweighted" escape hatch: an unfilled set has `weightText ==
+    /// ""`, so the binding's `get` passes `weight ?? 0` into nearestValue.
+    /// Without 0 on the list a blank set would snap to — and so appear to
+    /// have selected — the bar weight.
+    ///
+    /// The ceiling is barWeight + 600 rather than a flat 600, so the
+    /// loadable span above the bar stays the same regardless of which bar
+    /// it is; an 85 lb specialty bar shouldn't silently lose 85 lb of top
+    /// range.
+    ///
+    /// No offset for a dumbbell (its Bar.weight is 0 on every creation
+    /// path anyway — see Bar.weight's own doc — so the guard is about
+    /// intent, and protects against a hand-edited nonzero value), and none
+    /// when no bar is assigned, since there's nothing to offset by.
     private var weightValues: [Double] {
-        Array(stride(from: 0.0, through: 600.0, by: weightStep))
+        let step = weightStep
+        guard let bar = exerciseDef?.equipment, !bar.isDumbbell, bar.weight > 0 else {
+            return Array(stride(from: 0.0, through: 600.0, by: step))
+        }
+        return [0] + Array(stride(from: bar.weight, through: bar.weight + 600.0, by: step))
     }
     /// The step for a bodyweight exercise's added load. Deliberately NOT
     /// multiplied by loadableSides: added weight hangs off a belt or sits

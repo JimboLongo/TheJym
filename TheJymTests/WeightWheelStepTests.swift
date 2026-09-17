@@ -41,6 +41,15 @@ final class WeightWheelStepTests: XCTestCase {
         plateSizes.min() ?? 2.5
     }
 
+    /// Mirrors ExercisePageView.weightValues exactly.
+    private func weightValues(bar: Bar?, plateSizes: [Double], dumbbellIncrement: Double) -> [Double] {
+        let step = weightStep(bar: bar, plateSizes: plateSizes, dumbbellIncrement: dumbbellIncrement)
+        guard let bar, !bar.isDumbbell, bar.weight > 0 else {
+            return Array(stride(from: 0.0, through: 600.0, by: step))
+        }
+        return [0] + Array(stride(from: bar.weight, through: bar.weight + 600.0, by: step))
+    }
+
     // MARK: - The reported case
 
     /// The bug: smallest plate 1.25 on a two-sided bar was offering 1.25
@@ -166,6 +175,139 @@ final class WeightWheelStepTests: XCTestCase {
         XCTAssertLessThan(coarse.count, fine.count)
         // And the coarse list is a strict subset of the fine one.
         XCTAssertTrue(coarse.allSatisfy { c in fine.contains { abs($0 - c) < 0.0001 } })
+    }
+
+    // MARK: - weightValues is offset by the bar so every value is loadable
+
+    /// The reported phase bug: a 45 lb bar must offer 45/47.5/50..., not
+    /// 0/2.5/5...
+    @MainActor
+    func testBarWeightOffsetsTheRunSoEveryValueIsALoadableTotal() {
+        let context = makeContext()
+        let bar = Bar(name: "Barbell", weight: 45, loadableSides: 2)
+        context.insert(bar)
+        let values = weightValues(bar: bar, plateSizes: [45, 25, 10, 5, 2.5, 1.25], dumbbellIncrement: 5)
+
+        XCTAssertEqual(Array(values.prefix(4)), [0, 45, 47.5, 50])
+        XCTAssertFalse(values.contains(2.5), "2.5 isn't a loadable total on a 45 lb bar")
+        XCTAssertFalse(values.contains(46), "46 is off the 2.5 step from the bar")
+    }
+
+    /// Every offered value above 0 must round-trip through the plate
+    /// calculator with zero leftover — that's the definition of loadable,
+    /// and it's what makes the wheel and the calculator agree.
+    @MainActor
+    func testEveryOfferedValueIsLoadableAccordingToThePlateCalculator() {
+        let context = makeContext()
+        let plates = [45.0, 25, 10, 5, 2.5, 1.25]
+        for (barWeight, sides) in [(45.0, 2), (35.0, 2), (25.0, 1), (85.0, 2)] {
+            let bar = Bar(name: "Bar", weight: barWeight, loadableSides: sides)
+            context.insert(bar)
+            let values = weightValues(bar: bar, plateSizes: plates, dumbbellIncrement: 5)
+            for v in values.dropFirst() {   // skip the 0 escape hatch
+                guard let (_, leftover) = PlateCalculator.plates(
+                    target: v, barWeight: barWeight, available: plates, sides: sides)
+                else { return XCTFail("\(v) unreachable on a \(barWeight) bar") }
+                XCTAssertEqual(leftover, 0, accuracy: 1e-6,
+                               "\(v) on a \(barWeight) lb bar with \(sides) side(s) left \(leftover) unloadable")
+            }
+        }
+    }
+
+    /// 0 stays selectable ahead of the bar-weight run. It's needed, not
+    /// just convenient: an unfilled set has weightText == "", so the
+    /// binding passes `weight ?? 0` into nearestValue — without 0 on the
+    /// list a blank set would snap to, and so appear to have selected,
+    /// the bar weight.
+    @MainActor
+    func testZeroRemainsFirstSoABlankSetDoesNotAppearToSelectTheBarWeight() {
+        let context = makeContext()
+        let bar = Bar(name: "Barbell", weight: 45, loadableSides: 2)
+        context.insert(bar)
+        let values = weightValues(bar: bar, plateSizes: [2.5], dumbbellIncrement: 5)
+
+        XCTAssertEqual(values.first, 0)
+        func nearestValue(_ target: Double, in values: [Double]) -> Double {
+            values.min(by: { abs($0 - target) < abs($1 - target) }) ?? 0
+        }
+        let blank = WorkoutLogView.SetDraft(weightText: "", repsText: "")
+        XCTAssertNil(blank.weight)
+        XCTAssertEqual(nearestValue(blank.weight ?? 0, in: values), 0,
+                       "a blank set must highlight 0, not the bar weight")
+    }
+
+    /// Ceiling is barWeight + 600, so the loadable span above the bar is
+    /// the same whichever bar it is.
+    @MainActor
+    func testCeilingIsBarWeightPlusSixHundredSoSpanAboveTheBarIsConstant() {
+        let context = makeContext()
+        let light = Bar(name: "Light", weight: 35, loadableSides: 2)
+        let heavy = Bar(name: "Specialty", weight: 85, loadableSides: 2)
+        [light, heavy].forEach(context.insert)
+
+        let lightValues = weightValues(bar: light, plateSizes: [2.5], dumbbellIncrement: 5)
+        let heavyValues = weightValues(bar: heavy, plateSizes: [2.5], dumbbellIncrement: 5)
+        XCTAssertEqual(lightValues.last, 635)
+        XCTAssertEqual(heavyValues.last, 685)
+        XCTAssertEqual(lightValues.count, heavyValues.count,
+                       "same number of loadable options regardless of bar weight")
+    }
+
+    /// No offset for a dumbbell. Bar.weight is 0 on every dumbbell
+    /// creation path, so this is about intent — and about surviving a
+    /// hand-edited nonzero value.
+    @MainActor
+    func testDumbbellIsNotOffsetEvenIfItsWeightWasHandEditedNonzero() {
+        let context = makeContext()
+        let db = Bar(name: "Dumbbells", weight: 0, isDumbbell: true,
+                     dumbbellWeights: [10, 15, 20], loadableSides: 2)
+        let odd = Bar(name: "Dumbbells", weight: 30, isDumbbell: true, loadableSides: 2)
+        [db, odd].forEach(context.insert)
+
+        XCTAssertEqual(Array(weightValues(bar: db, plateSizes: [1.25], dumbbellIncrement: 5).prefix(3)),
+                       [0, 5, 10])
+        XCTAssertEqual(Array(weightValues(bar: odd, plateSizes: [1.25], dumbbellIncrement: 5).prefix(3)),
+                       [0, 5, 10], "a dumbbell must not be offset even with a stray nonzero weight")
+    }
+
+    /// No bar assigned — nothing to offset by, so it starts at 0 as before.
+    func testNoBarAssignedStartsFromZeroUnchanged() {
+        let values = weightValues(bar: nil, plateSizes: [1.25], dumbbellIncrement: 5)
+        XCTAssertEqual(Array(values.prefix(3)), [0, 2.5, 5])
+        XCTAssertEqual(values.last, 600)
+    }
+
+    /// A zero-weight bar (a machine modelled as one) isn't offset either,
+    /// and must not end up with a duplicated leading 0 — ForEach keys the
+    /// wheel rows by value.
+    @MainActor
+    func testZeroWeightBarIsNotOffsetAndHasNoDuplicateZero() {
+        let context = makeContext()
+        let machine = Bar(name: "Cable Stack", weight: 0, loadableSides: 1)
+        context.insert(machine)
+        let values = weightValues(bar: machine, plateSizes: [5], dumbbellIncrement: 5)
+        XCTAssertEqual(Array(values.prefix(3)), [0, 5, 10])
+        XCTAssertEqual(Set(values).count, values.count, "duplicate values would collide as ForEach ids")
+    }
+
+    /// Single-sided bar: offset by its weight, stepping by the unmultiplied
+    /// smallest plate.
+    @MainActor
+    func testSingleSidedBarOffsetsAndStepsByTheSmallestPlate() {
+        let context = makeContext()
+        let landmine = Bar(name: "Landmine", weight: 25, loadableSides: 1)
+        context.insert(landmine)
+        let values = weightValues(bar: landmine, plateSizes: [45, 25, 10, 5, 2.5, 1.25], dumbbellIncrement: 5)
+        XCTAssertEqual(Array(values.prefix(4)), [0, 25, 26.25, 27.5])
+    }
+
+    /// addedWeightValues is untouched by the offset — belt/vest load starts
+    /// at 0 by definition and the bar isn't involved.
+    func testAddedWeightValuesAreNotOffsetByAnyBar() {
+        let values = Array(stride(from: 0.0, through: 200.0, by: addedWeightStep(plateSizes: [1.25])))
+        XCTAssertEqual(values.first, 0)
+        XCTAssertEqual(Array(values.prefix(3)), [0, 1.25, 2.5])
+        XCTAssertEqual(values.last, 200)
     }
 
     // MARK: - nearestValue snaps for DISPLAY without mutating
