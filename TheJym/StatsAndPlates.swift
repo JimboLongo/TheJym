@@ -85,10 +85,15 @@ struct TrainingStats {
     var bigLiftGroups: [BigLiftGroup]
 
     /// One group per workout day template (e.g. "Lower Day 1") with at
-    /// least one session anywhere that has a recorded duration — see
-    /// StatsEngine.compute's own note on exactly how each group's rows are
-    /// built.
+    /// least one NON-DELOAD session anywhere that has a recorded duration —
+    /// see StatsEngine.compute's own note on exactly how each group's rows
+    /// are built. The Stats page's first Workout Duration page.
     var dayDurationGroups: [DayDurationGroup]
+    /// Same shape as `dayDurationGroups`, built from DELOAD sessions only —
+    /// the Stats page's second (swipe-to) Workout Duration page. The two
+    /// partition every session that has a duration, so a session appears on
+    /// exactly one page and never both.
+    var deloadDayDurationGroups: [DayDurationGroup]
 
     /// One entry per calendar year that has at least one session or any
     /// miles, newest first — see StatsEngine.compute's own note.
@@ -585,15 +590,26 @@ enum StatsEngine {
         let dayNames: [String] = bigLiftPhases
             .flatMap { phase in phase.orderedDays.filter { !$0.isRest }.map(\.name) }
             .filter { seenDayNames.insert($0).inserted }
-        let dayDurationGroups: [DayDurationGroup] = dayNames.compactMap { name -> DayDurationGroup? in
-            guard let allTime = dayDurationResult(named: name, in: allSessions) else { return nil }
-            var rows = [DayDurationScopeRow(scopeLabel: "All-Time", result: allTime)]
-            for phase in bigLiftPhases {
-                rows.append(DayDurationScopeRow(scopeLabel: "Phase \(phase.number)",
-                                                result: dayDurationResult(named: name, in: phase.sessions)))
+        //
+        // Built twice over the same day names — once from normal sessions,
+        // once from deload ones — for the section's two swipe pages. A day
+        // with nothing on one side is simply absent from that page rather
+        // than shown as an all-"No Data" group.
+        func durationGroups(deloadOnly: Bool) -> [DayDurationGroup] {
+            dayNames.compactMap { name -> DayDurationGroup? in
+                guard let allTime = dayDurationResult(named: name, in: allSessions,
+                                                      deloadOnly: deloadOnly) else { return nil }
+                var rows = [DayDurationScopeRow(scopeLabel: "All-Time", result: allTime)]
+                for phase in bigLiftPhases {
+                    rows.append(DayDurationScopeRow(scopeLabel: "Phase \(phase.number)",
+                                                    result: dayDurationResult(named: name, in: phase.sessions,
+                                                                              deloadOnly: deloadOnly)))
+                }
+                return DayDurationGroup(dayName: name, rows: rows)
             }
-            return DayDurationGroup(dayName: name, rows: rows)
         }
+        let dayDurationGroups = durationGroups(deloadOnly: false)
+        let deloadDayDurationGroups = durationGroups(deloadOnly: true)
 
         // Perfect weeks/months: walk day-by-day again, bucketing
         // scheduled-vs-logged training days by week and by month. Bounded to
@@ -691,6 +707,7 @@ enum StatsEngine {
                              completedPhaseSummaries: completedPhaseSummaries,
                              bigLiftGroups: bigLiftGroups,
                              dayDurationGroups: dayDurationGroups,
+                             deloadDayDurationGroups: deloadDayDurationGroups,
                              yearlyTotals: yearlyTotals,
                              currentYearProjection: currentYearProjection)
     }
@@ -1020,16 +1037,24 @@ enum StatsEngine {
     /// a deload session is skipped the same way (its cut weights already
     /// get excluded from comparable history elsewhere; its duration
     /// shouldn't enter this spread either).
+    /// `deloadOnly` selects which half of the split to measure: false (the
+    /// default, and every pre-existing caller) takes normal sessions,
+    /// true takes deload ones. `isDeload == deloadOnly` rather than two
+    /// separate predicates, so the two are exhaustive and mutually
+    /// exclusive by construction — no session can land on both Workout
+    /// Duration pages or fall through the gap between them.
     private static func dayDurationQualifyingSessions(named name: String,
-                                                       in sessions: [WorkoutSession]) -> [Int] {
-        sessions.filter { $0.dayLabel == name && !$0.isDeload }.compactMap(\.durationSeconds)
+                                                       in sessions: [WorkoutSession],
+                                                       deloadOnly: Bool) -> [Int] {
+        sessions.filter { $0.dayLabel == name && $0.isDeload == deloadOnly }.compactMap(\.durationSeconds)
     }
 
     /// One day template's duration spread within `sessions` — nil if none
     /// of them has a recorded duration for this day at all, rather than a
     /// result with a 0 in it.
-    static func dayDurationResult(named name: String, in sessions: [WorkoutSession]) -> DayDurationResult? {
-        let durations = dayDurationQualifyingSessions(named: name, in: sessions)
+    static func dayDurationResult(named name: String, in sessions: [WorkoutSession],
+                                  deloadOnly: Bool = false) -> DayDurationResult? {
+        let durations = dayDurationQualifyingSessions(named: name, in: sessions, deloadOnly: deloadOnly)
         guard !durations.isEmpty, let shortest = durations.min(), let longest = durations.max() else { return nil }
         let average = Double(durations.reduce(0, +)) / Double(durations.count)
         return DayDurationResult(shortestSeconds: shortest, averageSeconds: average, longestSeconds: longest)

@@ -38,6 +38,9 @@ struct StatsView: View {
     /// most recently completed phase defaults open and every other one
     /// defaults closed (see completedPhaseSection's isMostRecent).
     @State private var expandedPhaseOverrides: [Int: Bool] = [:]
+    /// Which of the Workout Duration section's two pages is showing —
+    /// drives its dots. Optional because .scrollPosition(id:) is.
+    @State private var dayDurationPage: DayDurationPage? = .standard
 
     private var settings: AppSettings? { settingsList.first }
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -101,7 +104,10 @@ struct StatsView: View {
                 if !stats.bigLiftGroups.isEmpty {
                     bigLiftsSection
                 }
-                if !stats.dayDurationGroups.isEmpty {
+                // Either page having content is enough — a phase that only
+                // ever ran deloads with the stopwatch on would otherwise
+                // hide the section that has its numbers.
+                if !stats.dayDurationGroups.isEmpty || !stats.deloadDayDurationGroups.isEmpty {
                     dayDurationSection
                 }
                 ForEach(Array(stats.completedPhaseSummaries.enumerated()), id: \.element.id) { index, summary in
@@ -339,12 +345,86 @@ struct StatsView: View {
     /// how a group's rows are built. Same single-section-per-flagged-thing
     /// shape as bigLiftsSection, grouped by day name instead of exercise
     /// name.
+    /// Two horizontally-paged views of the same table: normal sessions,
+    /// then deload sessions only. A horizontally-paging ScrollView rather
+    /// than a TabView(.page) on purpose — a TabView needs an explicit
+    /// height, and this content's height varies with the number of day
+    /// templates, the number of phases each has history in, AND Dynamic
+    /// Type size (the accessibility fallback is several times taller,
+    /// being one labelled row per scope per metric). A horizontal
+    /// ScrollView hugs its content's intrinsic height instead, so nothing
+    /// clips at AX5. Both pages share the taller one's height, so swiping
+    /// doesn't make the section jump.
     private var dayDurationSection: some View {
-        Section("Workout Duration") {
-            ForEach(stats.dayDurationGroups) { group in
-                DayDurationGroupTable(group: group)
+        Section {
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 0) {
+                    dayDurationPage(
+                        groups: stats.dayDurationGroups,
+                        title: "Standard",
+                        emptyMessage: "No non-deload sessions with a recorded duration yet.")
+                        .containerRelativeFrame(.horizontal)
+                        .id(DayDurationPage.standard)
+                    dayDurationPage(
+                        groups: stats.deloadDayDurationGroups,
+                        title: "Deload",
+                        emptyMessage: "No deload sessions with a recorded duration yet.")
+                        .containerRelativeFrame(.horizontal)
+                        .id(DayDurationPage.deload)
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollIndicators(.hidden)
+            .scrollPosition(id: $dayDurationPage)
+            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 0, trailing: 16))
+            dayDurationPageDots
+        } header: {
+            Text("Workout Duration")
+        } footer: {
+            Text("Swipe for deload times.")
+        }
+    }
+
+    private enum DayDurationPage: Hashable, CaseIterable {
+        case standard, deload
+    }
+
+    /// One page of the Workout Duration section. Carries its own title so
+    /// the page is self-describing even mid-swipe, rather than relying on
+    /// the dots alone to say which half you're looking at.
+    @ViewBuilder
+    private func dayDurationPage(groups: [DayDurationGroup], title: String,
+                                 emptyMessage: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption2.bold())
+                .foregroundStyle(.secondary)
+            if groups.isEmpty {
+                Text(emptyMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(groups) { group in
+                    DayDurationGroupTable(group: group)
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var dayDurationPageDots: some View {
+        HStack(spacing: 6) {
+            ForEach(DayDurationPage.allCases, id: \.self) { page in
+                Circle()
+                    .fill(Color.secondary.opacity((dayDurationPage ?? .standard) == page ? 0.8 : 0.25))
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 6, trailing: 16))
+        .accessibilityHidden(true)
     }
 
     /// Collapsed by default, except the most recently completed phase

@@ -89,6 +89,83 @@ final class StatsEngineDurationTests: XCTestCase {
         XCTAssertEqual(unwrapped.averageSeconds, 2700, accuracy: 0.001, "average of the two non-deload sessions only")
     }
 
+    // MARK: - deloadOnly: the second Workout Duration page
+
+    /// The deload page is the mirror image: only deload sessions, and the
+    /// normal ones are excluded from it just as firmly as deloads are from
+    /// the default page.
+    @MainActor
+    func testDeloadOnlyMeasuresOnlyDeloadSessions() {
+        let context = makeContext()
+        let normalShort = session(dayLabel: "Push", daysAgo: 10, duration: 1800, isDeload: false, context: context)
+        let normalLong = session(dayLabel: "Push", daysAgo: 9, duration: 3600, isDeload: false, context: context)
+        let deloadA = session(dayLabel: "Push", daysAgo: 5, duration: 900, isDeload: true, context: context)
+        let deloadB = session(dayLabel: "Push", daysAgo: 2, duration: 1500, isDeload: true, context: context)
+        let all = [normalShort, normalLong, deloadA, deloadB]
+
+        let result = try! XCTUnwrap(StatsEngine.dayDurationResult(named: "Push", in: all, deloadOnly: true))
+        XCTAssertEqual(result.shortestSeconds, 900, "the 1800s normal session must not become the shortest here")
+        XCTAssertEqual(result.longestSeconds, 1500, "nor the 3600s normal session the longest")
+        XCTAssertEqual(result.averageSeconds, 1200, accuracy: 0.001, "average of the two deloads only")
+    }
+
+    /// The two pages partition the sessions — neither can see the other's,
+    /// which is what stops a session being counted on both.
+    @MainActor
+    func testTheTwoPagesPartitionTheSessionsWithNoOverlapOrGap() {
+        let context = makeContext()
+        let normal = session(dayLabel: "Push", daysAgo: 5, duration: 3600, isDeload: false, context: context)
+        let deload = session(dayLabel: "Push", daysAgo: 3, duration: 1800, isDeload: true, context: context)
+        let all = [normal, deload]
+
+        let standard = try! XCTUnwrap(StatsEngine.dayDurationResult(named: "Push", in: all))
+        let deloadPage = try! XCTUnwrap(StatsEngine.dayDurationResult(named: "Push", in: all, deloadOnly: true))
+        XCTAssertEqual(standard.shortestSeconds, 3600)
+        XCTAssertEqual(standard.longestSeconds, 3600)
+        XCTAssertEqual(deloadPage.shortestSeconds, 1800)
+        XCTAssertEqual(deloadPage.longestSeconds, 1800)
+    }
+
+    /// nil when there are no deload sessions for that day — which is how
+    /// the view knows to leave the day off the deload page entirely rather
+    /// than show an all-"No Data" group.
+    @MainActor
+    func testDeloadOnlyIsNilWhenOnlyNormalSessionsExist() {
+        let context = makeContext()
+        let normal = session(dayLabel: "Push", daysAgo: 5, duration: 3600, isDeload: false, context: context)
+        XCTAssertNil(StatsEngine.dayDurationResult(named: "Push", in: [normal], deloadOnly: true))
+    }
+
+    /// A deload session with no recorded duration is skipped on the deload
+    /// page for the same reason it would be on the standard one — omitted,
+    /// not counted as 0.
+    @MainActor
+    func testDeloadOnlySkipsADeloadSessionWithNoRecordedDuration() {
+        let context = makeContext()
+        let timed = session(dayLabel: "Push", daysAgo: 5, duration: 1200, isDeload: true, context: context)
+        let untimed = session(dayLabel: "Push", daysAgo: 3, duration: nil, isDeload: true, context: context)
+
+        let result = try! XCTUnwrap(StatsEngine.dayDurationResult(named: "Push", in: [timed, untimed], deloadOnly: true))
+        XCTAssertEqual(result.shortestSeconds, 1200)
+        XCTAssertEqual(result.averageSeconds, 1200, accuracy: 0.001, "the nil-duration deload must not drag this to 600")
+    }
+
+    /// The default argument keeps every pre-existing caller on the normal
+    /// half, so adding the deload page changed no existing behavior.
+    @MainActor
+    func testOmittingDeloadOnlyIsIdenticalToAskingForNormalSessions() {
+        let context = makeContext()
+        let normal = session(dayLabel: "Push", daysAgo: 5, duration: 3600, isDeload: false, context: context)
+        let deload = session(dayLabel: "Push", daysAgo: 3, duration: 1800, isDeload: true, context: context)
+        let all = [normal, deload]
+
+        let implicit = StatsEngine.dayDurationResult(named: "Push", in: all)
+        let explicit = StatsEngine.dayDurationResult(named: "Push", in: all, deloadOnly: false)
+        XCTAssertEqual(implicit?.shortestSeconds, explicit?.shortestSeconds)
+        XCTAssertEqual(implicit?.longestSeconds, explicit?.longestSeconds)
+        XCTAssertEqual(implicit?.averageSeconds ?? -1, explicit?.averageSeconds ?? -2, accuracy: 0.001)
+    }
+
     /// If the only session logged for this day template is a deload, the
     /// result is nil — no data to report, not a spread built from one
     /// deload's duration.
