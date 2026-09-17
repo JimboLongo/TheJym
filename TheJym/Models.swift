@@ -1470,6 +1470,34 @@ enum Formatters {
         return f
     }()
     /// "8:00 PM" for a bare 24-hour-clock hour (0-23) — the streak-reminder
+    /// A LOGGED set's weight for display: a plain trimmed number for a
+    /// normal set, or "total (added)" for a bodyweight one — e.g.
+    /// "209 (30)" for 30 lb added at a 179 lb bodyweight.
+    ///
+    /// The total comes from `SetLog.weight`, which already holds
+    /// bodyweightAtLog + addedWeight frozen at log time (see SetLog's own
+    /// doc) — never a live re-resolution against today's weigh-in, so a
+    /// historical set keeps showing the bodyweight it was actually
+    /// performed at.
+    ///
+    /// An added weight of 0 renders as the bare total: the parenthetical
+    /// exists to surface added load, and "(0)" on every pull-up set is
+    /// noise. A set with no `bodyweightAtLog` on record (older/imported
+    /// data, where `weight` silently resolved against a 0 bodyweight and so
+    /// understates the real number) falls back to the added weight alone
+    /// rather than presenting a total it can't vouch for.
+    ///
+    /// Deliberately for saved SetLogs only. An in-progress ExerciseDraft
+    /// has no frozen bodyweight to resolve against, so those displays stay
+    /// on the "BW+n" added-weight convention.
+    static func setWeightLabel(_ set: SetLog, isBodyweight: Bool) -> String {
+        guard isBodyweight else { return trim(set.weight) }
+        guard set.bodyweightAtLog != nil else { return trim(set.addedWeight ?? set.weight) }
+        let added = set.addedWeight ?? 0
+        guard added != 0 else { return trim(set.weight) }
+        return "\(trim(set.weight)) (\(trim(added)))"
+    }
+
     /// time picker's own values, formatted using the user's locale/12-24hr
     /// preference rather than a hardcoded "20:00" string.
     static func hourLabel(_ hour: Int) -> String {

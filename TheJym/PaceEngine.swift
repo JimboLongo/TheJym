@@ -237,12 +237,14 @@ enum PaceEngine {
         return "\(addedSeq) (\(bw) BW) lbs"
     }
 
-    /// Per-set weight label — the resolved effective total (bodyweightAtLog
-    /// + addedWeight for a bodyweight set, same as any other set's `weight`)
-    /// so History, the Pace Calculator, and Previous Workouts all read the
-    /// same number a non-bodyweight exercise would show.
+    /// Per-set weight label — the resolved effective total, with the added
+    /// load in parentheses for a bodyweight set ("209 (30)"), so History,
+    /// the Pace Calculator, and Previous Workouts all read the same number
+    /// a non-bodyweight exercise would show plus what was actually added.
+    /// See Formatters.setWeightLabel for the frozen-bodyweight and
+    /// zero-added rules.
     static func weightLabels(for log: ExerciseLog) -> [String] {
-        log.sortedSets.map { Formatters.trim($0.weight) }
+        log.sortedSets.map { Formatters.setWeightLabel($0, isBodyweight: log.isBodyweight) }
     }
 
     // MARK: - repTotal comparisons (sets-to-complete, not reps-to-beat)

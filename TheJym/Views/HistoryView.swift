@@ -323,7 +323,7 @@ struct HistoryView: View {
         let showGoal = !targetReps.isEmpty
 
         var labels = ["lbs"]
-        var rows = [sortedSets.map(weightLabel)]
+        var rows = [sortedSets.map { Formatters.setWeightLabel($0, isBodyweight: log.isBodyweight) }]
         if showGoal {
             labels.append("target")
             rows.append(targetReps.map(String.init))
@@ -332,14 +332,6 @@ struct HistoryView: View {
         rows.append(sortedSets.map { String($0.reps) })
 
         return LabeledValuesGrid(labels: labels, rows: rows)
-    }
-
-    /// `set.weight` already holds the correct effective total for a
-    /// bodyweight set (bodyweightAtLog + addedWeight, frozen at log time —
-    /// see SetLog's own doc), same as any other set, so there's no separate
-    /// bodyweight case to handle here.
-    private func weightLabel(_ set: SetLog) -> String {
-        Formatters.trim(set.weight)
     }
 
     private func handleImport(_ result: Result<URL, Error>) {

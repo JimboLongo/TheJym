@@ -3197,6 +3197,7 @@ struct LastSetMedalPopupView: View {
 /// row. Reps are strings (not Int) so a still-in-progress set can show a
 /// "—" placeholder alongside a completed log's real numbers.
 struct SetsGrid: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let weightLabels: [String]
     let repLabels: [String]
     /// Optional per-column color override for the reps row only — an index
@@ -3215,8 +3216,16 @@ struct SetsGrid: View {
         Grid(alignment: .center, horizontalSpacing: 3, verticalSpacing: 2) {
             GridRow {
                 ForEach(0..<columnCount, id: \.self) { idx in
+                    // A bodyweight set's "209 (30)" is twice a plain
+                    // number's width. Left unconstrained it wraps
+                    // mid-token at accessibility sizes ("20" / "9" /
+                    // "(3" / "0)"); capping at two lines and letting it
+                    // scale down makes it break at its own space instead.
                     Text(idx < weightLabels.count ? weightLabels[idx] : "")
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                        .minimumScaleFactor(0.5)
                     if idx < columnCount - 1 {
                         Text("/").foregroundStyle(.secondary.opacity(0.5))
                     }
@@ -3264,6 +3273,7 @@ struct SetsGrid: View {
 /// following row out of alignment with its label. Keeping both in one Grid
 /// means a wrapped row grows its label cell right along with it.
 struct LabeledValuesGrid: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let labels: [String]
     let rows: [[String]]
     private var columnCount: Int { rows.map(\.count).max() ?? 0 }
@@ -3279,10 +3289,18 @@ struct LabeledValuesGrid: View {
                         .minimumScaleFactor(0.6)
                         .gridColumnAlignment(.leading)
                     ForEach(0..<columnCount, id: \.self) { idx in
+                        // A bodyweight set's "209 (30)" is twice the width
+                        // of a plain "209", which truncates at accessibility
+                        // sizes in a 4-column row. Allowing a second line
+                        // there lets it break at its own space into
+                        // "209" / "(30)" — same information, column width
+                        // back to a plain number's. One line below that,
+                        // where everything already fits.
                         Text(idx < rows[i].count ? rows[i][idx] : "")
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                             .minimumScaleFactor(0.5)
                         if idx < columnCount - 1 {
                             Text("/").foregroundStyle(.secondary.opacity(0.5))
@@ -3589,12 +3607,12 @@ struct WorkoutRecapView: View {
         }
     }
 
-    /// Same "BW+n" added-weight convention CompletedSummaryPageView's own
-    /// row uses for a bodyweight exercise — `entry.currentWeights` is
-    /// already added-weight-only for one (see finishWorkout), so labeling
-    /// it as a plain number would misread as the full resolved weight.
+    /// "total (added)" for a bodyweight exercise, a plain number
+    /// otherwise — read off the just-saved SetLogs (which carry the frozen
+    /// bodyweightAtLog) rather than `entry.currentWeights`, which is
+    /// added-weight-only. See Formatters.setWeightLabel.
     private func weightLabels(for entry: WorkoutLogView.RecapEntry) -> [String] {
-        entry.currentWeights.map { entry.isBodyweight ? "BW+\(Formatters.trim($0))" : Formatters.trim($0) }
+        entry.log.sortedSets.map { Formatters.setWeightLabel($0, isBodyweight: entry.isBodyweight) }
     }
 
     /// "lbs / target / ceiling / reps" — same label-column + column-aligned
