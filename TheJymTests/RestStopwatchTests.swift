@@ -224,6 +224,74 @@ final class RestStopwatchTests: XCTestCase {
         XCTAssertFalse(sw.isAtZero)
     }
 
+    // MARK: Fixed-duration restarts (the bar's Warm / Ready buttons)
+    //
+    // Both buttons call resetAndStart(targetSeconds:) with a constant, so
+    // they behave exactly like logging a set: a fresh anchor, not a target
+    // change on a running countdown.
+
+    func testAFixedDurationRestartOverridesARunningCountdownWithNoStaleState() {
+        let sw = makeStopwatch()
+        sw.resetAndStart(targetSeconds: 300)
+        Thread.sleep(forTimeInterval: 0.3)
+        sw.resetAndStart(targetSeconds: 60)   // "Warm"
+        XCTAssertEqual(sw.targetSeconds, 60)
+        XCTAssertTrue(sw.isRunning)
+        XCTAssertEqual(sw.displaySeconds, 60, accuracy: 0.1,
+                       "elapsed must re-anchor to 0, not carry the 0.3s over from the previous run")
+    }
+
+    /// Overrides a manual pause too — isRunning comes back true without
+    /// needing a separate resume.
+    func testAFixedDurationRestartOverridesAManualPause() {
+        let sw = makeStopwatch()
+        sw.resetAndStart(targetSeconds: 300)
+        sw.stop()
+        XCTAssertFalse(sw.isRunning)
+        sw.resetAndStart(targetSeconds: 90)   // "Ready"
+        XCTAssertTrue(sw.isRunning)
+        XCTAssertEqual(sw.displaySeconds, 90, accuracy: 0.1)
+    }
+
+    /// The cue bookkeeping has to clear on the new anchor, or a countdown
+    /// that already played its final approach would suppress the beeps for
+    /// the next one. Driven here with short targets so the cues fire
+    /// synchronously.
+    func testFixedDurationRestartsMakeTheFinalApproachCuesEligibleAgain() {
+        let sw = makeStopwatch()
+        var fireCount = 0
+        sw.playCue = { _, _, _ in fireCount += 1 }
+        sw.resetAndStart(targetSeconds: 2)
+        XCTAssertEqual(fireCount, 1, "entering at remaining == 2 fires that cue")
+        sw.resetAndStart(targetSeconds: 2)
+        XCTAssertEqual(fireCount, 2, "a fresh restart must let it fire again, not treat it as consumed")
+    }
+
+    /// A 60s or 90s restart is well outside the final-5-second window, so
+    /// it must not fire anything on the spot — the beeps belong at the end
+    /// of the countdown, not the start.
+    func testAFixedDurationRestartFiresNoCueImmediately() {
+        let sw = makeStopwatch()
+        var fireCount = 0
+        sw.playCue = { _, _, _ in fireCount += 1 }
+        sw.resetAndStart(targetSeconds: 60)
+        XCTAssertEqual(fireCount, 0)
+        sw.resetAndStart(targetSeconds: 90)
+        XCTAssertEqual(fireCount, 0)
+    }
+
+    /// The red blinking hold is derived live from the target, so a
+    /// fixed-duration restart clears an expired state rather than latching.
+    func testAFixedDurationRestartClearsTheZeroHold() {
+        let sw = makeStopwatch()
+        sw.resetAndStart(targetSeconds: 0)
+        XCTAssertTrue(sw.isAtZero)
+        XCTAssertTrue(sw.isUrgent)
+        sw.resetAndStart(targetSeconds: 60)
+        XCTAssertFalse(sw.isAtZero)
+        XCTAssertFalse(sw.isUrgent, "60s in is nowhere near the 10s urgent window")
+    }
+
     // MARK: Audio cues
 
     func testNoCuesFireAboveTheFiveSecondWindow() {

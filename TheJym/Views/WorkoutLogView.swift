@@ -406,7 +406,7 @@ struct WorkoutLogView: View {
         // instead of it overlapping navBar or the Completed page's own
         // Finish button.
         .safeAreaInset(edge: .bottom) {
-            RestStopwatchBar(stopwatch: restStopwatch)
+            RestStopwatchBar(stopwatch: restStopwatch, onRestarted: restActivityDidChange)
         }
         .overlay {
             // A centered popup card (not a bottom sheet) so it reads as a
@@ -1142,10 +1142,23 @@ struct WorkoutLogView: View {
 struct RestStopwatchBar: View {
     @ObservedObject var stopwatch: RestStopwatch
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Called after either fixed-duration button restarts the countdown —
+    /// the log-a-set path (WorkoutLogView's onSetLogged) syncs the Live
+    /// Activity right after its own resetAndStart, and these restarts are
+    /// the same kind of event, so the Dynamic Island would otherwise sit
+    /// on a stale countdown.
+    var onRestarted: () -> Void = {}
     /// Drives the blink via a repeating animation once `isUrgent` — plain
     /// state, not tied to the 1-second tick, so the pulse is smooth rather
     /// than stepping once a second.
     @State private var blinkedOut = false
+
+    /// Fixed-duration rest periods, independent of whatever the current
+    /// exercise has configured — a warm-up set and a between-sets
+    /// "ready" pause are their own thing, not a variation on the plan.
+    private static let warmUpSeconds = 60
+    private static let readySeconds = 90
 
     private var displayLabel: String {
         let total = Int(stopwatch.displaySeconds.rounded())
@@ -1154,37 +1167,98 @@ struct RestStopwatchBar: View {
         return String(format: "%@%d:%02d", sign, magnitude / 60, magnitude % 60)
     }
 
+    private var timerLabel: some View {
+        Label(displayLabel, systemImage: stopwatch.targetSeconds == nil ? "stopwatch" : "timer")
+            .font(.system(.body, design: .monospaced))
+            .foregroundStyle(stopwatch.isUrgent ? .red : .secondary)
+            // Reduce Motion substitutes a steady red for the blink — a
+            // rhythmically flashing element for the length of an entire
+            // workout is a real problem for some users, not just a
+            // preference.
+            .opacity(stopwatch.isUrgent && !reduceMotion && blinkedOut ? 0.35 : 1)
+            // The clock is a fixed-width monospaced readout — it must never
+            // be the thing that gives way when the row is tight.
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    /// Starts a fresh countdown from a fixed duration. resetAndStart (not
+    /// a target change) so elapsed re-anchors exactly like logging a set
+    /// does: it overrides a manual pause, clears the already-fired audio
+    /// cues so the 5-4-3-2-1 beeps and 0:00 tone play for this run too,
+    /// and replaces the ticker rather than stacking a second one.
+    private func restart(_ seconds: Int) {
+        stopwatch.resetAndStart(targetSeconds: seconds)
+        onRestarted()
+    }
+
+    @ViewBuilder
+    private var fixedDurationButtons: some View {
+        // Label deliberately short — see controlRow on how little room
+        // this bar has. The full intent lives in the accessibility label.
+        Button("Warm") { restart(Self.warmUpSeconds) }
+            .accessibilityLabel("Warm-Up, 60 second rest")
+        Button("Ready") { restart(Self.readySeconds) }
+            .accessibilityLabel("Ready, 90 second rest")
+    }
+
+    /// Reset only. The Stop/Resume toggle that used to sit here was
+    /// removed to make room: four bordered buttons plus the clock did not
+    /// fit one row (see controlRow), and a manual pause is the least
+    /// useful of them — the countdown is meant to run out on its own, and
+    /// both fixed-duration buttons plus logging a set all restart it
+    /// outright. RestStopwatch.stop()/resume() still exist and still work;
+    /// they just have no control in this bar anymore.
+    @ViewBuilder
+    private var runControls: some View {
+        Button("Reset") { stopwatch.reset() }
+    }
+
     var body: some View {
-        HStack(spacing: 16) {
-            Label(displayLabel, systemImage: stopwatch.targetSeconds == nil ? "stopwatch" : "timer")
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(stopwatch.isUrgent ? .red : .secondary)
-                // Reduce Motion substitutes a steady red for the blink — a
-                // rhythmically flashing element for the length of an entire
-                // workout is a real problem for some users, not just a
-                // preference.
-                .opacity(stopwatch.isUrgent && !reduceMotion && blinkedOut ? 0.35 : 1)
-            Spacer()
-            if stopwatch.isRunning {
-                Button("Stop") { stopwatch.stop() }
-            } else {
-                Button("Resume") { stopwatch.resume() }
+        controlRow
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .font(.footnote)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.bar)
+            .onChange(of: stopwatch.isUrgent) { _, isUrgent in
+                guard isUrgent, !reduceMotion else {
+                    blinkedOut = false
+                    return
+                }
+                withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
+                    blinkedOut = true
+                }
             }
-            Button("Reset") { stopwatch.reset() }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .font(.footnote)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
-        .onChange(of: stopwatch.isUrgent) { _, isUrgent in
-            guard isUrgent, !reduceMotion else {
-                blinkedOut = false
-                return
+    }
+
+    /// One row at standard sizes — clock, Warm-Up, Ready, Reset. This only
+    /// fits because the Stop/Resume toggle was dropped (see runControls):
+    /// with it, four bordered buttons plus the clock wrapped the clock to
+    /// "1:0"/"0" and broke "Warm-Up" mid-word at 393pt the moment that
+    /// control read "Resume", and at 320pt collapsed even "60s"/"90s" to
+    /// "60"/"s".
+    ///
+    /// At an accessibility Dynamic Type size everything gets its own row.
+    /// Pairing even two buttons side by side there truncated the label to
+    /// an ellipsis — one per row is taller, but a control whose label
+    /// can't be read isn't a control.
+    @ViewBuilder
+    private var controlRow: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                timerLabel
+                fixedDurationButtons
+                runControls
             }
-            withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
-                blinkedOut = true
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(spacing: 8) {
+                timerLabel
+                Spacer(minLength: 8)
+                fixedDurationButtons
+                runControls
             }
         }
     }
