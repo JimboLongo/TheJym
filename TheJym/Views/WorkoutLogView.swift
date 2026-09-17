@@ -1966,21 +1966,53 @@ struct ExercisePageView: View {
             withAnimation { showingLastSetMedalPopup = true }
         }
     }
-    /// The +/- step for this exercise's weight fields: the smallest plate
-    /// you own for barbell/plate work, or the finest dumbbell increment
-    /// (attachments considered) for a dumbbell exercise.
+    /// The +/- step for this exercise's weight fields — the smallest change
+    /// actually ACHIEVABLE with its equipment, not merely the smallest
+    /// plate owned. A plate goes on every loadable side at once, so on a
+    /// standard two-sided bar the finest real jump is smallest plate x 2:
+    /// owning 1.25s means 2.5 lb steps, not 1.25. A landmine or any other
+    /// single-sided setup (loadableSides == 1) genuinely can move in 1.25,
+    /// so it gets that.
+    ///
+    /// Fallbacks, in order: no bar assigned at all -> 2.5, the standard
+    /// pair, since there's no equipment to derive anything from. A dumbbell
+    /// set -> its own increment, unmultiplied: plate math doesn't apply and
+    /// `loadableSides` is meaningless for a dumbbell. An empty plate
+    /// inventory -> 2.5 TOTAL rather than 2.5 x sides, so an unconfigured
+    /// inventory doesn't silently become a 5 lb step.
+    ///
+    /// A machine/cable needs no special case — the model has no separate
+    /// flag for one, so it's just a Bar, and modelling it with
+    /// loadableSides == 1 already yields smallest-plate x 1.
     private var weightStep: Double {
         guard let bar = exerciseDef?.equipment else { return 2.5 }
-        return bar.isDumbbell ? dumbbellIncrement : (plateSizes.min() ?? 2.5)
+        if bar.isDumbbell { return dumbbellIncrement }
+        guard let smallestPlate = plateSizes.min() else { return 2.5 }
+        return smallestPlate * Double(max(1, bar.loadableSides))
     }
     /// Selectable values for the inline weight wheel, spaced by weightStep.
+    ///
+    /// Note this is not offset by the bar's own weight, so with a 45 lb bar
+    /// the truly loadable totals are 45/50/55... while the wheel still
+    /// offers 0/5/10... The step is right; the phase isn't. Deliberately
+    /// left alone — fixing it means changing the wheel's RANGE, not just
+    /// which values fall inside it.
     private var weightValues: [Double] {
         Array(stride(from: 0.0, through: 600.0, by: weightStep))
     }
-    /// Selectable added-weight values for a bodyweight exercise's wheel —
-    /// always 2.5 lb increments regardless of the exercise's equipment.
+    /// The step for a bodyweight exercise's added load. Deliberately NOT
+    /// multiplied by loadableSides: added weight hangs off a belt or sits
+    /// in a vest one plate at a time, so there are no paired sides and the
+    /// smallest plate owned IS the achievable increment. Also ignores the
+    /// exercise's own bar entirely (a pull-up usually has none) — the belt
+    /// isn't the bar. Finer than the flat 2.5 this replaced whenever the
+    /// inventory includes something smaller.
+    private var addedWeightStep: Double {
+        plateSizes.min() ?? 2.5
+    }
+    /// Selectable added-weight values for a bodyweight exercise's wheel.
     private var addedWeightValues: [Double] {
-        Array(stride(from: 0.0, through: 200.0, by: 2.5))
+        Array(stride(from: 0.0, through: 200.0, by: addedWeightStep))
     }
     /// The resolved bodyweight prefix shown once, on its own line right
     /// under the "Weight" header, for a bodyweight exercise (e.g.
