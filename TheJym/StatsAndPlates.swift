@@ -32,6 +32,13 @@ struct TrainingStats {
     /// All-time longest run of the same measure. 0, never nil, with no
     /// history.
     var maxActiveStreak: Int
+    /// The calendar span whichever run holds `maxActiveStreak` actually
+    /// covered — nil only when that's 0 (nothing logged yet), so the Stats
+    /// row shows no subtitle at all rather than an empty range. Reuses
+    /// MaxStreakDateRange: its `followingBreakDate == nil` already means
+    /// "still the ongoing streak", which is exactly the signal the
+    /// "– Present" rendering needs, so there's no separate flag.
+    var maxActiveStreakRange: MaxStreakDateRange?
     var bankBalance: Double     // current rest-bank balance, >= 0, uncapped above
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
@@ -693,6 +700,7 @@ enum StatsEngine {
                              currentStreakStartDate: bank.currentStreakStartDate,
                              currentActiveStreak: activeStreaks.current,
                              maxActiveStreak: activeStreaks.max,
+                             maxActiveStreakRange: activeStreaks.maxRange,
                              bankBalance: bank.bankBalance,
                              percentLogged: pct,
                              daysPerWeek: perWeek,
@@ -805,8 +813,9 @@ enum StatsEngine {
     /// cyclePaceDelta and the rest bank all already use. A genuinely broken
     /// streak still reads 0 — that's when yesterday is inactive too.
     static func activeDayStreaks(activeDays: Set<Date>, today: Date,
-                                 cal: Calendar = .current) -> (current: Int, max: Int) {
-        guard !activeDays.isEmpty else { return (0, 0) }
+                                 cal: Calendar = .current)
+    -> (current: Int, max: Int, maxRange: MaxStreakDateRange?) {
+        guard !activeDays.isEmpty else { return (0, 0, nil) }
 
         var current = 0
         // Start on today only if it's already active; otherwise step back a
@@ -814,6 +823,10 @@ enum StatsEngine {
         var cursor = activeDays.contains(today)
             ? today
             : (cal.date(byAdding: .day, value: -1, to: today) ?? today)
+        // The last active day of the currently-open run, if there is one —
+        // what the max run is compared against below to tell whether the
+        // record IS the ongoing streak.
+        let currentRunEnd: Date? = activeDays.contains(cursor) ? cursor : nil
         var iterations = 0
         while activeDays.contains(cursor), iterations < 20_000 {
             iterations += 1
@@ -822,20 +835,53 @@ enum StatsEngine {
             cursor = previous
         }
 
+        let sortedDays = activeDays.sorted()
         var maxRun = 0
         var run = 0
+        var runStart: Date?
+        var maxStart: Date?
+        var maxEnd: Date?
         var previousDay: Date?
-        for day in activeDays.sorted() {
+        for day in sortedDays {
             if let previousDay,
                cal.dateComponents([.day], from: previousDay, to: day).day == 1 {
                 run += 1
             } else {
                 run = 1
+                runStart = day
             }
-            maxRun = Swift.max(maxRun, run)
+            // >= not >, so a later run that TIES takes over the record —
+            // matching computeRestBank's own tie rule (its `streak ==
+            // maxStreak` check passes on a tie and hands the record to the
+            // newer instance). Keeps the more useful of two equal spans:
+            // if the tie is with the run still in progress, the record
+            // reads "– Present" rather than pointing at old history.
+            if run >= maxRun {
+                maxRun = run
+                maxStart = runStart
+                maxEnd = day
+            }
             previousDay = day
         }
-        return (current, maxRun)
+
+        guard let maxStart, let maxEnd else { return (current, maxRun, nil) }
+        // Ongoing exactly when the record run ends on the current run's
+        // last active day — then followingBreakDate stays nil, which is
+        // how MaxStreakDateRange already spells "still open".
+        let isOngoing = currentRunEnd != nil && maxEnd == currentRunEnd
+        let range = MaxStreakDateRange(
+            start: maxStart,
+            end: maxEnd,
+            // The inactive day that ended whatever came before this run —
+            // nil when the run opens the whole history, so there was no
+            // prior streak for it to have closed.
+            precedingBreakDate: maxStart == sortedDays.first
+                ? nil
+                : cal.date(byAdding: .day, value: -1, to: maxStart),
+            followingBreakDate: isOngoing
+                ? nil
+                : cal.date(byAdding: .day, value: 1, to: maxEnd))
+        return (current, maxRun, range)
     }
 
     // MARK: - Rest bank (reset-based: bank resets to restDaysPerCycle at phase start/cycle finish, spent by rest days)

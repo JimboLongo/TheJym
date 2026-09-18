@@ -113,6 +113,127 @@ final class ActiveDayStreakTests: XCTestCase {
         XCTAssertEqual(result.max, 6)
     }
 
+    // MARK: - The max streak's date range
+    //
+    // The "Present" path is NOT reachable from the real data this was
+    // built against (current 11, max 21 — different streaks), so it's
+    // driven here with synthetic day sets instead of assumed to work.
+
+    /// No data: no range at all, so the row renders without a subtitle
+    /// rather than with an empty or placeholder one.
+    func testNoDataGivesNoRange() {
+        XCTAssertNil(StatsEngine.activeDayStreaks(activeDays: [], today: today).maxRange)
+    }
+
+    /// A finished historical run reports its real span and a break date,
+    /// so it renders as a closed range.
+    func testAFinishedRunReportsItsSpanAndABreakDate() {
+        var days = Set<Date>()
+        for i in 10...14 { days.insert(day(-i, from: today)) }   // -14 ... -10
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.max, 5)
+        XCTAssertEqual(range.start, day(-14, from: today))
+        XCTAssertEqual(range.end, day(-10, from: today))
+        XCTAssertNotNil(range.followingBreakDate, "a finished streak must report the day that ended it")
+        XCTAssertEqual(range.followingBreakDate, day(-9, from: today))
+        XCTAssertNil(range.precedingBreakDate, "it opens the history, so nothing preceded it")
+    }
+
+    /// THE "PRESENT" CASE: when the record run is the one still going,
+    /// followingBreakDate is nil — which is what the view renders as
+    /// "– Present".
+    func testAnOngoingRecordStreakHasNoFollowingBreakDate() {
+        var days = Set<Date>()
+        for i in 0...5 { days.insert(day(-i, from: today)) }     // the current run, 6 days
+        days.formUnion([day(-20, from: today), day(-19, from: today)])
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.max, 6)
+        XCTAssertEqual(r.current, 6, "the record IS the current run")
+        XCTAssertEqual(range.start, day(-5, from: today))
+        XCTAssertEqual(range.end, today)
+        XCTAssertNil(range.followingBreakDate, "still open — this is what renders as Present")
+    }
+
+    /// The ongoing run counts as ongoing even when today itself isn't
+    /// logged yet — the run ends at yesterday, and it's still open.
+    func testAnOngoingRunIsStillOngoingWithTodayUnlogged() {
+        var days = Set<Date>()
+        for i in 1...4 { days.insert(day(-i, from: today)) }     // through yesterday
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.current, 4)
+        XCTAssertEqual(range.end, day(-1, from: today))
+        XCTAssertNil(range.followingBreakDate, "today being unlogged doesn't close the streak")
+    }
+
+    /// TIES go to the later run, so a tie between old history and the
+    /// run still going describes the ongoing one and reads "Present" —
+    /// matching computeRestBank's own tie rule.
+    func testATieBetweenHistoricalAndOngoingGoesToTheOngoingOne() {
+        var days = Set<Date>()
+        for i in 30...32 { days.insert(day(-i, from: today)) }   // historical 3-day run
+        for i in 0...2 { days.insert(day(-i, from: today)) }     // ongoing 3-day run
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.max, 3)
+        XCTAssertEqual(r.current, 3, "both runs are 3 — a genuine tie")
+        XCTAssertEqual(range.start, day(-2, from: today), "the range describes the ongoing run")
+        XCTAssertNil(range.followingBreakDate, "so it renders as Present")
+    }
+
+    /// A tie between two FINISHED runs also goes to the later one, so the
+    /// rule is about recency rather than being a special case for ongoing.
+    func testATieBetweenTwoFinishedRunsGoesToTheLaterOne() {
+        var days = Set<Date>()
+        for i in 40...42 { days.insert(day(-i, from: today)) }
+        for i in 20...22 { days.insert(day(-i, from: today)) }
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.max, 3)
+        XCTAssertEqual(range.start, day(-22, from: today))
+        XCTAssertNotNil(range.followingBreakDate)
+    }
+
+    /// A single finished day is a range whose start equals its end — what
+    /// the view collapses to one date rather than "Sep 8 – Sep 8".
+    func testASingleFinishedDayHasStartEqualToEnd() {
+        let days: Set<Date> = [day(-10, from: today)]
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.max, 1)
+        XCTAssertEqual(range.start, range.end)
+        XCTAssertNotNil(range.followingBreakDate, "finished, so it collapses to a single date")
+    }
+
+    /// A single ongoing day keeps the range form, since "Present" is
+    /// saying something the start date isn't.
+    func testASingleOngoingDayStaysOpen() {
+        let days: Set<Date> = [today]
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.max, 1)
+        XCTAssertEqual(r.current, 1)
+        XCTAssertEqual(range.start, range.end)
+        XCTAssertNil(range.followingBreakDate, "renders as \"<date> – Present\", not a bare date")
+    }
+
+    /// A record run that isn't the current one keeps its own break date
+    /// even while a shorter run is in progress — the Present rendering
+    /// must not leak onto a historical record.
+    func testAHistoricalRecordStaysClosedWhileAShorterRunIsInProgress() {
+        var days = Set<Date>()
+        for i in 20...26 { days.insert(day(-i, from: today)) }   // 7-day record
+        days.formUnion([day(-1, from: today), today])            // 2-day current
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        let range = try! XCTUnwrap(r.maxRange)
+        XCTAssertEqual(r.max, 7)
+        XCTAssertEqual(r.current, 2)
+        XCTAssertNotNil(range.followingBreakDate, "the record ended; only the current run is open")
+        XCTAssertEqual(range.end, day(-20, from: today))
+    }
+
     // MARK: - Classification, through compute()
 
     @MainActor

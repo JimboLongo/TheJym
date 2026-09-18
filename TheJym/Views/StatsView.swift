@@ -81,6 +81,26 @@ struct StatsView: View {
         String(format: "%.1f", miles)
     }
 
+    /// A max-streak row's date-range subtitle, shared by both streak rows
+    /// so they can't drift apart in format.
+    ///
+    /// An ongoing streak reads "Sep 8 – Present" rather than repeating
+    /// today's date, which would go stale-looking the moment you read it
+    /// tomorrow and reads as a finished span rather than a live one.
+    /// MaxStreakDateRange.followingBreakDate being nil is what says the
+    /// streak is still open (see its own doc), so there's no extra flag.
+    ///
+    /// A finished single-day streak collapses to one date — "Sep 8", not
+    /// "Sep 8 – Sep 8", which reads like a rendering bug. A one-day streak
+    /// that's still running keeps the range form ("Sep 18 – Present"),
+    /// since there the second half is saying something the first doesn't.
+    private func streakRangeLabel(_ range: MaxStreakDateRange) -> String {
+        let start = Formatters.date.string(from: range.start)
+        guard range.followingBreakDate != nil else { return "\(start) – Present" }
+        let end = Formatters.date.string(from: range.end)
+        return start == end ? start : "\(start) – \(end)"
+    }
+
     private func hoursLabel(_ hours: Double) -> String {
         String(format: "%.1f hr", hours)
     }
@@ -187,20 +207,24 @@ struct StatsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 statRow("Max streak", "\(stats.maxStreak)")
                 if let range = stats.maxStreakRange {
-                    Text("\(Formatters.date.string(from: range.start)) – \(Formatters.date.string(from: range.end))")
+                    Text(streakRangeLabel(range))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
             // Plain consecutive-days-with-activity, with none of the rest
             // bank the two rows above run on — see
-            // StatsEngine.activeDayStreaks. No caption subtitles here,
-            // unlike those two: a start date for a plain consecutive count
-            // is just today minus the number already shown, and the max
-            // row's range subtitle exists to anchor a span the rest-bank
-            // walk tracks for its History filter — neither adds anything
-            // these two numbers don't already say.
+            // StatsEngine.activeDayStreaks. Current active streak carries
+            // no subtitle: a start date for a plain consecutive count is
+            // just today minus the number already shown. The max row does,
+            // since its span isn't derivable from the number alone.
             statRow("Current active streak", "\(stats.currentActiveStreak)")
-            statRow("Max active streak", "\(stats.maxActiveStreak)")
+            VStack(alignment: .leading, spacing: 2) {
+                statRow("Max active streak", "\(stats.maxActiveStreak)")
+                if let range = stats.maxActiveStreakRange {
+                    Text(streakRangeLabel(range))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             statGrid([
                 ("Rest days banked", String(format: "%.1f", stats.bankBalance)),
                 ("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100)),
