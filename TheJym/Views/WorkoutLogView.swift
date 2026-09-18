@@ -136,8 +136,25 @@ struct WorkoutLogView: View {
     /// reasoning as restStopwatch/completedSummaryCollapsed — its own page
     /// lives in the paging LazyVStack.
     @StateObject private var workoutStopwatch = WorkoutStopwatch()
+    /// True only while the stopwatch is paused because every exercise has
+    /// been completed — so reopening one resumes it, while a pause the
+    /// user made themselves on the Stopwatch page is left alone. Not
+    /// persisted: after a cold relaunch mid-workout this is false, so a
+    /// reopen won't auto-resume and the user resumes manually. That's the
+    /// safe direction to fail — it can never silently count time you
+    /// weren't lifting.
+    @State private var pausedByAllExercisesComplete = false
 
     private var settings: AppSettings? { settingsList.first }
+    /// Every exercise collapsed — the same predicate
+    /// CompletedSummaryPageView.allDone uses to flip its button to
+    /// "Finish & Save Workout", computed here against the same `drafts`
+    /// array so the two can't disagree. Observed (not polled) via
+    /// .onChange below, which fires on the transition rather than on every
+    /// draft edit.
+    private var allExercisesComplete: Bool {
+        !drafts.isEmpty && drafts.allSatisfy { !$0.isExpanded }
+    }
     private var isDeloadCycle: Bool {
         guard let phase else { return false }
         return phase.isDeloadCycle(phase.currentCycle, aiDeloadEnabled: settings?.deloadWeeksEnabled == true)
@@ -669,6 +686,30 @@ struct WorkoutLogView: View {
             lastInteraction = Date()
             saveDraftToDisk()
         }
+        // The workout clock stops when the LIFTING stops, not when Finish
+        // is finally tapped — the moment the last exercise collapses and
+        // the button flips to "Finish & Save Workout". finishWorkout()
+        // still calls pause() afterwards; that's a no-op once already
+        // paused (it guards on isRunning) and elapsed stays frozen at
+        // `accumulated`, so the captured durationSeconds is exactly the
+        // time up to this point.
+        //
+        // Reopening an exercise to add a set resumes it, since the workout
+        // demonstrably isn't over. Only a pause WE made is resumed (see
+        // pausedByAllExercisesComplete) — a pause the user made themselves
+        // on the Stopwatch page stays paused.
+        .onChange(of: allExercisesComplete) { _, isComplete in
+            if isComplete {
+                guard workoutStopwatch.isRunning else { return }
+                workoutStopwatch.pause()
+                pausedByAllExercisesComplete = true
+                saveWorkoutStopwatchToDisk()
+            } else if pausedByAllExercisesComplete {
+                workoutStopwatch.resume()
+                pausedByAllExercisesComplete = false
+                saveWorkoutStopwatchToDisk()
+            }
+        }
         // Deliberately NO .onChange(of: currentPageID) retargeting the rest
         // countdown here: the target is pinned to the exercise whose reps
         // were just entered (see RestStopwatch.resetAndStart's own doc) and
@@ -1095,7 +1136,10 @@ struct WorkoutLogView: View {
         // The workout is done — stop counting (see WorkoutStopwatch.pause's
         // own doc) and drop its persisted state, matching the draft's own
         // cleanup, so the next workout in this same slot starts from a
-        // genuinely fresh stopwatch.
+        // genuinely fresh stopwatch. Usually already paused by then (see
+        // the allExercisesComplete onChange), in which case this is a
+        // no-op that leaves the accumulated total untouched; it still
+        // matters for a workout saved with an exercise left open.
         workoutStopwatch.pause()
         clearSavedWorkoutStopwatch()
         RestActivityController.shared.end()
@@ -3723,11 +3767,19 @@ struct WorkoutRecapView: View {
             List {
                 ForEach(entries) { entry in
                     Section(entry.exerciseName) {
+                        // Default List row insets give each row ~11pt top
+                        // and bottom; this recap is a scan-and-spin screen
+                        // with two rows per exercise, so that padding adds
+                        // up faster than it earns anything.
                         recapGrid(for: entry)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 2, trailing: 16))
                         verdictAndWheelRow(for: entry)
+                            .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 4, trailing: 16))
                     }
                 }
             }
+            .listSectionSpacing(.compact)
+            .environment(\.defaultMinListRowHeight, 28)
             .navigationTitle("Workout Recap")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -3775,7 +3827,7 @@ struct WorkoutRecapView: View {
     @ViewBuilder
     private func verdictAndWheelRow(for entry: WorkoutLogView.RecapEntry) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 verdictText(for: entry)
                 adjustmentWheel(for: entry)
             }
@@ -3814,11 +3866,26 @@ struct WorkoutRecapView: View {
             get: { adjustments[entry.exerciseName] ?? Self.initialAdjustment(for: entry) },
             set: { adjustments[entry.exerciseName] = $0 })) {
             ForEach(Self.adjustmentChoices, id: \.self) { choice in
-                Text(label(for: choice)).tag(choice)
+                Text(label(for: choice)).font(.caption).tag(choice)
             }
         }
         .pickerStyle(.wheel)
-        .frame(height: 120)
+        // 76pt shows the selected row plus a sliver of the one above and
+        // below — enough to read which way the wheel runs without handing a
+        // third of the row to options nobody is choosing. Not lower than
+        // this: a .wheel picker is spun, not tapped, so it needs more than
+        // the 44pt tap minimum to drag against, and below ~70pt the
+        // selected row starts colliding with its neighbours. That's a
+        // floor, not a value with headroom under it.
+        //
+        // Accessibility sizes need roughly the original height back: the
+        // row text scales up with Dynamic Type but the frame doesn't, so
+        // 76pt there overlapped the selected row with its neighbours into
+        // an unreadable smear (verified by render). Sized to fit the
+        // larger rows rather than shrinking the text, since capping the
+        // text is exactly what an accessibility size is asking us not to
+        // do.
+        .frame(height: dynamicTypeSize.isAccessibilitySize ? 132 : 76)
     }
 
     private func label(for choice: Double) -> String {
