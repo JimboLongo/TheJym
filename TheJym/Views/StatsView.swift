@@ -191,6 +191,16 @@ struct StatsView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
+            // Plain consecutive-days-with-activity, with none of the rest
+            // bank the two rows above run on — see
+            // StatsEngine.activeDayStreaks. No caption subtitles here,
+            // unlike those two: a start date for a plain consecutive count
+            // is just today minus the number already shown, and the max
+            // row's range subtitle exists to anchor a span the rest-bank
+            // walk tracks for its History filter — neither adds anything
+            // these two numbers don't already say.
+            statRow("Current active streak", "\(stats.currentActiveStreak)")
+            statRow("Max active streak", "\(stats.maxActiveStreak)")
             statGrid([
                 ("Rest days banked", String(format: "%.1f", stats.bankBalance)),
                 ("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100)),

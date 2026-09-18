@@ -20,6 +20,18 @@ struct TrainingStats {
     var maxStreakRange: MaxStreakDateRange?
     /// When the currently-open streak began — nil once currentStreak is 0.
     var currentStreakStartDate: Date?
+
+    /// Consecutive calendar days ending today (or yesterday, if today
+    /// hasn't been logged yet) on which SOMETHING was done — training or a
+    /// logged rest-day activity. Deliberately NOT a variant of
+    /// `currentStreak` above: that one runs on the rest bank, where
+    /// training is neutral and rest days spend from a balance, so it
+    /// survives rest days. This has no bank at all — an unlogged day of any
+    /// kind ends it. See StatsEngine.activeDayStreaks.
+    var currentActiveStreak: Int
+    /// All-time longest run of the same measure. 0, never nil, with no
+    /// history.
+    var maxActiveStreak: Int
     var bankBalance: Double     // current rest-bank balance, >= 0, uncapped above
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
@@ -344,6 +356,7 @@ enum StatsEngine {
         // same date count once rather than twice.
         let activeDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
         let allTimeActiveDayCount = activeDays.count
+        let activeStreaks = activeDayStreaks(activeDays: activeDays, today: today, cal: cal)
 
         // Perfect-cycle progress needs an active phase to judge cycles
         // against its split pattern — with none, fall back to a simpler,
@@ -678,6 +691,8 @@ enum StatsEngine {
                              maxStreak: bank.maxStreak,
                              maxStreakRange: bank.maxStreakRange,
                              currentStreakStartDate: bank.currentStreakStartDate,
+                             currentActiveStreak: activeStreaks.current,
+                             maxActiveStreak: activeStreaks.max,
                              bankBalance: bank.bankBalance,
                              percentLogged: pct,
                              daysPerWeek: perWeek,
@@ -762,6 +777,65 @@ enum StatsEngine {
             if flag { streak += 1 } else { break }
         }
         return PerfectWeekFallback(lifetimeCount: lifetime, currentStreak: streak)
+    }
+
+    /// Plain consecutive-days-with-activity streaks — current (ending today,
+    /// or yesterday if today isn't logged yet) and all-time max.
+    ///
+    /// Deliberately its own walk, NOT a parameterization of
+    /// `computeRestBank` below. The two model different things and share no
+    /// logic: the rest bank is a ledger where training is neutral, rest days
+    /// spend from a balance, and a streak survives a rest day for as long as
+    /// the balance holds. This has no bank, no ledger and no concept of
+    /// rest — a day is either active or it isn't, and the first inactive day
+    /// ends the run. Folding them together would mean one of the two
+    /// silently acquiring the other's semantics on a future edit.
+    ///
+    /// `activeDays` is the same day-collapsed set `allTimeActiveDayCount`
+    /// and `yearlyTotals` are built from, so all three agree on what counts:
+    /// a training session or a logged rest-day activity (a walk) makes a day
+    /// active; a backfilled Rest Day placeholder, a plain "Log Rest Day"
+    /// credit, and a day with no session at all are all inactive, since none
+    /// of them has any exercise log (StatsView's realSessionDates filters
+    /// those out before compute ever sees them).
+    ///
+    /// Today in progress does NOT break the current streak: if nothing's
+    /// logged for it yet the walk starts from yesterday instead, matching
+    /// the "today is pending until logged" rule daysSinceStart,
+    /// cyclePaceDelta and the rest bank all already use. A genuinely broken
+    /// streak still reads 0 — that's when yesterday is inactive too.
+    static func activeDayStreaks(activeDays: Set<Date>, today: Date,
+                                 cal: Calendar = .current) -> (current: Int, max: Int) {
+        guard !activeDays.isEmpty else { return (0, 0) }
+
+        var current = 0
+        // Start on today only if it's already active; otherwise step back a
+        // day so an as-yet-unlogged today doesn't read as a break.
+        var cursor = activeDays.contains(today)
+            ? today
+            : (cal.date(byAdding: .day, value: -1, to: today) ?? today)
+        var iterations = 0
+        while activeDays.contains(cursor), iterations < 20_000 {
+            iterations += 1
+            current += 1
+            guard let previous = cal.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
+        }
+
+        var maxRun = 0
+        var run = 0
+        var previousDay: Date?
+        for day in activeDays.sorted() {
+            if let previousDay,
+               cal.dateComponents([.day], from: previousDay, to: day).day == 1 {
+                run += 1
+            } else {
+                run = 1
+            }
+            maxRun = Swift.max(maxRun, run)
+            previousDay = day
+        }
+        return (current, maxRun)
     }
 
     // MARK: - Rest bank (reset-based: bank resets to restDaysPerCycle at phase start/cycle finish, spent by rest days)
