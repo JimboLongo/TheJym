@@ -113,6 +113,93 @@ final class ActiveDayStreakTests: XCTestCase {
         XCTAssertEqual(result.max, 6)
     }
 
+    // MARK: - The current run's start date
+    //
+    // The pending-today rule decides where the walk starts looking back
+    // FROM; it must never move where the run is reported to have BEGUN.
+
+    func testNoHistoryGivesNoStartDate() {
+        XCTAssertNil(StatsEngine.activeDayStreaks(activeDays: [], today: today).currentStart)
+    }
+
+    /// A broken streak reports no start date, so the row shows no subtitle
+    /// — same convention as currentStreakStartDate.
+    func testABrokenStreakGivesNoStartDate() {
+        let days: Set<Date> = [day(-5, from: today), day(-4, from: today)]
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        XCTAssertEqual(r.current, 0)
+        XCTAssertNil(r.currentStart, "a 0 streak must have no start date to render")
+    }
+
+    /// Today logged: the start is the run's first day, not today.
+    func testStartDateWithTodayLogged() {
+        var days = Set<Date>()
+        for i in 0...4 { days.insert(day(-i, from: today)) }
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        XCTAssertEqual(r.current, 5)
+        XCTAssertEqual(r.currentStart, day(-4, from: today))
+    }
+
+    /// Today NOT logged: the walk starts from yesterday, but the reported
+    /// start must still be the run's genuine first day — unshifted.
+    func testStartDateIsUnshiftedWhenTodayIsUnlogged() {
+        var days = Set<Date>()
+        for i in 1...5 { days.insert(day(-i, from: today)) }   // -5 ... -1
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        XCTAssertEqual(r.current, 5)
+        XCTAssertEqual(r.currentStart, day(-5, from: today),
+                       "the pending-today rule must not move the run's first day")
+    }
+
+    /// The same run reports the same start whether or not today has been
+    /// logged yet — logging today extends the run without re-anchoring it.
+    func testLoggingTodayDoesNotMoveTheStartDate() {
+        var base = Set<Date>()
+        for i in 1...5 { base.insert(day(-i, from: today)) }
+        let before = StatsEngine.activeDayStreaks(activeDays: base, today: today)
+        let after = StatsEngine.activeDayStreaks(activeDays: base.union([today]), today: today)
+        XCTAssertEqual(before.currentStart, after.currentStart, "same run, same first day")
+        XCTAssertEqual(before.current, 5)
+        XCTAssertEqual(after.current, 6)
+    }
+
+    /// The start sits after the gap that broke the previous run, not at
+    /// the beginning of all history.
+    func testStartDateSitsAfterTheBreakNotAtTheStartOfHistory() {
+        var days = Set<Date>()
+        for i in 20...25 { days.insert(day(-i, from: today)) }   // old run
+        for i in 0...2 { days.insert(day(-i, from: today)) }     // current run
+        let r = StatsEngine.activeDayStreaks(activeDays: days, today: today)
+        XCTAssertEqual(r.current, 3)
+        XCTAssertEqual(r.currentStart, day(-2, from: today))
+    }
+
+    /// Through compute(), with a walk mid-run — the start is the first
+    /// active day, and a walk in the middle doesn't re-anchor it.
+    @MainActor
+    func testStartDateThroughComputeWithAWalkMidRun() {
+        let context = makeContext()
+        let t1 = trainingSession(on: day(-2, from: today), context: context)
+        let (walk, activity) = walkSession(on: day(-1, from: today), context: context)
+        let t2 = trainingSession(on: today, context: context)
+
+        let stats = streaks([t1, walk, t2], activities: [activity])
+        XCTAssertEqual(stats.currentActiveStreak, 3)
+        XCTAssertEqual(stats.currentActiveStreakStartDate, day(-2, from: today))
+    }
+
+    /// And nil through compute() when the run is broken.
+    @MainActor
+    func testNoStartDateThroughComputeWhenBroken() {
+        let context = makeContext()
+        let t1 = trainingSession(on: day(-6, from: today), context: context)
+        let t2 = trainingSession(on: day(-5, from: today), context: context)
+
+        let stats = streaks([t1, t2])
+        XCTAssertEqual(stats.currentActiveStreak, 0)
+        XCTAssertNil(stats.currentActiveStreakStartDate)
+    }
+
     // MARK: - The max streak's date range
     //
     // The "Present" path is NOT reachable from the real data this was

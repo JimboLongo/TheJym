@@ -29,6 +29,13 @@ struct TrainingStats {
     /// survives rest days. This has no bank at all — an unlogged day of any
     /// kind ends it. See StatsEngine.activeDayStreaks.
     var currentActiveStreak: Int
+    /// The first day of the currently-open active run — nil once
+    /// `currentActiveStreak` is 0, matching `currentStreakStartDate`'s own
+    /// convention, so the Stats row shows no subtitle rather than an empty
+    /// one. This is the run's genuine first day: the pending-today rule
+    /// only decides where the walk STARTS looking back from, never where
+    /// the run began.
+    var currentActiveStreakStartDate: Date?
     /// All-time longest run of the same measure. 0, never nil, with no
     /// history.
     var maxActiveStreak: Int
@@ -699,6 +706,7 @@ enum StatsEngine {
                              maxStreakRange: bank.maxStreakRange,
                              currentStreakStartDate: bank.currentStreakStartDate,
                              currentActiveStreak: activeStreaks.current,
+                             currentActiveStreakStartDate: activeStreaks.currentStart,
                              maxActiveStreak: activeStreaks.max,
                              maxActiveStreakRange: activeStreaks.maxRange,
                              bankBalance: bank.bankBalance,
@@ -814,10 +822,15 @@ enum StatsEngine {
     /// streak still reads 0 — that's when yesterday is inactive too.
     static func activeDayStreaks(activeDays: Set<Date>, today: Date,
                                  cal: Calendar = .current)
-    -> (current: Int, max: Int, maxRange: MaxStreakDateRange?) {
-        guard !activeDays.isEmpty else { return (0, 0, nil) }
+    -> (current: Int, max: Int, maxRange: MaxStreakDateRange?, currentStart: Date?) {
+        guard !activeDays.isEmpty else { return (0, 0, nil, nil) }
 
         var current = 0
+        // The earliest day of the currently-open run. Assigned on every
+        // step of the walk below, which moves backwards, so the final
+        // value is the run's first day — and it stays nil when the loop
+        // never runs at all, i.e. when the streak is 0.
+        var currentStart: Date?
         // Start on today only if it's already active; otherwise step back a
         // day so an as-yet-unlogged today doesn't read as a break.
         var cursor = activeDays.contains(today)
@@ -831,6 +844,7 @@ enum StatsEngine {
         while activeDays.contains(cursor), iterations < 20_000 {
             iterations += 1
             current += 1
+            currentStart = cursor
             guard let previous = cal.date(byAdding: .day, value: -1, to: cursor) else { break }
             cursor = previous
         }
@@ -864,7 +878,7 @@ enum StatsEngine {
             previousDay = day
         }
 
-        guard let maxStart, let maxEnd else { return (current, maxRun, nil) }
+        guard let maxStart, let maxEnd else { return (current, maxRun, nil, currentStart) }
         // Ongoing exactly when the record run ends on the current run's
         // last active day — then followingBreakDate stays nil, which is
         // how MaxStreakDateRange already spells "still open".
@@ -881,7 +895,7 @@ enum StatsEngine {
             followingBreakDate: isOngoing
                 ? nil
                 : cal.date(byAdding: .day, value: 1, to: maxEnd))
-        return (current, maxRun, range)
+        return (current, maxRun, range, currentStart)
     }
 
     // MARK: - Rest bank (reset-based: bank resets to restDaysPerCycle at phase start/cycle finish, spent by rest days)

@@ -81,6 +81,14 @@ struct StatsView: View {
         String(format: "%.1f", miles)
     }
 
+    /// A current-streak row's "Since <date>" subtitle, shared by both
+    /// current-streak rows so they can't drift apart in format. Callers
+    /// unwrap the optional start date first — a nil one means the streak
+    /// is 0 and the row shows no subtitle at all.
+    private func streakSinceLabel(_ start: Date) -> String {
+        "Since \(Formatters.date.string(from: start))"
+    }
+
     /// A max-streak row's date-range subtitle, shared by both streak rows
     /// so they can't drift apart in format.
     ///
@@ -200,7 +208,7 @@ struct StatsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 statRow("Current streak", "\(stats.currentStreak) 🔥")
                 if let start = stats.currentStreakStartDate {
-                    Text("Since \(Formatters.date.string(from: start))")
+                    Text(streakSinceLabel(start))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
@@ -213,11 +221,17 @@ struct StatsView: View {
             }
             // Plain consecutive-days-with-activity, with none of the rest
             // bank the two rows above run on — see
-            // StatsEngine.activeDayStreaks. Current active streak carries
-            // no subtitle: a start date for a plain consecutive count is
-            // just today minus the number already shown. The max row does,
-            // since its span isn't derivable from the number alone.
-            statRow("Current active streak", "\(stats.currentActiveStreak)")
+            // StatsEngine.activeDayStreaks. Both carry the same caption
+            // subtitles as their rest-bank counterparts above, through the
+            // same two helpers, so the four rows can't drift apart in
+            // format.
+            VStack(alignment: .leading, spacing: 2) {
+                statRow("Current active streak", "\(stats.currentActiveStreak)")
+                if let start = stats.currentActiveStreakStartDate {
+                    Text(streakSinceLabel(start))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             VStack(alignment: .leading, spacing: 2) {
                 statRow("Max active streak", "\(stats.maxActiveStreak)")
                 if let range = stats.maxActiveStreakRange {
