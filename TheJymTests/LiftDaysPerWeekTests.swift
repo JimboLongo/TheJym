@@ -2,9 +2,13 @@
 //  LiftDaysPerWeekTests.swift
 //  TheJymTests
 //
-//  Covers TrainingStats.liftDaysPerWeek — the same measure as daysPerWeek
-//  over the same window and denominator, but counting only days with
-//  actual lifting on them.
+//  Covers the Days per week row's Total / Lift / Walk partition.
+//
+//  The load-bearing property is the identity Lift + Walk == Total: a day
+//  with both a lift and a walk can only be counted once, so it belongs to
+//  Lift and Walk is the remainder. That's the whole point of the row and
+//  the easiest thing to silently break later, so it's asserted directly
+//  and again across a mixed real-shaped fixture.
 //
 //  The distinction that matters: a day with BOTH a lift and a walk is a
 //  lift day. StatsEngine's existing `trainingDates` gets that wrong (it
@@ -16,6 +20,11 @@
 import XCTest
 import SwiftData
 @testable import TheJym
+
+private extension TrainingStats {
+    /// Just for readability in the identity assertions below.
+    var liftPlusWalk: Double { liftDaysPerWeek + walkDaysPerWeek }
+}
 
 final class LiftDaysPerWeekTests: XCTestCase {
     @MainActor
@@ -163,6 +172,101 @@ final class LiftDaysPerWeekTests: XCTestCase {
     func testNoDataGivesZero() {
         let result = stats([], startOffset: -6)
         XCTAssertEqual(result.liftDaysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.walkDaysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.daysPerWeek, 0, accuracy: 0.001)
+    }
+
+    // MARK: - Lift + Walk == Total
+
+    /// The identity the whole row rests on, on a fixture carrying every
+    /// shape at once: lift-only, walk-only, BOTH on one day, two lifts on
+    /// one day, a placeholder and a plain rest credit.
+    @MainActor
+    func testLiftPlusWalkEqualsTotalAcrossEveryShape() {
+        let context = makeContext()
+        var sessions: [WorkoutSession] = []
+        var activities: [RestDayActivity] = []
+
+        sessions.append(lift(on: day(-12), context: context))            // lift only
+        let (w1, a1) = walk(on: day(-11), context: context)              // walk only
+        sessions.append(w1); activities.append(a1)
+        sessions.append(lift(on: day(-10), context: context))            // BOTH
+        let (w2, a2) = walk(on: day(-10), context: context)
+        sessions.append(w2); activities.append(a2)
+        sessions.append(lift(on: day(-9), context: context))             // two lifts, one day
+        sessions.append(lift(on: day(-9), context: context))
+        let placeholder = WorkoutSession(date: day(-8), dayLabel: "Rest Day", cycleNumber: 0)
+        context.insert(placeholder); sessions.append(placeholder)
+        let plainRest = WorkoutSession(date: day(-7), dayLabel: "Push Day", cycleNumber: 1)
+        context.insert(plainRest); sessions.append(plainRest)
+        let (w3, a3) = walk(on: day(-6), context: context)               // walk only
+        sessions.append(w3); activities.append(a3)
+
+        let result = stats(sessions, activities: activities, startOffset: -14)
+
+        XCTAssertEqual(result.liftDaysPerWeek + result.walkDaysPerWeek,
+                       result.daysPerWeek, accuracy: 0.0001,
+                       "Lift + Walk must equal Total exactly")
+        // Lift days: -12, -10, -9  (the BOTH day counts as a lift day).
+        XCTAssertEqual(result.liftDaysPerWeek, perWeek(3, result), accuracy: 0.001)
+        // Walk-only days: -11, -6. The -10 walk is absorbed by its lift.
+        XCTAssertEqual(result.walkDaysPerWeek, perWeek(2, result), accuracy: 0.001)
+        XCTAssertEqual(result.daysPerWeek, perWeek(5, result), accuracy: 0.001)
+    }
+
+    /// The BOTH day in isolation: it must land in Lift and contribute
+    /// nothing to Walk, or the identity would over-count it.
+    @MainActor
+    func testADayWithBothIsCountedOnceInLiftAndNotInWalk() {
+        let context = makeContext()
+        let lifted = lift(on: day(-3), context: context)
+        let (walked, activity) = walk(on: day(-3), context: context)
+
+        let result = stats([lifted, walked], activities: [activity], startOffset: -6)
+        XCTAssertEqual(result.liftDaysPerWeek, perWeek(1, result), accuracy: 0.001)
+        XCTAssertEqual(result.walkDaysPerWeek, 0, accuracy: 0.001,
+                       "the walk is absorbed by the lift on that date")
+        XCTAssertEqual(result.liftPlusWalk, result.daysPerWeek, accuracy: 0.0001)
+    }
+
+    /// The identity holds when there is nothing but walks, too.
+    @MainActor
+    func testIdentityHoldsWithWalksOnly() {
+        let context = makeContext()
+        let (w1, a1) = walk(on: day(-4), context: context)
+        let (w2, a2) = walk(on: day(-3), context: context)
+        let result = stats([w1, w2], activities: [a1, a2], startOffset: -6)
+        XCTAssertEqual(result.liftDaysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.walkDaysPerWeek, perWeek(2, result), accuracy: 0.001)
+        XCTAssertEqual(result.liftPlusWalk, result.daysPerWeek, accuracy: 0.0001)
+    }
+
+    /// And with nothing but lifts.
+    @MainActor
+    func testIdentityHoldsWithLiftsOnly() {
+        let context = makeContext()
+        let a = lift(on: day(-4), context: context)
+        let b = lift(on: day(-3), context: context)
+        let result = stats([a, b], startOffset: -6)
+        XCTAssertEqual(result.walkDaysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.liftDaysPerWeek, perWeek(2, result), accuracy: 0.001)
+        XCTAssertEqual(result.liftPlusWalk, result.daysPerWeek, accuracy: 0.0001)
+    }
+
+    /// Total must not move: adding the partition changed nothing about how
+    /// daysPerWeek itself is derived, so it still equals loggedDays/weeks.
+    @MainActor
+    func testTotalIsUnchangedByThePartition() {
+        let context = makeContext()
+        let lifted = lift(on: day(-5), context: context)
+        let (walked, activity) = walk(on: day(-4), context: context)
+        let both = lift(on: day(-3), context: context)
+        let (bothWalk, bothActivity) = walk(on: day(-3), context: context)
+
+        let result = stats([lifted, walked, both, bothWalk],
+                           activities: [activity, bothActivity], startOffset: -6)
+        // 4 sessions across 3 distinct dates -> Total is a DAY count.
+        XCTAssertEqual(result.daysPerWeek, perWeek(3, result), accuracy: 0.001)
     }
 
     // MARK: - The shared predicate

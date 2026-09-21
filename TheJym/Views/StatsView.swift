@@ -248,12 +248,8 @@ struct StatsView: View {
                 // imported history, so the two numbers genuinely diverge
                 // rather than being the same figure twice.
                 ("Miles walked", milesLabel(stats.milesSinceStart)),
-                ("Days per week", String(format: "%.2f", stats.daysPerWeek)),
-                // Same window and denominator as the row above — the two
-                // are meant to be read against each other, so the gap
-                // between them is the walk-only days.
-                ("Lift days per week", String(format: "%.2f", stats.liftDaysPerWeek)),
             ])
+            daysPerWeekRow
         }
     }
 
@@ -343,6 +339,53 @@ struct StatsView: View {
                  ? "An active day is any day you trained or logged a rest-day activity; both on one day still counts once. The current year is to date."
                  : "An active day is any day you trained or logged a rest-day activity; both on one day still counts once. The current year is to date; Proj. adds your last 3 months' pace across the days remaining.")
         }
+    }
+
+    /// Days per week split three ways: Total, Lift, Walk. Same
+    /// Grid/GridRow structure and accessibility fallback as
+    /// yearMonthSection above (and the Big Lifts / Workout Duration / By
+    /// Year tables) — a label column plus value columns at standard sizes,
+    /// falling back to one labelled row per value where a 4-column grid
+    /// has no room to stay readable.
+    ///
+    /// Lift + Walk == Total exactly: a day with both a lift and a walk
+    /// counts in Lift only, and Walk is the remainder rather than an
+    /// independent count. See TrainingStats.walkDaysPerWeek.
+    @ViewBuilder
+    private var daysPerWeekRow: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            statRow("Days per week — Total", daysPerWeekValue(stats.daysPerWeek))
+            statRow("Days per week — Lift", daysPerWeekValue(stats.liftDaysPerWeek))
+            statRow("Days per week — Walk", daysPerWeekValue(stats.walkDaysPerWeek))
+        } else {
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    Text("")
+                    Text("Total").font(.caption2.bold()).foregroundStyle(.secondary)
+                        .gridColumnAlignment(.center)
+                    Text("Lift").font(.caption2.bold()).foregroundStyle(.secondary)
+                        .gridColumnAlignment(.center)
+                    Text("Walk").font(.caption2.bold()).foregroundStyle(.secondary)
+                        .gridColumnAlignment(.center)
+                }
+                GridRow {
+                    Text("Days per week").font(.caption).foregroundStyle(.secondary)
+                    daysPerWeekCell(stats.daysPerWeek)
+                    daysPerWeekCell(stats.liftDaysPerWeek)
+                    daysPerWeekCell(stats.walkDaysPerWeek)
+                }
+            }
+            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+        }
+    }
+
+    private func daysPerWeekValue(_ v: Double) -> String { String(format: "%.2f", v) }
+
+    private func daysPerWeekCell(_ v: Double) -> some View {
+        Text(daysPerWeekValue(v))
+            .font(.system(.subheadline, design: .monospaced)).bold()
+            .fixedSize()
+            .gridColumnAlignment(.center)
     }
 
     private func yearMonthCell(_ value: String, py: String) -> some View {

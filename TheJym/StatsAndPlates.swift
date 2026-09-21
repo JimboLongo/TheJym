@@ -54,6 +54,13 @@ struct TrainingStats {
     /// LIFTING — a walk-only day doesn't count, while a day with both a
     /// lift and a walk does. See WorkoutSession.hasLiftingLog.
     var liftDaysPerWeek: Double
+    /// The remainder of `daysPerWeek` after `liftDaysPerWeek` — days with
+    /// a rest activity and NO lift on them. Defined as the set difference
+    /// rather than counted independently, so
+    /// `liftDaysPerWeek + walkDaysPerWeek == daysPerWeek` holds exactly:
+    /// a day with both a lift and a walk belongs to the lift column only,
+    /// and can't be double-counted into this one.
+    var walkDaysPerWeek: Double
 
     // Year/month-to-date workout-day counts, vs. the same window last year.
     var ytdWorkoutDays: Int
@@ -368,17 +375,29 @@ enum StatsEngine {
         let weeks = Double(daysSinceStart) / 7.0
         let perWeek = weeks > 0 ? Double(daysLogged) / weeks : 0
 
-        // Lift days: same window and denominator as perWeek above, so the
-        // two rows are directly comparable, but only days with real
-        // lifting on them. Needs `allSessions` rather than `sessionDates`
+        // The Total / Lift / Walk partition of `loggedDays`, all three
+        // sharing that same window and `weeks` denominator so the row's
+        // columns are directly comparable and Lift + Walk == Total.
+        //
+        // ONE pass over sessions: lift days are collected in that pass,
+        // and walk-only days fall out as a set difference rather than a
+        // second scan. Needs `allSessions` rather than `sessionDates`
         // because the lift-vs-activity distinction lives in the logs, and
         // sessionDates is only dates by the time it reaches here.
-        // One extra O(sessions) pass — negligible beside the per-exercise
-        // per-phase work further down, and deliberately not folded into
-        // another loop, which would couple two unrelated things.
+        //
+        // Intersected with loggedDays before the subtraction so the
+        // identity holds structurally rather than by assumption — every
+        // lifting session is exercise-bearing and so already in
+        // loggedDays, but a caller passing `allSessions` without the
+        // matching `sessionDates` would otherwise push Lift above Total.
+        // Deliberately NOT built from `trainingDates`, which drops a whole
+        // date that has any RestDayActivity on it: that would lose a day
+        // you both lifted and walked, and break the identity outright.
         let liftDays = Set(allSessions.filter(\.hasLiftingLog).map { cal.startOfDay(for: $0.date) })
-            .filter { $0 >= start && $0 <= today }
+            .intersection(loggedDays)
+        let walkOnlyDays = loggedDays.subtracting(liftDays)
         let liftPerWeek = weeks > 0 ? Double(liftDays.count) / weeks : 0
+        let walkPerWeek = weeks > 0 ? Double(walkOnlyDays.count) / weeks : 0
 
         // Distinct calendar days with a qualifying session on them — the
         // shared basis for YTD/MTD counts, allTimeActiveDayCount, and
@@ -730,6 +749,7 @@ enum StatsEngine {
                              percentLogged: pct,
                              daysPerWeek: perWeek,
                              liftDaysPerWeek: liftPerWeek,
+                             walkDaysPerWeek: walkPerWeek,
                              ytdWorkoutDays: ytdWorkoutDays,
                              priorYearYtdWorkoutDays: priorYearYtdWorkoutDays,
                              mtdWorkoutDays: mtdWorkoutDays,
