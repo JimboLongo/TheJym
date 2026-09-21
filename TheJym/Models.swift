@@ -1122,6 +1122,26 @@ final class WorkoutSession {
         try? context.save()
     }
 
+    /// True when this session represents actual LIFTING — it has at least
+    /// one ExerciseLog that isn't a rest-day activity's History mirror.
+    ///
+    /// The one place the lift-vs-activity line is drawn, so everything
+    /// that needs it agrees. Note this is a NARROWER rule than the
+    /// "has any exercise log at all" one behind
+    /// TrainingStats.allTimeActiveDayCount / yearlyTotals /
+    /// activeDayStreaks: those count a logged walk as activity, this
+    /// doesn't. Both are deliberate; they answer different questions, and
+    /// the two rules are why "Days per week" and "Lift days per week"
+    /// legitimately differ.
+    ///
+    /// Also distinct from StatsEngine's `trainingDates`, which excludes a
+    /// whole DATE that has any RestDayActivity on it — right for the rest
+    /// bank it feeds, wrong for counting lift days, since a day you both
+    /// lifted and walked is still a day you lifted.
+    var hasLiftingLog: Bool {
+        exerciseLogs.contains { $0.restDayActivity == nil }
+    }
+
     /// A gap-filling placeholder inserted by backfillRestDays /
     /// creditYesterdayAsRestIfNothingLogged for a day nothing was logged
     /// for at all — distinct from an actual scheduled Rest day (which has

@@ -49,6 +49,11 @@ struct TrainingStats {
     var bankBalance: Double     // current rest-bank balance, >= 0, uncapped above
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
+    /// Same measure as `daysPerWeek`, over the same window and the same
+    /// `weeks` denominator, but counting only days that involved actual
+    /// LIFTING — a walk-only day doesn't count, while a day with both a
+    /// lift and a walk does. See WorkoutSession.hasLiftingLog.
+    var liftDaysPerWeek: Double
 
     // Year/month-to-date workout-day counts, vs. the same window last year.
     var ytdWorkoutDays: Int
@@ -362,6 +367,18 @@ enum StatsEngine {
         let pct = Double(daysLogged) / Double(daysSinceStart)
         let weeks = Double(daysSinceStart) / 7.0
         let perWeek = weeks > 0 ? Double(daysLogged) / weeks : 0
+
+        // Lift days: same window and denominator as perWeek above, so the
+        // two rows are directly comparable, but only days with real
+        // lifting on them. Needs `allSessions` rather than `sessionDates`
+        // because the lift-vs-activity distinction lives in the logs, and
+        // sessionDates is only dates by the time it reaches here.
+        // One extra O(sessions) pass — negligible beside the per-exercise
+        // per-phase work further down, and deliberately not folded into
+        // another loop, which would couple two unrelated things.
+        let liftDays = Set(allSessions.filter(\.hasLiftingLog).map { cal.startOfDay(for: $0.date) })
+            .filter { $0 >= start && $0 <= today }
+        let liftPerWeek = weeks > 0 ? Double(liftDays.count) / weeks : 0
 
         // Distinct calendar days with a qualifying session on them — the
         // shared basis for YTD/MTD counts, allTimeActiveDayCount, and
@@ -712,6 +729,7 @@ enum StatsEngine {
                              bankBalance: bank.bankBalance,
                              percentLogged: pct,
                              daysPerWeek: perWeek,
+                             liftDaysPerWeek: liftPerWeek,
                              ytdWorkoutDays: ytdWorkoutDays,
                              priorYearYtdWorkoutDays: priorYearYtdWorkoutDays,
                              mtdWorkoutDays: mtdWorkoutDays,
@@ -1209,9 +1227,7 @@ enum StatsEngine {
                                    cal: Calendar = .current) -> ConsistencyDayKind {
         let daySessions = sessions.filter { cal.isDate($0.date, inSameDayAs: date) }
         guard !daySessions.isEmpty else { return .empty }
-        let trainedSessions = daySessions.filter { session in
-            session.exerciseLogs.contains { $0.restDayActivity == nil }
-        }
+        let trainedSessions = daySessions.filter(\.hasLiftingLog)
         guard !trainedSessions.isEmpty else { return .rest }
         return trainedSessions.contains(where: \.isDeload) ? .deload : .trained
     }

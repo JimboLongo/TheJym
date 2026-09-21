@@ -249,6 +249,10 @@ struct StatsView: View {
                 // rather than being the same figure twice.
                 ("Miles walked", milesLabel(stats.milesSinceStart)),
                 ("Days per week", String(format: "%.2f", stats.daysPerWeek)),
+                // Same window and denominator as the row above — the two
+                // are meant to be read against each other, so the gap
+                // between them is the walk-only days.
+                ("Lift days per week", String(format: "%.2f", stats.liftDaysPerWeek)),
             ])
         }
     }
