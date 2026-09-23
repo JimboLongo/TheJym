@@ -415,6 +415,112 @@ final class LiftDaysPerWeekTests: XCTestCase {
                        1.0, accuracy: 1e-12)
     }
 
+    // MARK: - % of days, as RENDERED
+    //
+    // The tests above assert the identities on the underlying Doubles.
+    // These assert them on the formatted strings, because that's the layer
+    // that was actually breaking: rounding four independent cells to one
+    // decimal broke the visible sum ~23.5% of the time. See
+    // ConsistencyPercentCell.
+
+    /// The four cells as the table renders them, stripped of the "%".
+    private func renderedPercents(_ s: TrainingStats) -> (active: Double, lift: Double,
+                                                          walk: Double, rest: Double) {
+        func cell(_ header: String) -> Double {
+            let text = ConsistencyPercentCell.text(header: header,
+                                                   active: s.consistencyActive.percentOfDays,
+                                                   lift: s.consistencyLift.percentOfDays)
+            return Double(text.replacingOccurrences(of: "%", with: "")) ?? .nan
+        }
+        return (cell("Active"), cell("Lift"), cell("Walk"), cell("Rest"))
+    }
+
+    @MainActor
+    func testRenderedPercentsFootOnRealShapedData() {
+        let context = makeContext()
+        let a = lift(on: day(-6), context: context)
+        let b = lift(on: day(-4), context: context)
+        let (w, activity) = walk(on: day(-2), context: context)
+        let result = stats([a, b, w], activities: [activity], startOffset: -6)
+        let p = renderedPercents(result)
+
+        XCTAssertEqual(p.lift + p.walk, p.active, accuracy: 1e-9,
+                       "Lift% + Walk% must foot as DISPLAYED, not only underneath")
+        XCTAssertEqual(p.active + p.rest, 100, accuracy: 1e-9,
+                       "Active% + Rest% must foot as DISPLAYED")
+    }
+
+    /// The exact case that motivated the plug: 73/51/22/7 of 80 days.
+    /// Active's 91.25 is an exact tie that "%.1f" takes DOWN to 91.2,
+    /// while Lift's (51/80)*100 is 63.74999999999999 — just under its own
+    /// tie — and also rounds down. Rounding the cells independently only
+    /// happens to foot here because of that pairing; computing Lift as the
+    /// algebraically equal 100*51/80 gives exactly 63.75, which ties UP to
+    /// 63.8 and breaks the row. The plug removes that dependence.
+    func testTheEightyDayShapeRendersUnchangedAndFoots() {
+        let active = 73.0 / 80, lift = 51.0 / 80
+        func cell(_ h: String) -> String {
+            ConsistencyPercentCell.text(header: h, active: active, lift: lift)
+        }
+        XCTAssertEqual(cell("Active"), "91.2%")
+        XCTAssertEqual(cell("Lift"), "63.7%")
+        XCTAssertEqual(cell("Walk"), "27.5%")
+        XCTAssertEqual(cell("Rest"), "8.8%")
+
+        // The fragility being removed, shown directly: the same Lift share
+        // reached by the other order of operations is a tie that goes up.
+        XCTAssertEqual(String(format: "%.1f", (51.0 / 80) * 100), "63.7")
+        XCTAssertEqual(String(format: "%.1f", 100 * 51.0 / 80), "63.8")
+    }
+
+    /// Walks every column shape in a realistic window and checks both the
+    /// footing and the size of the plug's error, then asserts ONCE on what
+    /// it found. Deliberately not an XCTAssert per shape: at ~14k shapes
+    /// that's ~55k assertions, and XCTest's per-assertion bookkeeping took
+    /// the whole suite from 13s to nearly four minutes. Failures are
+    /// reported with the exact shape that broke, so collapsing them costs
+    /// no diagnostic value.
+    func testRenderedPercentsFootAndPlugErrorStaysBounded() {
+        var breaks: [String] = []
+        var worstWalk = 0.0, worstRest = 0.0
+        var worstShape = ""
+
+        for days in stride(from: 30, through: 120, by: 7) {
+            for activeDays in 0...days {
+                for liftDays in stride(from: 0, through: activeDays, by: max(1, activeDays / 12)) {
+                    let active = Double(activeDays) / Double(days)
+                    let lift = Double(liftDays) / Double(days)
+                    func value(_ h: String) -> Double {
+                        Double(ConsistencyPercentCell.text(header: h, active: active, lift: lift)
+                            .replacingOccurrences(of: "%", with: "")) ?? .nan
+                    }
+                    let a = value("Active"), l = value("Lift")
+                    let w = value("Walk"), r = value("Rest")
+                    let shape = "\(liftDays)L/\(activeDays)A of \(days)d"
+                    if abs(l + w - a) > 1e-9 { breaks.append("Lift+Walk at \(shape)") }
+                    if abs(a + r - 100) > 1e-9 { breaks.append("Active+Rest at \(shape)") }
+
+                    // How far each plugged cell sits from what it would
+                    // have rendered on its own.
+                    let walkErr = abs(w - Double(activeDays - liftDays) / Double(days) * 100)
+                    let restErr = abs(r - Double(days - activeDays) / Double(days) * 100)
+                    if max(walkErr, restErr) > max(worstWalk, worstRest) { worstShape = shape }
+                    worstWalk = max(worstWalk, walkErr)
+                    worstRest = max(worstRest, restErr)
+                }
+            }
+        }
+
+        XCTAssertEqual(breaks.count, 0,
+                       "the rendered row must always foot; first breaks: \(breaks.prefix(5))")
+        // The plug's price, and the bound being accepted. A derived cell
+        // is at most one rounding step (0.1pp) from its own true value —
+        // if this ever exceeds that, the plug is doing something other
+        // than absorbing rounding.
+        XCTAssertLessThanOrEqual(worstWalk, 0.1 + 1e-9, "worst Walk divergence at \(worstShape)")
+        XCTAssertLessThanOrEqual(worstRest, 0.1 + 1e-9, "worst Rest divergence at \(worstShape)")
+    }
+
     // MARK: - The streak halves
 
     @MainActor

@@ -235,6 +235,63 @@ enum ConsistencyStreakCell {
     }
 }
 
+/// The "% of days" row's four cells, plugged so the row always foots.
+///
+/// Active and Lift render their own rounded values — Lift because it's
+/// the figure actually being read, Active because every other row ties to
+/// it. Walk and Rest are then derived as the remainders:
+///
+///     Walk = Active - Lift
+///     Rest = 100 - Active
+///
+/// so `Lift + Walk == Active` and `Active + Rest == 100` hold on the
+/// RENDERED strings by construction, not by luck. The two derived cells
+/// absorb up to 0.1pp of rounding error each in exchange — the same
+/// plug-the-remainder convention a rounded financial schedule uses.
+///
+/// Display only. TrainingStats/ConsistencyColumn.percentOfDays keep their
+/// true unrounded values, and the identities are asserted on THOSE
+/// separately; this exists solely because rounding four independent cells
+/// breaks the visible sum about a quarter of the time.
+///
+/// And it isn't only a tie-breaking question. On 51 of 80 days,
+/// `percentOfDays * 100` is 63.74999999999999 (51/80 isn't representable,
+/// so the stored share sits just under 0.6375) and rounds DOWN to 63.7,
+/// while the algebraically equal `100 * 51 / 80` is exactly 63.75 and
+/// ties UP to 63.8 — at which point 63.8 + 27.5 = 91.3 against an Active
+/// of 91.2. Whether the row foots would otherwise depend on the order of
+/// operations inside the percentage, which is far too fragile to rest on.
+enum ConsistencyPercentCell {
+    static func text(header: String, active: Double, lift: Double) -> String {
+        let activeTenths = displayTenths(active)
+        let liftTenths = displayTenths(lift)
+        // Integer tenths of a percentage point, so the two subtractions
+        // are exact and can't reintroduce the very float error the plug
+        // exists to hide. Neither can go negative: lift is a subset of
+        // active, and active can't exceed the whole window.
+        let tenths: Int
+        switch header {
+        case "Lift": tenths = liftTenths
+        case "Walk": tenths = activeTenths - liftTenths
+        case "Rest": tenths = 1000 - activeTenths
+        default:     tenths = activeTenths
+        }
+        return String(format: "%.1f%%", Double(tenths) / 10)
+    }
+
+    /// A 0...1 share as tenths of a percentage point, rounded by going
+    /// through the very "%.1f" the cell renders with rather than by
+    /// `.rounded()`. Deliberate: `%.1f` rounds half-to-even while
+    /// `.rounded()` rounds half-away-from-zero, and an exact tie like
+    /// Active's 91.25 falls differently under the two (91.2 vs 91.3). The
+    /// round trip guarantees Active and Lift still render exactly what
+    /// they rendered before this plug existed.
+    static func displayTenths(_ share: Double) -> Int {
+        let rendered = String(format: "%.1f", share * 100)
+        return Int(((Double(rendered) ?? 0) * 10).rounded())
+    }
+}
+
 struct MaxStreakDateRange: Hashable {
     let start: Date
     let end: Date

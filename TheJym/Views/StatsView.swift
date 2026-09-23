@@ -427,7 +427,17 @@ struct StatsView: View {
         // Active cell is TrainingStats.percentLogged — the same value, not
         // a recomputation — which is why the standalone "% of days logged"
         // grid row above no longer exists.
-        return [("% of days", { _, col in String(format: "%.1f%%", col.percentOfDays * 100) }),
+        //
+        // Its cells are plugged rather than rounded independently, so the
+        // row foots as displayed and not just underneath — see
+        // ConsistencyPercentCell. Like the streak rows below it, the cell
+        // reads across columns rather than from its own, which is why it
+        // takes the header and ignores the column passed to it.
+        return [("% of days", { header, _ in
+                    ConsistencyPercentCell.text(header: header,
+                                                active: stats.consistencyActive.percentOfDays,
+                                                lift: stats.consistencyLift.percentOfDays)
+                }),
                 ("Days per week", { _, col in String(format: "%.2f", col.daysPerWeek) }),
                 ("Days logged", { _, col in "\(col.daysLogged)" }),
                 ("Current Active Streak", { header, _ in
