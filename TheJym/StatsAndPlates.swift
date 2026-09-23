@@ -1383,6 +1383,25 @@ enum StatsEngine {
         return DayDurationResult(shortestSeconds: shortest, averageSeconds: average, longestSeconds: longest)
     }
 
+    /// The duration spread the **Workout Timer page** shows for the day
+    /// being logged — see `WorkoutStopwatchPageView`.
+    ///
+    /// A thin wrapper over `dayDurationResult`, and deliberately so: what it
+    /// adds is the two *choices* the screen makes — which day template to
+    /// match, and which half of the deload split to compare against — and
+    /// those choices lived in the view, where sabotaging them broke nothing.
+    /// The spread rule itself is shared, so this page and the Stats screen
+    /// cannot disagree about which sessions qualify.
+    ///
+    /// **Scoped by `isDeloadCycle`.** Comparing a deload session against
+    /// normal history would flag every deload as unusually short, which is
+    /// the thing a deload is supposed to be.
+    static func workoutTimerDayHistory(dayName: String,
+                                       sessions: [WorkoutSession],
+                                       isDeloadCycle: Bool) -> DayDurationResult? {
+        dayDurationResult(named: dayName, in: sessions, deloadOnly: isDeloadCycle)
+    }
+
     /// Classifies a single calendar day for the Claude Stats consistency
     /// heatmap — reuses the same session shapes every other stat already
     /// reads (WorkoutSession.isDeload, ExerciseLog.restDayActivity) rather

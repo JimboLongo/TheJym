@@ -177,4 +177,60 @@ final class StatsEngineDurationTests: XCTestCase {
         let result = StatsEngine.dayDurationResult(named: "Push", in: [deload])
         XCTAssertNil(result)
     }
+
+    // MARK: - The Workout Timer page's history
+
+    /// **A deload session compares against deload history, not normal
+    /// history.** Otherwise every deload reads as unusually short, which is
+    /// what a deload is for.
+    ///
+    /// This is a call-site test, not a rule test: the spread itself is
+    /// covered above. Sabotaging the page's `deloadOnly:` argument while it
+    /// lived in the view produced **0 failures**, which is why the choice
+    /// was pulled out to `workoutTimerDayHistory`.
+    @MainActor
+    func testWorkoutTimerHistoryComparesLikeWithLike() throws {
+        let context = makeContext()
+        let normalA = session(dayLabel: "Push", daysAgo: 10, duration: 3600, isDeload: false, context: context)
+        let normalB = session(dayLabel: "Push", daysAgo: 5, duration: 4200, isDeload: false, context: context)
+        let deload = session(dayLabel: "Push", daysAgo: 2, duration: 1800, isDeload: true, context: context)
+        let all = [normalA, normalB, deload]
+
+        let onDeload = try XCTUnwrap(StatsEngine.workoutTimerDayHistory(
+            dayName: "Push", sessions: all, isDeloadCycle: true))
+        XCTAssertEqual(onDeload.shortestSeconds, 1800)
+        XCTAssertEqual(onDeload.longestSeconds, 1800, "only the deload session")
+
+        let onNormal = try XCTUnwrap(StatsEngine.workoutTimerDayHistory(
+            dayName: "Push", sessions: all, isDeloadCycle: false))
+        XCTAssertEqual(onNormal.shortestSeconds, 3600)
+        XCTAssertEqual(onNormal.longestSeconds, 4200, "the deload is excluded")
+    }
+
+    /// Matched by day template, so another day's sessions never leak in.
+    @MainActor
+    func testWorkoutTimerHistoryIsScopedToItsOwnDay() throws {
+        let context = makeContext()
+        let push = session(dayLabel: "Push", daysAgo: 5, duration: 3600, isDeload: false, context: context)
+        let pull = session(dayLabel: "Pull", daysAgo: 4, duration: 9000, isDeload: false, context: context)
+
+        let result = try XCTUnwrap(StatsEngine.workoutTimerDayHistory(
+            dayName: "Push", sessions: [push, pull], isDeloadCycle: false))
+
+        XCTAssertEqual(result.longestSeconds, 3600, "Pull's 2.5 hours must not raise Push's high")
+    }
+
+    /// Nil with no recorded history, so the page omits the row rather than
+    /// showing zeroes — the same "omit rather than show a false number"
+    /// rule the Stats screen uses.
+    @MainActor
+    func testWorkoutTimerHistoryIsNilWithNothingRecorded() {
+        let context = makeContext()
+        let untimed = session(dayLabel: "Push", daysAgo: 3, duration: nil, isDeload: false, context: context)
+
+        XCTAssertNil(StatsEngine.workoutTimerDayHistory(
+            dayName: "Push", sessions: [untimed], isDeloadCycle: false))
+        XCTAssertNil(StatsEngine.workoutTimerDayHistory(
+            dayName: "Push", sessions: [], isDeloadCycle: false))
+    }
 }

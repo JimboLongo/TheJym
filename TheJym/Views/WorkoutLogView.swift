@@ -60,6 +60,11 @@ struct WorkoutLogView: View {
     @Environment(\.dismiss) private var dismiss
     @Query private var settingsList: [AppSettings]
     @Query private var allExerciseLogs: [ExerciseLog]
+    /// For the Workout Timer page's Low/Avg/High — see
+    /// `dayDurationHistory`. A whole-table query rather than reaching
+    /// through `allExerciseLogs`, because a session's duration is recorded
+    /// on the session and a qualifying one need not have logs attached.
+    @Query private var allWorkoutSessions: [WorkoutSession]
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \BodyWeightEntry.date) private var allBodyWeights: [BodyWeightEntry]
 
@@ -364,8 +369,31 @@ struct WorkoutLogView: View {
                                  })
     }
 
+    /// This day template's recorded duration spread, for the Workout Timer
+    /// page — `nil` until at least one past session of this day has a
+    /// duration on it.
+    ///
+    /// `StatsEngine.dayDurationResult` rather than a second spread computed
+    /// here, so this and the Stats screen's Workout Duration rows can never
+    /// disagree about which sessions qualify: same dayLabel match, same
+    /// "skip a session with no recorded duration rather than counting it as
+    /// zero" rule.
+    ///
+    /// **Scoped by `isDeloadCycle`**, matching the split Stats already
+    /// makes. Comparing a deload session against normal history would flag
+    /// every deload as unusually short, which is the thing a deload is
+    /// supposed to be.
+    private var dayDurationHistory: DayDurationResult? {
+        StatsEngine.workoutTimerDayHistory(dayName: day.name,
+                                           sessions: allWorkoutSessions,
+                                           isDeloadCycle: isDeloadCycle)
+    }
+
     private func workoutStopwatchPage(pageHeight: CGFloat) -> some View {
         WorkoutStopwatchPageView(stopwatch: workoutStopwatch, pageHeight: pageHeight,
+                                 history: dayDurationHistory,
+                                 dayName: day.name,
+                                 isDeloadCycle: isDeloadCycle,
                                  onChange: saveWorkoutStopwatchToDisk)
     }
 
@@ -1317,6 +1345,13 @@ struct RestStopwatchBar: View {
 struct WorkoutStopwatchPageView: View {
     @ObservedObject var stopwatch: WorkoutStopwatch
     let pageHeight: CGFloat
+    /// This day's recorded spread — `nil` when no past session of this day
+    /// has a duration, in which case the row is omitted entirely rather
+    /// than shown as zeroes. Same "omit rather than show a false number"
+    /// rule the Stats screen uses.
+    let history: DayDurationResult?
+    let dayName: String
+    let isDeloadCycle: Bool
     /// Called after every Start/Pause/Resume/Reset so WorkoutLogView can
     /// persist the new state — see WorkoutStopwatch's own doc on why this
     /// one (unlike RestStopwatch) survives a backgrounded-and-killed app.
@@ -1324,6 +1359,17 @@ struct WorkoutStopwatchPageView: View {
 
     private var displayLabel: String {
         Formatters.duration(stopwatch.elapsed)
+    }
+
+    private func durationStat(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.subheadline, design: .monospaced))
+                .bold()
+        }
     }
 
     var body: some View {
@@ -1352,6 +1398,19 @@ struct WorkoutStopwatchPageView: View {
                 Button("Start") { stopwatch.start(); onChange() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+            }
+            if let history {
+                VStack(spacing: 6) {
+                    Text(isDeloadCycle ? "\(dayName) — deload history" : "\(dayName) history")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 20) {
+                        durationStat("Low", Formatters.duration(TimeInterval(history.shortestSeconds)))
+                        durationStat("Avg", Formatters.duration(history.averageSeconds))
+                        durationStat("High", Formatters.duration(TimeInterval(history.longestSeconds)))
+                    }
+                }
+                .padding(.top, 4)
             }
             Spacer()
         }
