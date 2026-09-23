@@ -203,38 +203,30 @@ struct StatsView: View {
                 // row in the whole page, so it keeps a real touch target.
                 .frame(minHeight: 44)
             }
+            // Kept out of the table below on purpose: it's the same number
+            // in every column, and it's the figure the Rest column is
+            // derived against (Rest = Days since start - Active).
             statRow("Days since start", "\(stats.daysSinceStart)")
-            statRow("Days logged", "\(stats.daysLogged)")
+            // The rest-BANK streak, which spends banked rest days to carry
+            // a streak through a day off — a different measure from the
+            // table's plain consecutive-days streak, not the same number
+            // shown twice. Labelled "(banked)" so the two can't be read as
+            // contradicting each other, since the table below has rows
+            // called Current streak and Max streak as well.
+            //
+            // Days logged and the plain active streaks used to sit here as
+            // standalone rows; the table's Active column is now exactly
+            // those, so they'd have been the same figures twice.
             VStack(alignment: .leading, spacing: 2) {
-                statRow("Current streak", "\(stats.currentStreak) 🔥")
+                statRow("Current streak (banked)", "\(stats.currentStreak) 🔥")
                 if let start = stats.currentStreakStartDate {
                     Text(streakSinceLabel(start))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
             VStack(alignment: .leading, spacing: 2) {
-                statRow("Max streak", "\(stats.maxStreak)")
+                statRow("Max streak (banked)", "\(stats.maxStreak)")
                 if let range = stats.maxStreakRange {
-                    Text(streakRangeLabel(range))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            // Plain consecutive-days-with-activity, with none of the rest
-            // bank the two rows above run on — see
-            // StatsEngine.activeDayStreaks. Both carry the same caption
-            // subtitles as their rest-bank counterparts above, through the
-            // same two helpers, so the four rows can't drift apart in
-            // format.
-            VStack(alignment: .leading, spacing: 2) {
-                statRow("Current active streak", "\(stats.currentActiveStreak)")
-                if let start = stats.currentActiveStreakStartDate {
-                    Text(streakSinceLabel(start))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                statRow("Max active streak", "\(stats.maxActiveStreak)")
-                if let range = stats.maxActiveStreakRange {
                     Text(streakRangeLabel(range))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
@@ -249,7 +241,7 @@ struct StatsView: View {
                 // rather than being the same figure twice.
                 ("Miles walked", milesLabel(stats.milesSinceStart)),
             ])
-            daysPerWeekRow
+            consistencyTable
         }
     }
 
@@ -341,51 +333,75 @@ struct StatsView: View {
         }
     }
 
-    /// Days per week split three ways: Total, Lift, Walk. Same
-    /// Grid/GridRow structure and accessibility fallback as
-    /// yearMonthSection above (and the Big Lifts / Workout Duration / By
-    /// Year tables) — a label column plus value columns at standard sizes,
-    /// falling back to one labelled row per value where a 4-column grid
-    /// has no room to stay readable.
+    /// The Consistency table: four statistics × four kinds of day —
+    /// Active, Lift, Walk, Rest. Same Grid/GridRow structure and
+    /// accessibility fallback as yearMonthSection above (and the Big Lifts
+    /// / Workout Duration / By Year tables) — a label column plus value
+    /// columns at standard sizes, falling back to one labelled row per
+    /// value where a 5-column grid has no room to stay readable.
     ///
-    /// Lift + Walk == Total exactly: a day with both a lift and a walk
-    /// counts in Lift only, and Walk is the remainder rather than an
-    /// independent count. See TrainingStats.walkDaysPerWeek.
+    /// Two identities run across the columns, and they're why the table
+    /// exists at all: Lift + Walk == Active, and Active + Rest == Days
+    /// since start. So Walk is strictly walk-ONLY days (a day with both a
+    /// lift and a walk counts in Lift), and Rest is every day with nothing
+    /// logged. See ConsistencyColumn.
+    ///
+    /// Days since start is deliberately NOT a row here — it's the same
+    /// number in all four columns, and it stays the standalone row above
+    /// that the Rest column is derived against.
     @ViewBuilder
-    private var daysPerWeekRow: some View {
+    private var consistencyTable: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            statRow("Days per week — Total", daysPerWeekValue(stats.daysPerWeek))
-            statRow("Days per week — Lift", daysPerWeekValue(stats.liftDaysPerWeek))
-            statRow("Days per week — Walk", daysPerWeekValue(stats.walkDaysPerWeek))
+            // A 5-column grid has nowhere near the room at AX sizes, so it
+            // unrolls into one labelled row per cell — 16 of them, grouped
+            // by row rather than by column so each statistic's four
+            // columns stay adjacent and comparable while scrolling.
+            ForEach(consistencyRows, id: \.label) { row in
+                ForEach(consistencyColumns, id: \.header) { col in
+                    statRow("\(row.label) — \(col.header)", row.value(col.column))
+                }
+            }
         } else {
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
                 GridRow {
                     Text("")
-                    Text("Total").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.center)
-                    Text("Lift").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.center)
-                    Text("Walk").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.center)
+                    ForEach(consistencyColumns, id: \.header) { col in
+                        Text(col.header).font(.caption2.bold()).foregroundStyle(.secondary)
+                            .gridColumnAlignment(.center)
+                    }
                 }
-                GridRow {
-                    Text("Days per week").font(.caption).foregroundStyle(.secondary)
-                    daysPerWeekCell(stats.daysPerWeek)
-                    daysPerWeekCell(stats.liftDaysPerWeek)
-                    daysPerWeekCell(stats.walkDaysPerWeek)
+                ForEach(consistencyRows, id: \.label) { row in
+                    GridRow {
+                        Text(row.label).font(.caption).foregroundStyle(.secondary)
+                            .gridColumnAlignment(.leading)
+                        ForEach(consistencyColumns, id: \.header) { col in
+                            Text(row.value(col.column))
+                                .font(.system(.subheadline, design: .monospaced)).bold()
+                                .fixedSize()
+                                .gridColumnAlignment(.center)
+                        }
+                    }
                 }
             }
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
         }
     }
 
-    private func daysPerWeekValue(_ v: Double) -> String { String(format: "%.2f", v) }
+    /// Column order is the partition's order: the whole, then its parts.
+    private var consistencyColumns: [(header: String, column: ConsistencyColumn)] {
+        [("Active", stats.consistencyActive),
+         ("Lift", stats.consistencyLift),
+         ("Walk", stats.consistencyWalk),
+         ("Rest", stats.consistencyRest)]
+    }
 
-    private func daysPerWeekCell(_ v: Double) -> some View {
-        Text(daysPerWeekValue(v))
-            .font(.system(.subheadline, design: .monospaced)).bold()
-            .fixedSize()
-            .gridColumnAlignment(.center)
+    /// Rows are (label, how to read one column) so the grid and the
+    /// accessibility unroll render from one list and can't drift.
+    private var consistencyRows: [(label: String, value: (ConsistencyColumn) -> String)] {
+        [("Days per week", { String(format: "%.2f", $0.daysPerWeek) }),
+         ("Days logged", { "\($0.daysLogged)" }),
+         ("Current streak", { "\($0.currentStreak)" }),
+         ("Max streak", { "\($0.maxStreak)" })]
     }
 
     private func yearMonthCell(_ value: String, py: String) -> some View {

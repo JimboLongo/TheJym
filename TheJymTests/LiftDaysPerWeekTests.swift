@@ -23,7 +23,7 @@ import SwiftData
 
 private extension TrainingStats {
     /// Just for readability in the identity assertions below.
-    var liftPlusWalk: Double { liftDaysPerWeek + walkDaysPerWeek }
+    var liftPlusWalk: Double { consistencyLift.daysPerWeek + consistencyWalk.daysPerWeek }
 }
 
 final class LiftDaysPerWeekTests: XCTestCase {
@@ -98,7 +98,7 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let context = makeContext()
         let s = lift(on: day(-3), context: context)
         let result = stats([s], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(1, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(1, result), accuracy: 0.001)
     }
 
     @MainActor
@@ -106,7 +106,7 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let context = makeContext()
         let (session, activity) = walk(on: day(-3), context: context)
         let result = stats([session], activities: [activity], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, 0, accuracy: 0.001)
         XCTAssertEqual(result.daysPerWeek, perWeek(1, result), accuracy: 0.001,
                        "but it does count toward the existing Days per week")
     }
@@ -119,7 +119,7 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let lifted = lift(on: day(-3), context: context)
         let (walked, activity) = walk(on: day(-3), context: context)
         let result = stats([lifted, walked], activities: [activity], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(1, result), accuracy: 0.001,
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(1, result), accuracy: 0.001,
                        "the walk must not cancel out the lift on the same date")
     }
 
@@ -130,7 +130,7 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let a = lift(on: day(-3), context: context)
         let b = lift(on: day(-3), context: context)
         let result = stats([a, b], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(1, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(1, result), accuracy: 0.001)
     }
 
     // MARK: - Relationship to the existing stat
@@ -147,9 +147,9 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let (w2, a2) = walk(on: day(-2), context: context)
 
         let result = stats([l1, l2, l3, w1, w2], activities: [a1, a2], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(3, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(3, result), accuracy: 0.001)
         XCTAssertEqual(result.daysPerWeek, perWeek(5, result), accuracy: 0.001)
-        XCTAssertEqual(result.daysPerWeek - result.liftDaysPerWeek, perWeek(2, result), accuracy: 0.001,
+        XCTAssertEqual(result.daysPerWeek - result.consistencyLift.daysPerWeek, perWeek(2, result), accuracy: 0.001,
                        "two walk-only days")
     }
 
@@ -165,14 +165,14 @@ final class LiftDaysPerWeekTests: XCTestCase {
         context.insert(plainRest)
 
         let result = stats([lifted, placeholder, plainRest], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(1, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(1, result), accuracy: 0.001)
     }
 
     @MainActor
     func testNoDataGivesZero() {
         let result = stats([], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, 0, accuracy: 0.001)
-        XCTAssertEqual(result.walkDaysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.consistencyWalk.daysPerWeek, 0, accuracy: 0.001)
         XCTAssertEqual(result.daysPerWeek, 0, accuracy: 0.001)
     }
 
@@ -204,13 +204,13 @@ final class LiftDaysPerWeekTests: XCTestCase {
 
         let result = stats(sessions, activities: activities, startOffset: -14)
 
-        XCTAssertEqual(result.liftDaysPerWeek + result.walkDaysPerWeek,
+        XCTAssertEqual(result.consistencyLift.daysPerWeek + result.consistencyWalk.daysPerWeek,
                        result.daysPerWeek, accuracy: 0.0001,
                        "Lift + Walk must equal Total exactly")
         // Lift days: -12, -10, -9  (the BOTH day counts as a lift day).
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(3, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(3, result), accuracy: 0.001)
         // Walk-only days: -11, -6. The -10 walk is absorbed by its lift.
-        XCTAssertEqual(result.walkDaysPerWeek, perWeek(2, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyWalk.daysPerWeek, perWeek(2, result), accuracy: 0.001)
         XCTAssertEqual(result.daysPerWeek, perWeek(5, result), accuracy: 0.001)
     }
 
@@ -223,8 +223,8 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let (walked, activity) = walk(on: day(-3), context: context)
 
         let result = stats([lifted, walked], activities: [activity], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(1, result), accuracy: 0.001)
-        XCTAssertEqual(result.walkDaysPerWeek, 0, accuracy: 0.001,
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(1, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyWalk.daysPerWeek, 0, accuracy: 0.001,
                        "the walk is absorbed by the lift on that date")
         XCTAssertEqual(result.liftPlusWalk, result.daysPerWeek, accuracy: 0.0001)
     }
@@ -236,8 +236,8 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let (w1, a1) = walk(on: day(-4), context: context)
         let (w2, a2) = walk(on: day(-3), context: context)
         let result = stats([w1, w2], activities: [a1, a2], startOffset: -6)
-        XCTAssertEqual(result.liftDaysPerWeek, 0, accuracy: 0.001)
-        XCTAssertEqual(result.walkDaysPerWeek, perWeek(2, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.consistencyWalk.daysPerWeek, perWeek(2, result), accuracy: 0.001)
         XCTAssertEqual(result.liftPlusWalk, result.daysPerWeek, accuracy: 0.0001)
     }
 
@@ -248,8 +248,8 @@ final class LiftDaysPerWeekTests: XCTestCase {
         let a = lift(on: day(-4), context: context)
         let b = lift(on: day(-3), context: context)
         let result = stats([a, b], startOffset: -6)
-        XCTAssertEqual(result.walkDaysPerWeek, 0, accuracy: 0.001)
-        XCTAssertEqual(result.liftDaysPerWeek, perWeek(2, result), accuracy: 0.001)
+        XCTAssertEqual(result.consistencyWalk.daysPerWeek, 0, accuracy: 0.001)
+        XCTAssertEqual(result.consistencyLift.daysPerWeek, perWeek(2, result), accuracy: 0.001)
         XCTAssertEqual(result.liftPlusWalk, result.daysPerWeek, accuracy: 0.0001)
     }
 
@@ -287,5 +287,111 @@ final class LiftDaysPerWeekTests: XCTestCase {
         XCTAssertEqual(StatsEngine.consistencyDayKind(on: day(-1), sessions: [lifted]), .trained)
         XCTAssertEqual(StatsEngine.consistencyDayKind(on: day(-2), sessions: [walked]), .rest)
         XCTAssertEqual(StatsEngine.consistencyDayKind(on: day(-3), sessions: [placeholder]), .rest)
+    }
+
+    // MARK: - The second identity: Active + Rest == Days since start
+    //
+    // Rest is the arithmetic complement of Active, so this is the other
+    // half of what makes the table a partition: together with
+    // Lift + Walk == Active, every day since the start date lands in
+    // exactly one of Lift, Walk, Rest.
+
+    @MainActor
+    func testActivePlusRestEqualsDaysSinceStart() {
+        let context = makeContext()
+        let a = lift(on: day(-6), context: context)
+        let b = lift(on: day(-4), context: context)
+        let (w, activity) = walk(on: day(-2), context: context)
+        let result = stats([a, b, w], activities: [activity], startOffset: -6)
+
+        XCTAssertEqual(result.consistencyActive.daysLogged + result.consistencyRest.daysLogged,
+                       result.daysSinceStart,
+                       "Active + Rest must account for every day since the start date")
+        XCTAssertEqual(result.consistencyLift.daysLogged + result.consistencyWalk.daysLogged,
+                       result.consistencyActive.daysLogged,
+                       "Lift + Walk must still partition Active")
+        XCTAssertEqual(result.consistencyLift.daysLogged, 2)
+        XCTAssertEqual(result.consistencyWalk.daysLogged, 1)
+        XCTAssertEqual(result.consistencyActive.daysLogged, 3)
+        XCTAssertEqual(result.consistencyRest.daysLogged, result.daysSinceStart - 3)
+    }
+
+    @MainActor
+    func testRestIsZeroWhenEveryDayIsLogged() {
+        let context = makeContext()
+        // Every day of a 4-day window logged. The window ends yesterday,
+        // not today, while today is still unlogged — so seeding -3...-1
+        // fills it exactly.
+        let sessions = (-3...(-1)).map { lift(on: day($0), context: context) }
+        let result = stats(sessions, startOffset: -3)
+
+        XCTAssertEqual(result.consistencyActive.daysLogged, result.daysSinceStart)
+        XCTAssertEqual(result.consistencyRest.daysLogged, 0,
+                       "no gaps means no rest days")
+        XCTAssertEqual(result.consistencyRest.daysPerWeek, 0, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testEveryColumnsDaysPerWeekMatchesItsDayCount() {
+        let context = makeContext()
+        let a = lift(on: day(-8), context: context)
+        let (w, activity) = walk(on: day(-5), context: context)
+        let result = stats([a, w], activities: [activity], startOffset: -9)
+
+        // The four columns must share one denominator, or the rows can't
+        // be read across.
+        for col in [result.consistencyActive, result.consistencyLift,
+                    result.consistencyWalk, result.consistencyRest] {
+            XCTAssertEqual(col.daysPerWeek, perWeek(Double(col.daysLogged), result), accuracy: 0.0001)
+        }
+    }
+
+    // MARK: - The streak halves
+
+    @MainActor
+    func testStreakColumnsPartitionTheSameWayTheCountsDo() {
+        let context = makeContext()
+        // Three consecutive days: lift, lift+walk, walk. The middle day
+        // belongs to Lift, so Lift runs 2 and Walk runs 1.
+        let a = lift(on: day(-4), context: context)
+        let b = lift(on: day(-3), context: context)
+        let (bothWalk, bothActivity) = walk(on: day(-3), context: context)
+        let (w, activity) = walk(on: day(-2), context: context)
+        let result = stats([a, b, bothWalk, w],
+                           activities: [bothActivity, activity], startOffset: -6)
+
+        XCTAssertEqual(result.consistencyActive.maxStreak, 3,
+                       "all three days are active days in a row")
+        XCTAssertEqual(result.consistencyLift.maxStreak, 2,
+                       "the both-day extends the lift streak, not the walk one")
+        XCTAssertEqual(result.consistencyWalk.maxStreak, 1)
+    }
+
+    @MainActor
+    func testRestStreakCountsTheGapAndLeavesTodayPending() {
+        let context = makeContext()
+        // Active on -7 and -2, so the gap is -6...-3 — four rest days —
+        // and the open run since -2 is just yesterday, since today isn't a
+        // rest day until it ends unlogged.
+        let a = lift(on: day(-7), context: context)
+        let b = lift(on: day(-2), context: context)
+        let result = stats([a, b], startOffset: -7)
+
+        XCTAssertEqual(result.consistencyRest.maxStreak, 4,
+                       "the -6...-3 gap is four rest days")
+        XCTAssertEqual(result.consistencyRest.currentStreak, 1,
+                       "yesterday only — today stays pending until it ends unlogged")
+    }
+
+    @MainActor
+    func testRestStreakIsZeroOnADayYouTrained() {
+        let context = makeContext()
+        let a = lift(on: day(-4), context: context)
+        let b = lift(on: today, context: context)
+        let result = stats([a, b], startOffset: -6)
+
+        XCTAssertEqual(result.consistencyRest.currentStreak, 0,
+                       "training today ends the rest run outright")
+        XCTAssertEqual(result.consistencyRest.maxStreak, 3, "the -3...-1 gap")
     }
 }

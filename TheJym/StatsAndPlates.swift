@@ -9,6 +9,39 @@ import Foundation
 
 // MARK: - Stats
 
+/// One column of the Stats page's Consistency table — a single set of
+/// calendar days, summarized the same four ways as every other column so
+/// the rows line up and can be compared straight across.
+///
+/// Two identities hold across the four columns the engine produces, and
+/// they're the point of the table rather than a nice-to-have:
+///
+///     lift.daysLogged + walk.daysLogged == active.daysLogged
+///     active.daysLogged + rest.daysLogged == daysSinceStart
+///
+/// so every day since the training start date lands in exactly one of
+/// Lift, Walk, or Rest. Walk is therefore strictly walk-ONLY days: a day
+/// with both a lift and a walk on it belongs to Lift, and Rest is every
+/// day with nothing logged at all.
+///
+/// The two kinds of figure deliberately run on different windows, because
+/// they answer different questions:
+///
+/// - `daysLogged` / `daysPerWeek` are windowed to the training start
+///   date, matching `daysLogged` and `percentLogged`. Rest is what forces
+///   that: defined as `daysSinceStart - daysLogged`, it's meaningless
+///   without a bounded period to be absent from.
+/// - `currentStreak` / `maxStreak` are all-history, so the Active column
+///   reads the same numbers the rest of the app calls the active streak
+///   instead of a second, window-clipped pair that would look broken
+///   sitting next to them.
+struct ConsistencyColumn {
+    var daysLogged: Int
+    var daysPerWeek: Double
+    var currentStreak: Int
+    var maxStreak: Int
+}
+
 struct TrainingStats {
     var daysSinceStart: Int
     var daysLogged: Int
@@ -49,18 +82,15 @@ struct TrainingStats {
     var bankBalance: Double     // current rest-bank balance, >= 0, uncapped above
     var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
-    /// Same measure as `daysPerWeek`, over the same window and the same
-    /// `weeks` denominator, but counting only days that involved actual
-    /// LIFTING — a walk-only day doesn't count, while a day with both a
-    /// lift and a walk does. See WorkoutSession.hasLiftingLog.
-    var liftDaysPerWeek: Double
-    /// The remainder of `daysPerWeek` after `liftDaysPerWeek` — days with
-    /// a rest activity and NO lift on them. Defined as the set difference
-    /// rather than counted independently, so
-    /// `liftDaysPerWeek + walkDaysPerWeek == daysPerWeek` holds exactly:
-    /// a day with both a lift and a walk belongs to the lift column only,
-    /// and can't be double-counted into this one.
-    var walkDaysPerWeek: Double
+
+    /// The Consistency table's four columns. `active` restates
+    /// `daysLogged`/`daysPerWeek` so the table reads from one place; the
+    /// other three partition it. See ConsistencyColumn for the two
+    /// identities these satisfy.
+    var consistencyActive: ConsistencyColumn
+    var consistencyLift: ConsistencyColumn
+    var consistencyWalk: ConsistencyColumn
+    var consistencyRest: ConsistencyColumn
 
     // Year/month-to-date workout-day counts, vs. the same window last year.
     var ytdWorkoutDays: Int
@@ -375,9 +405,9 @@ enum StatsEngine {
         let weeks = Double(daysSinceStart) / 7.0
         let perWeek = weeks > 0 ? Double(daysLogged) / weeks : 0
 
-        // The Total / Lift / Walk partition of `loggedDays`, all three
-        // sharing that same window and `weeks` denominator so the row's
-        // columns are directly comparable and Lift + Walk == Total.
+        // The Active / Lift / Walk partition of `loggedDays`, all three
+        // sharing that same window and `weeks` denominator so the table's
+        // columns are directly comparable and Lift + Walk == Active.
         //
         // ONE pass over sessions: lift days are collected in that pass,
         // and walk-only days fall out as a set difference rather than a
@@ -393,11 +423,20 @@ enum StatsEngine {
         // Deliberately NOT built from `trainingDates`, which drops a whole
         // date that has any RestDayActivity on it: that would lose a day
         // you both lifted and walked, and break the identity outright.
-        let liftDays = Set(allSessions.filter(\.hasLiftingLog).map { cal.startOfDay(for: $0.date) })
-            .intersection(loggedDays)
+        // `allLiftDays` is kept un-intersected as well, for the
+        // all-history streak columns further down.
+        let allLiftDays = Set(allSessions.filter(\.hasLiftingLog).map { cal.startOfDay(for: $0.date) })
+        let liftDays = allLiftDays.intersection(loggedDays)
         let walkOnlyDays = loggedDays.subtracting(liftDays)
-        let liftPerWeek = weeks > 0 ? Double(liftDays.count) / weeks : 0
-        let walkPerWeek = weeks > 0 ? Double(walkOnlyDays.count) / weeks : 0
+
+        // The Rest column, and the second identity: every day since the
+        // start date that isn't an Active day. Taken as the arithmetic
+        // complement rather than by building the set, so
+        // Active + Rest == daysSinceStart can't drift — and because the
+        // set itself would be up to ~1000 dates with nothing to say.
+        // max(0,) only guards the degenerate case where the caller's
+        // sessions predate its own start date.
+        let restDayCount = max(0, daysSinceStart - daysLogged)
 
         // Distinct calendar days with a qualifying session on them — the
         // shared basis for YTD/MTD counts, allTimeActiveDayCount, and
@@ -407,6 +446,53 @@ enum StatsEngine {
         let activeDays = Set(sessionDates.map { cal.startOfDay(for: $0) })
         let allTimeActiveDayCount = activeDays.count
         let activeStreaks = activeDayStreaks(activeDays: activeDays, today: today, cal: cal)
+
+        // ── Streak halves of the Consistency columns ──────────────────
+        //
+        // All-history, unlike the count halves above — see
+        // ConsistencyColumn for why the two windows differ. Lift and Walk
+        // reuse the same verified walk the Active column runs on rather
+        // than open-coding two more, and partition `activeDays` the same
+        // way liftDays/walkOnlyDays partition `loggedDays`, so a day with
+        // both a lift and a walk extends the Lift streak only.
+        let streakLiftDays = allLiftDays.intersection(activeDays)
+        let liftStreaks = activeDayStreaks(activeDays: streakLiftDays, today: today, cal: cal)
+        let walkStreaks = activeDayStreaks(activeDays: activeDays.subtracting(streakLiftDays),
+                                           today: today, cal: cal)
+
+        // Rest runs come out of the GAPS between active days instead of a
+        // fourth day-by-day walk: the rest set spans every untrained day
+        // in the history (~1000 of them), and compute() runs ~215 times
+        // per render, so enumerating it would cost far more than the
+        // three walks above combined. A gap of N days between consecutive
+        // active days is N-1 rest days.
+        //
+        // The open run is measured to today but stops short of it — today
+        // isn't a rest day until it ends with nothing logged, the same
+        // "pending until logged" rule effectiveToday applies everywhere
+        // else. So a workout today gives 0, and a workout yesterday also
+        // gives 0 rather than counting today early. Gaps miss the trailing
+        // run by construction, hence the max() against it.
+        let sortedActive = activeDays.sorted()
+        var maxRestRun = 0
+        for (prev, next) in zip(sortedActive, sortedActive.dropFirst()) {
+            maxRestRun = max(maxRestRun, (cal.dateComponents([.day], from: prev, to: next).day ?? 0) - 1)
+        }
+        let currentRestRun = sortedActive.last.map {
+            max(0, (cal.dateComponents([.day], from: $0, to: today).day ?? 0) - 1)
+        } ?? 0
+
+        func consistencyColumn(_ days: Int, _ current: Int, _ maxRun: Int) -> ConsistencyColumn {
+            ConsistencyColumn(daysLogged: days,
+                              daysPerWeek: weeks > 0 ? Double(days) / weeks : 0,
+                              currentStreak: current,
+                              maxStreak: maxRun)
+        }
+        let consistencyActive = consistencyColumn(daysLogged, activeStreaks.current, activeStreaks.max)
+        let consistencyLift = consistencyColumn(liftDays.count, liftStreaks.current, liftStreaks.max)
+        let consistencyWalk = consistencyColumn(walkOnlyDays.count, walkStreaks.current, walkStreaks.max)
+        let consistencyRest = consistencyColumn(restDayCount, currentRestRun,
+                                                max(maxRestRun, currentRestRun))
 
         // Perfect-cycle progress needs an active phase to judge cycles
         // against its split pattern — with none, fall back to a simpler,
@@ -748,8 +834,10 @@ enum StatsEngine {
                              bankBalance: bank.bankBalance,
                              percentLogged: pct,
                              daysPerWeek: perWeek,
-                             liftDaysPerWeek: liftPerWeek,
-                             walkDaysPerWeek: walkPerWeek,
+                             consistencyActive: consistencyActive,
+                             consistencyLift: consistencyLift,
+                             consistencyWalk: consistencyWalk,
+                             consistencyRest: consistencyRest,
                              ytdWorkoutDays: ytdWorkoutDays,
                              priorYearYtdWorkoutDays: priorYearYtdWorkoutDays,
                              mtdWorkoutDays: mtdWorkoutDays,
