@@ -203,10 +203,11 @@ struct StatsView: View {
                 // row in the whole page, so it keeps a real touch target.
                 .frame(minHeight: 44)
             }
-            // Kept out of the table below on purpose: it's the same number
-            // in every column, and it's the figure the Rest column is
-            // derived against (Rest = Days since start - Active).
-            statRow("Days since start", "\(stats.daysSinceStart)")
+            // "Days since start" used to be displayed here. It's still the
+            // window every count row is measured over — the denominator
+            // under "% of days", and what the Rest column is derived
+            // against (Rest = daysSinceStart - Active) — it just isn't
+            // shown any more. TrainingStats.daysSinceStart stays.
             // The rest-BANK streak, which spends banked rest days to carry
             // a streak through a day off — a different measure from the
             // table's plain consecutive-days streak, not the same number
