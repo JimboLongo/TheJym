@@ -127,6 +127,18 @@ struct TrainingStats {
     var maxActiveStreakLiftDays: Int
     var maxActiveStreakWalkDays: Int
 
+    // The same four figures for the two BANKED streaks, from the same
+    // `composition(of:)` helper over the same `activeDays` — so
+    // Lift + Walk = Active holds on those rows identically, and their Rest
+    // cells are blank for the same reason. The two streak kinds count the
+    // same days and differ only in what breaks them; see
+    // ConsistencyStreakCell for why that isn't the duplication it looks
+    // like.
+    var currentBankedStreakLiftDays: Int
+    var currentBankedStreakWalkDays: Int
+    var maxBankedStreakLiftDays: Int
+    var maxBankedStreakWalkDays: Int
+
     // Year/month-to-date workout-day counts, vs. the same window last year.
     var ytdWorkoutDays: Int
     var priorYearYtdWorkoutDays: Int
@@ -221,10 +233,30 @@ struct TrainingStats {
 /// was uncovered: sabotaging the Rest cell to print `0` instead of no value
 /// broke nothing, because nothing outside the view could ask it.
 enum ConsistencyStreakCell {
-    /// Lift and Walk are the **composition** of the Active streak, so they
-    /// sum to it. Rest has no composition in an active streak — a rest day
-    /// is by definition not inside one — so it shows no value rather than a
-    /// misleading `0`. "—" is this codebase's existing way of saying that.
+    /// Lift and Walk are the **composition** of the streak, so they sum to
+    /// it. Rest has no composition in a streak of active days — so it
+    /// shows no value rather than a misleading `0`. "—" is this
+    /// codebase's existing way of saying that.
+    ///
+    /// Shared verbatim by all FOUR streak rows, the two active and the two
+    /// banked, with no per-kind branch — worth being explicit about,
+    /// because the two pairs look like duplication and aren't:
+    ///
+    /// Both kinds count the same thing: days you were active. They differ
+    /// only in what ENDS them. An active streak ends at the first rest
+    /// day. A banked streak survives rest days for as long as the bank
+    /// holds — it runs THROUGH them, spending balance, while counting
+    /// none of them (computeRestBank calls recordCredit only for a
+    /// training or activity-rest day; a plain rest day "spends, but does
+    /// nothing for the count", and an unlogged day is absorbed without
+    /// being counted either).
+    ///
+    /// So a banked streak covers a longer calendar span than an active
+    /// one, but both are still a count of active days, and Lift + Walk ==
+    /// Active holds identically for both. Rest is blank on all four for
+    /// the same reason: no streak of either kind has rest days inside its
+    /// COUNT. Showing the banked span's absorbed rest days here would
+    /// redefine a number that has always meant the count.
     static func text(header: String, active: Int, lift: Int, walk: Int) -> String {
         switch header {
         case "Lift": return "\(lift)"
@@ -625,6 +657,24 @@ enum StatsEngine {
         let currentComposition = composition(of: currentStreakDays)
         let maxComposition = composition(of: maxStreakDays)
 
+        // The banked streaks' composition, through the very same helper
+        // and the very same `activeDays` set — no banked-specific rule.
+        // A banked streak counts exactly the days an active streak would
+        // (computeRestBank's recordCredit fires only on a training or
+        // activity-rest day, which together are precisely `activeDays`);
+        // it just spans further, because the bank carries it across the
+        // rest days in between without counting them. That's why
+        // Lift + Walk == Active holds here identically — see
+        // ConsistencyStreakCell.
+        let bankedCurrentStreakDays: Set<Date> = bank.currentStreakStartDate.map { start in
+            activeDays.filter { $0 >= start && $0 <= today }
+        } ?? []
+        let bankedMaxStreakDays: Set<Date> = bank.maxStreakRange.map { range in
+            activeDays.filter { $0 >= range.start && $0 <= range.end }
+        } ?? []
+        let bankedCurrentComposition = composition(of: bankedCurrentStreakDays)
+        let bankedMaxComposition = composition(of: bankedMaxStreakDays)
+
         let consistencyActive = consistencyColumn(daysLogged, activeStreaks.current, activeStreaks.max)
         let consistencyLift = consistencyColumn(liftDays.count, liftStreaks.current, liftStreaks.max)
         let consistencyWalk = consistencyColumn(walkOnlyDays.count, walkStreaks.current, walkStreaks.max)
@@ -979,6 +1029,10 @@ enum StatsEngine {
                              currentActiveStreakWalkDays: currentComposition.walk,
                              maxActiveStreakLiftDays: maxComposition.lift,
                              maxActiveStreakWalkDays: maxComposition.walk,
+                             currentBankedStreakLiftDays: bankedCurrentComposition.lift,
+                             currentBankedStreakWalkDays: bankedCurrentComposition.walk,
+                             maxBankedStreakLiftDays: bankedMaxComposition.lift,
+                             maxBankedStreakWalkDays: bankedMaxComposition.walk,
                              ytdWorkoutDays: ytdWorkoutDays,
                              priorYearYtdWorkoutDays: priorYearYtdWorkoutDays,
                              mtdWorkoutDays: mtdWorkoutDays,

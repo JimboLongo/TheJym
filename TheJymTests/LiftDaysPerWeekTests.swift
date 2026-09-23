@@ -521,6 +521,110 @@ final class LiftDaysPerWeekTests: XCTestCase {
         XCTAssertLessThanOrEqual(worstRest, 0.1 + 1e-9, "worst Rest divergence at \(worstShape)")
     }
 
+    // MARK: - All four streak rows share one identity
+    //
+    // The two active rows and the two banked rows are different measures —
+    // an active streak ends at the first rest day, a banked one survives
+    // rest days while the bank holds — but both COUNT the same thing, days
+    // you were active, so Lift + Walk = Active holds on all four and Rest
+    // is blank on all four. Asserted for the whole set in one place so a
+    // change to either pair can't silently diverge it from the other.
+
+    /// Every streak row as the table renders it: (Active, Lift, Walk, Rest).
+    private func streakRows(_ s: TrainingStats) -> [(name: String, active: Int, lift: Int,
+                                                     walk: Int, rest: String)] {
+        func cells(_ name: String, _ active: Int, _ lift: Int, _ walk: Int) ->
+            (name: String, active: Int, lift: Int, walk: Int, rest: String) {
+            func cell(_ h: String) -> String {
+                ConsistencyStreakCell.text(header: h, active: active, lift: lift, walk: walk)
+            }
+            return (name, Int(cell("Active"))!, Int(cell("Lift"))!, Int(cell("Walk"))!, cell("Rest"))
+        }
+        return [
+            cells("Current Active Streak", s.consistencyActive.currentStreak,
+                  s.currentActiveStreakLiftDays, s.currentActiveStreakWalkDays),
+            cells("Max Active Streak", s.consistencyActive.maxStreak,
+                  s.maxActiveStreakLiftDays, s.maxActiveStreakWalkDays),
+            cells("Current Streak (banked)", s.currentStreak,
+                  s.currentBankedStreakLiftDays, s.currentBankedStreakWalkDays),
+            cells("Max Streak (banked)", s.maxStreak,
+                  s.maxBankedStreakLiftDays, s.maxBankedStreakWalkDays),
+        ]
+    }
+
+    @MainActor
+    func testEveryStreakRowSumsAndBlanksRest() {
+        let context = makeContext()
+        // Lift, lift+walk, walk, then a plain rest credit the bank carries
+        // the banked streak through but the active streak ends at.
+        let a = lift(on: day(-5), context: context)
+        let b = lift(on: day(-4), context: context)
+        let (bothWalk, bothActivity) = walk(on: day(-4), context: context)
+        let (w, activity) = walk(on: day(-3), context: context)
+        let c = lift(on: day(-1), context: context)
+        let result = stats([a, b, bothWalk, w, c],
+                           activities: [bothActivity, activity], startOffset: -6)
+
+        for row in streakRows(result) {
+            XCTAssertEqual(row.lift + row.walk, row.active,
+                           "\(row.name): Lift + Walk must equal Active")
+            XCTAssertEqual(row.rest, "—",
+                           "\(row.name): Rest has no meaning inside a streak of active days")
+        }
+    }
+
+    @MainActor
+    func testRowsStillSumWithARestDayInTheMiddle() {
+        let context = makeContext()
+        let a = lift(on: day(-4), context: context)
+        let recovery = ActiveRecovery(date: day(-3), type: .rest)
+        context.insert(recovery)
+        let (w, activity) = walk(on: day(-2), context: context)
+        let b = lift(on: day(-1), context: context)
+        let result = stats([a, w, b], activities: [activity], startOffset: -6)
+
+        for row in streakRows(result) {
+            XCTAssertEqual(row.lift + row.walk, row.active, "\(row.name) must still sum")
+            XCTAssertEqual(row.rest, "—")
+        }
+        // Counter-intuitive but correct, so pinned: with no phases there
+        // are no restBankResetEvents, so the bank is empty — and an empty
+        // bank is HARSHER than the active streak, not more forgiving. The
+        // active streak runs day(-2) and day(-1) for 2, while the banked
+        // one breaks at the plain rest AND again at the walk (which costs
+        // 0.5 with nothing to spend), leaving only day(-1) for 1.
+        // "Banked" buys leniency only when there's balance — see the next
+        // test for that case.
+        XCTAssertEqual(result.consistencyActive.currentStreak, 2)
+        XCTAssertEqual(result.currentStreak, 1)
+    }
+
+    /// The mechanism the two banked rows exist to show, exercised where it
+    /// can actually be reached: computeRestBank takes resetEvents as a
+    /// plain parameter, so the bank can be given balance without building
+    /// a whole Phase fixture just to get restBankResetEvents out of it.
+    func testTheBankCarriesAStreakThroughARestDayWhenItHasBalance() {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: .now)
+        func d(_ o: Int) -> Date { cal.date(byAdding: .day, value: o, to: today)! }
+
+        let trained = [d(-4), d(-2), d(-1)]
+        let withBalance = StatsEngine.computeRestBank(
+            trainingDates: trained, activityRestDates: [], plainRestDates: [d(-3)],
+            resetEvents: [(date: d(-4), resetTo: 2)], now: .now)
+        let withoutBalance = StatsEngine.computeRestBank(
+            trainingDates: trained, activityRestDates: [], plainRestDates: [d(-3)],
+            resetEvents: [], now: .now)
+
+        XCTAssertEqual(withBalance.currentStreak, 3,
+                       "the bank spends a day to carry the streak across the rest day")
+        XCTAssertEqual(withoutBalance.currentStreak, 2,
+                       "with nothing banked, the same rest day breaks it")
+        // And the rest day is carried through, not counted: three training
+        // days span four calendar days but the streak reads 3.
+        XCTAssertEqual(withBalance.currentStreakStartDate, d(-4))
+    }
+
     // MARK: - The streak halves
 
     @MainActor

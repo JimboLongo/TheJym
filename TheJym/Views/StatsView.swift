@@ -208,30 +208,12 @@ struct StatsView: View {
             // under "% of days", and what the Rest column is derived
             // against (Rest = daysSinceStart - Active) — it just isn't
             // shown any more. TrainingStats.daysSinceStart stays.
-            // The rest-BANK streak, which spends banked rest days to carry
-            // a streak through a day off — a different measure from the
-            // table's plain consecutive-days streak, not the same number
-            // shown twice. Labelled "(banked)" so the two can't be read as
-            // contradicting each other, since the table below has rows
-            // called Current streak and Max streak as well.
-            //
-            // Days logged and the plain active streaks used to sit here as
-            // standalone rows; the table's Active column is now exactly
-            // those, so they'd have been the same figures twice.
-            VStack(alignment: .leading, spacing: 2) {
-                statRow("Current streak (banked)", "\(stats.currentStreak) 🔥")
-                if let start = stats.currentStreakStartDate {
-                    Text(streakSinceLabel(start))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                statRow("Max streak (banked)", "\(stats.maxStreak)")
-                if let range = stats.maxStreakRange {
-                    Text(streakRangeLabel(range))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-            }
+            // The two banked streak rows used to sit here as standalone
+            // rows; they're the table's bottom two rows now. Their date
+            // subtitles and the 🔥 have no room in a grid cell, so they
+            // live in `streakDatesFootnote` under the table instead — the
+            // dates aren't derivable from the numbers, so they had to go
+            // somewhere rather than just being dropped.
             statGrid([
                 ("Rest days banked", String(format: "%.1f", stats.bankBalance)),
                 // "% of days logged" used to sit here. It was
@@ -248,6 +230,40 @@ struct StatsView: View {
                 ("Miles walked", milesLabel(stats.milesSinceStart)),
             ])
             consistencyTable
+            streakDatesFootnote
+        }
+    }
+
+    /// The dates behind the table's four streak rows, which have nowhere
+    /// to go inside a grid cell. Kept because they aren't recoverable from
+    /// the numbers: "16" doesn't tell you the streak began Sep 8.
+    ///
+    /// Same two helpers the standalone rows used before they moved into
+    /// the table, so the phrasing can't drift. Only the two rows that
+    /// actually carry dates are listed — an active streak of 0 has no
+    /// start date, and streakRangeLabel already renders an ongoing streak
+    /// as "– Present".
+    @ViewBuilder
+    private var streakDatesFootnote: some View {
+        let lines: [(String, String)] = [
+            stats.currentActiveStreakStartDate.map { ("Active", streakSinceLabel($0)) },
+            stats.maxActiveStreakRange.map { ("Max active", streakRangeLabel($0)) },
+            stats.currentStreakStartDate.map { ("Banked 🔥", streakSinceLabel($0)) },
+            stats.maxStreakRange.map { ("Max banked", streakRangeLabel($0)) },
+        ].compactMap { $0 }
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(lines, id: \.0) { label, value in
+                    // Wrapping, not truncation, at accessibility sizes —
+                    // a date that reads "Jul 12, 2026 – Pres…" is worse
+                    // than one that takes two lines.
+                    Text("\(label): \(value)")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 6, trailing: 16))
         }
     }
 
@@ -422,6 +438,25 @@ struct StatsView: View {
         // not inside an active streak, so there is no number to show — "—"
         // is this file's existing way of saying that (see `bestMonthLabel`).
         //
+        // **The two banked rows follow the identical rule**, through the
+        // identical helper, with no banked-specific branch. That looks
+        // like duplication and isn't, so, explicitly:
+        //
+        // Both kinds of streak count the same thing — days you were
+        // active. They differ only in what ENDS them. An active streak
+        // ends at the first rest day. A banked streak survives rest days
+        // for as long as the bank holds, running THROUGH them while
+        // counting none of them (computeRestBank credits only a training
+        // or activity-rest day). So a banked streak covers a longer
+        // calendar span — 74 days against the active pair's 21 — while
+        // still being a count of active days, which is exactly why
+        // Lift + Walk = Active holds the same way and Rest is blank on all
+        // four. Showing the banked span's absorbed rest days in that cell
+        // would redefine a number that has always meant the count.
+        //
+        // Those two spans are what the footnote under the table carries;
+        // they're the part a grid cell has no room for.
+        //
         // "% of days" shares daysSinceStart as its denominator across all
         // four columns, which is what makes Lift% + Walk% = Active% and
         // Active% + Rest% = 100% hold the same way the count rows do. Its
@@ -452,6 +487,18 @@ struct StatsView: View {
                                                active: stats.consistencyActive.maxStreak,
                                                lift: stats.maxActiveStreakLiftDays,
                                                walk: stats.maxActiveStreakWalkDays)
+                }),
+                ("Current Streak (banked)", { header, _ in
+                    ConsistencyStreakCell.text(header: header,
+                                               active: stats.currentStreak,
+                                               lift: stats.currentBankedStreakLiftDays,
+                                               walk: stats.currentBankedStreakWalkDays)
+                }),
+                ("Max Streak (banked)", { header, _ in
+                    ConsistencyStreakCell.text(header: header,
+                                               active: stats.maxStreak,
+                                               lift: stats.maxBankedStreakLiftDays,
+                                               walk: stats.maxBankedStreakWalkDays)
                 })]
     }
 
