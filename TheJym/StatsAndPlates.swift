@@ -19,6 +19,12 @@ import Foundation
 ///     lift.daysLogged + walk.daysLogged == active.daysLogged
 ///     active.daysLogged + rest.daysLogged == daysSinceStart
 ///
+/// and, since percentOfDays is those same counts over one shared
+/// denominator, they carry straight over to it:
+///
+///     lift.percentOfDays + walk.percentOfDays == active.percentOfDays
+///     active.percentOfDays + rest.percentOfDays == 1
+///
 /// so every day since the training start date lands in exactly one of
 /// Lift, Walk, or Rest. Walk is therefore strictly walk-ONLY days: a day
 /// with both a lift and a walk on it belongs to Lift, and Rest is every
@@ -27,16 +33,23 @@ import Foundation
 /// The two kinds of figure deliberately run on different windows, because
 /// they answer different questions:
 ///
-/// - `daysLogged` / `daysPerWeek` are windowed to the training start
-///   date, matching `daysLogged` and `percentLogged`. Rest is what forces
-///   that: defined as `daysSinceStart - daysLogged`, it's meaningless
-///   without a bounded period to be absent from.
+/// - `daysLogged` / `percentOfDays` / `daysPerWeek` are windowed to the
+///   training start date, matching `daysLogged` and `percentLogged`. Rest
+///   is what forces that: defined as `daysSinceStart - daysLogged`, it's
+///   meaningless without a bounded period to be absent from.
 /// - `currentStreak` / `maxStreak` are all-history, so the Active column
 ///   reads the same numbers the rest of the app calls the active streak
 ///   instead of a second, window-clipped pair that would look broken
 ///   sitting next to them.
 struct ConsistencyColumn {
     var daysLogged: Int
+    /// This column's share of `daysSinceStart`, 0...1 — the same basis
+    /// TrainingStats.percentLogged uses, so the Active column is that
+    /// same number rather than a second, subtly different one. A field
+    /// rather than something the view derives, matching daysPerWeek, so
+    /// the identities below are testable on the values themselves
+    /// instead of on formatted strings.
+    var percentOfDays: Double
     var daysPerWeek: Double
     var currentStreak: Int
     var maxStreak: Int
@@ -527,6 +540,14 @@ enum StatsEngine {
 
         func consistencyColumn(_ days: Int, _ current: Int, _ maxRun: Int) -> ConsistencyColumn {
             ConsistencyColumn(daysLogged: days,
+                              // Literally the expression `pct` above uses,
+                              // over the same daysSinceStart — so the
+                              // Active column IS percentLogged rather than
+                              // a near-identical recomputation of it, and
+                              // the two can't drift. daysSinceStart is
+                              // max(1, ...) at its own definition, so this
+                              // needs no zero guard of its own.
+                              percentOfDays: Double(days) / Double(daysSinceStart),
                               daysPerWeek: weeks > 0 ? Double(days) / weeks : 0,
                               currentStreak: current,
                               maxStreak: maxRun)

@@ -233,7 +233,12 @@ struct StatsView: View {
             }
             statGrid([
                 ("Rest days banked", String(format: "%.1f", stats.bankBalance)),
-                ("% of days logged", String(format: "%.1f%%", stats.percentLogged * 100)),
+                // "% of days logged" used to sit here. It was
+                // daysLogged/daysSinceStart, which is exactly what the
+                // table's "% of days" Active cell now shows — the same
+                // local, not a near-match — so keeping both would have
+                // been the same figure twice. TrainingStats.percentLogged
+                // itself stays: MomentumEngine.score reads it.
                 // Since-start window — deliberately kept alongside
                 // Milestones' All-time miles rather than merged into it:
                 // Training Start Date can (and here does) postdate a lot of
@@ -415,7 +420,15 @@ struct StatsView: View {
         // Rest is blank rather than 0 because a rest day is by definition
         // not inside an active streak, so there is no number to show — "—"
         // is this file's existing way of saying that (see `bestMonthLabel`).
-        return [("Days per week", { _, col in String(format: "%.2f", col.daysPerWeek) }),
+        //
+        // "% of days" shares daysSinceStart as its denominator across all
+        // four columns, which is what makes Lift% + Walk% = Active% and
+        // Active% + Rest% = 100% hold the same way the count rows do. Its
+        // Active cell is TrainingStats.percentLogged — the same value, not
+        // a recomputation — which is why the standalone "% of days logged"
+        // grid row above no longer exists.
+        return [("% of days", { _, col in String(format: "%.1f%%", col.percentOfDays * 100) }),
+                ("Days per week", { _, col in String(format: "%.2f", col.daysPerWeek) }),
                 ("Days logged", { _, col in "\(col.daysLogged)" }),
                 ("Current Active Streak", { header, _ in
                     ConsistencyStreakCell.text(header: header,

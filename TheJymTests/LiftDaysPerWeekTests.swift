@@ -346,6 +346,75 @@ final class LiftDaysPerWeekTests: XCTestCase {
         }
     }
 
+    // MARK: - % of days
+    //
+    // Asserted on percentOfDays itself, never on the "%.1f%%" strings the
+    // table renders — at one decimal the four cells don't always foot
+    // (91.25 + 8.75 displays as 91.3 + 8.8), so a string-level assertion
+    // would either fail on a correct value or, worse, be loosened until it
+    // stopped catching a real break.
+
+    @MainActor
+    func testPercentIdentitiesHold() {
+        let context = makeContext()
+        let a = lift(on: day(-6), context: context)
+        let b = lift(on: day(-4), context: context)
+        let (w, activity) = walk(on: day(-2), context: context)
+        let result = stats([a, b, w], activities: [activity], startOffset: -6)
+
+        XCTAssertEqual(result.consistencyLift.percentOfDays + result.consistencyWalk.percentOfDays,
+                       result.consistencyActive.percentOfDays, accuracy: 1e-12,
+                       "Lift% + Walk% must equal Active%")
+        XCTAssertEqual(result.consistencyActive.percentOfDays + result.consistencyRest.percentOfDays,
+                       1.0, accuracy: 1e-12,
+                       "Active% + Rest% must equal 100%")
+    }
+
+    @MainActor
+    func testActivePercentIsExactlyPercentLogged() {
+        let context = makeContext()
+        let a = lift(on: day(-5), context: context)
+        let (w, activity) = walk(on: day(-3), context: context)
+        let result = stats([a, w], activities: [activity], startOffset: -9)
+
+        // Bit-identical, not merely close: both are the same daysLogged
+        // over the same daysSinceStart, which is the whole reason the
+        // standalone "% of days logged" row could be removed. `accuracy`
+        // would let a genuine divergence through.
+        XCTAssertEqual(result.consistencyActive.percentOfDays, result.percentLogged,
+                       "the Active cell must BE percentLogged, not approximate it")
+    }
+
+    @MainActor
+    func testEachColumnsPercentMatchesItsOwnDayCount() {
+        let context = makeContext()
+        let a = lift(on: day(-8), context: context)
+        let b = lift(on: day(-7), context: context)
+        let (w, activity) = walk(on: day(-5), context: context)
+        let result = stats([a, b, w], activities: [activity], startOffset: -9)
+
+        for col in [result.consistencyActive, result.consistencyLift,
+                    result.consistencyWalk, result.consistencyRest] {
+            XCTAssertEqual(col.percentOfDays,
+                           Double(col.daysLogged) / Double(result.daysSinceStart),
+                           accuracy: 1e-12,
+                           "every column must share daysSinceStart as its denominator")
+        }
+    }
+
+    @MainActor
+    func testPercentIdentitiesHoldWithNoRestDays() {
+        let context = makeContext()
+        let sessions = (-3...(-1)).map { lift(on: day($0), context: context) }
+        let result = stats(sessions, startOffset: -3)
+
+        XCTAssertEqual(result.consistencyRest.percentOfDays, 0, accuracy: 1e-12)
+        XCTAssertEqual(result.consistencyActive.percentOfDays, 1.0, accuracy: 1e-12,
+                       "every day logged means Active is the whole window")
+        XCTAssertEqual(result.consistencyActive.percentOfDays + result.consistencyRest.percentOfDays,
+                       1.0, accuracy: 1e-12)
+    }
+
     // MARK: - The streak halves
 
     @MainActor
