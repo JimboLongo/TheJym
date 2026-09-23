@@ -375,6 +375,13 @@ final class ActiveDayStreakTests: XCTestCase {
                             sessionDates: realSessionDates(sessions),
                             restActivityDates: activities.map(\.date),
                             restActivities: activities,
+                            // **Required for anything lift-vs-walk.**
+                            // `allLiftDays` is built from `allSessions`, so
+                            // omitting it leaves every day classified as
+                            // walk-only — which is silent, because the
+                            // streak tests above only care that a day is
+                            // active at all.
+                            allSessions: sessions,
                             now: .now)
     }
 
@@ -473,5 +480,94 @@ final class ActiveDayStreakTests: XCTestCase {
         XCTAssertEqual(stats.currentActiveStreak, 3, "a walk is activity — the run continues")
         XCTAssertEqual(stats.currentStreak, 1,
                        "the rest bank spent 0.5 it didn't have on the walk and broke")
+    }
+
+    // MARK: - The streak rows' composition (Lift + Walk = Active)
+
+    /// **The invariant the table is there to show.** Lift and Walk on the
+    /// two streak rows are the *composition* of the Active streak, so they
+    /// sum to it — which four independent streaks never could.
+    ///
+    /// This shape is the proof: alternating lift and walk days give an
+    /// active streak of 4 out of a lift streak of 1 and a walk streak of 1.
+    @MainActor
+    func testStreakCompositionSumsToTheActiveStreak() {
+        let context = makeContext()
+        let t1 = trainingSession(on: day(-3, from: today), context: context)
+        let (w1, a1) = walkSession(on: day(-2, from: today), context: context)
+        let t2 = trainingSession(on: day(-1, from: today), context: context)
+        let (w2, a2) = walkSession(on: today, context: context)
+
+        let stats = streaks([t1, w1, t2, w2], activities: [a1, a2])
+
+        XCTAssertEqual(stats.currentActiveStreak, 4)
+        XCTAssertEqual(stats.currentActiveStreakLiftDays, 2)
+        XCTAssertEqual(stats.currentActiveStreakWalkDays, 2)
+        XCTAssertEqual(
+            stats.currentActiveStreakLiftDays + stats.currentActiveStreakWalkDays,
+            stats.currentActiveStreak,
+            "Lift + Walk must equal Active on the streak row"
+        )
+        XCTAssertEqual(
+            stats.maxActiveStreakLiftDays + stats.maxActiveStreakWalkDays,
+            stats.maxActiveStreak,
+            "and on the max row"
+        )
+        // The point of the fixture: the per-discipline streaks do NOT sum,
+        // which is why the cells had to stop being streaks.
+        XCTAssertNotEqual(
+            stats.consistencyLift.currentStreak + stats.consistencyWalk.currentStreak,
+            stats.currentActiveStreak,
+            "if this ever sums, the fixture stopped exercising the case"
+        )
+    }
+
+    /// A day with both a lift and a walk counts once, as a lift — the same
+    /// partition `liftDays`/`walkOnlyDays` uses for the Days-logged row, so
+    /// the sum holds rather than double-counting.
+    @MainActor
+    func testADayWithBothCountsOnceAsLift() {
+        let context = makeContext()
+        let lift = trainingSession(on: today, context: context)
+        let (walk, activity) = walkSession(on: today, context: context)
+
+        let stats = streaks([lift, walk], activities: [activity])
+
+        XCTAssertEqual(stats.currentActiveStreak, 1)
+        XCTAssertEqual(stats.currentActiveStreakLiftDays, 1)
+        XCTAssertEqual(stats.currentActiveStreakWalkDays, 0, "not counted twice")
+    }
+
+    /// With no streak at all there is nothing to compose.
+    @MainActor
+    func testNoActiveStreakMeansNoComposition() {
+        let context = makeContext()
+        let old = trainingSession(on: day(-10, from: today), context: context)
+
+        let stats = streaks([old])
+
+        XCTAssertEqual(stats.currentActiveStreak, 0)
+        XCTAssertEqual(stats.currentActiveStreakLiftDays, 0)
+        XCTAssertEqual(stats.currentActiveStreakWalkDays, 0)
+        XCTAssertEqual(stats.maxActiveStreakLiftDays + stats.maxActiveStreakWalkDays,
+                       stats.maxActiveStreak, "the closed max streak still composes")
+    }
+
+    // MARK: - The streak rows' cells
+
+    /// Rest shows no value. Extracted out of the view for this: while the
+    /// rule lived inside `consistencyRows`, sabotaging it to print `0` broke
+    /// nothing.
+    func testRestCellShowsNoValueOnTheStreakRows() {
+        XCTAssertEqual(
+            ConsistencyStreakCell.text(header: "Rest", active: 7, lift: 4, walk: 3), "—",
+            "a rest day is never inside an active streak, so there is no number to show"
+        )
+    }
+
+    func testStreakRowCellsReadTheirOwnColumn() {
+        XCTAssertEqual(ConsistencyStreakCell.text(header: "Active", active: 7, lift: 4, walk: 3), "7")
+        XCTAssertEqual(ConsistencyStreakCell.text(header: "Lift", active: 7, lift: 4, walk: 3), "4")
+        XCTAssertEqual(ConsistencyStreakCell.text(header: "Walk", active: 7, lift: 4, walk: 3), "3")
     }
 }

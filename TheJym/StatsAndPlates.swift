@@ -92,6 +92,28 @@ struct TrainingStats {
     var consistencyWalk: ConsistencyColumn
     var consistencyRest: ConsistencyColumn
 
+    // MARK: Composition of the active streaks
+    //
+    // **The Lift and Walk cells on the two streak rows are not streaks.**
+    // They are how the *Active* streak is made up — of its N days, how many
+    // were lift days and how many walk-only days.
+    //
+    // A lift streak and a walk streak cannot sum to an active streak:
+    // alternating lift/walk days give an active streak of 4 out of a lift
+    // streak of 1 and a walk streak of 1. Composition does sum, because
+    // `streakLiftDays` and its complement partition `activeDays` exactly the
+    // way `liftDays`/`walkOnlyDays` partition `loggedDays` for the rows
+    // above — so Lift + Walk = Active on every row of the table, which is
+    // the property the rows are there to show.
+    //
+    // Rest has no composition in an active streak (a rest day is by
+    // definition not in one), which is why those cells are blank rather than
+    // zero — see `StatsView.consistencyRows`.
+    var currentActiveStreakLiftDays: Int
+    var currentActiveStreakWalkDays: Int
+    var maxActiveStreakLiftDays: Int
+    var maxActiveStreakWalkDays: Int
+
     // Year/month-to-date workout-day counts, vs. the same window last year.
     var ytdWorkoutDays: Int
     var priorYearYtdWorkoutDays: Int
@@ -179,6 +201,27 @@ struct TrainingStats {
 /// used to filter History to "this streak, and whatever broke it on
 /// either side" when the user taps a streak stat. Hashable so it can drive
 /// a `.navigationDestination(item:)`.
+/// What one cell of the two streak rows shows — see
+/// `StatsView.consistencyRows`.
+///
+/// Free of the view so it is reachable from a test. Left inside the view it
+/// was uncovered: sabotaging the Rest cell to print `0` instead of no value
+/// broke nothing, because nothing outside the view could ask it.
+enum ConsistencyStreakCell {
+    /// Lift and Walk are the **composition** of the Active streak, so they
+    /// sum to it. Rest has no composition in an active streak — a rest day
+    /// is by definition not inside one — so it shows no value rather than a
+    /// misleading `0`. "—" is this codebase's existing way of saying that.
+    static func text(header: String, active: Int, lift: Int, walk: Int) -> String {
+        switch header {
+        case "Lift": return "\(lift)"
+        case "Walk": return "\(walk)"
+        case "Rest": return "—"
+        default: return "\(active)"
+        }
+    }
+}
+
 struct MaxStreakDateRange: Hashable {
     let start: Date
     let end: Date
@@ -488,6 +531,22 @@ enum StatsEngine {
                               currentStreak: current,
                               maxStreak: maxRun)
         }
+        // Composition of each active streak — see the fields' own comment.
+        // Counted from the same `streakLiftDays` partition the Lift/Walk
+        // streak columns were built from, so the two cannot disagree.
+        func composition(of days: Set<Date>) -> (lift: Int, walk: Int) {
+            let lift = days.intersection(streakLiftDays).count
+            return (lift, days.count - lift)
+        }
+        let currentStreakDays: Set<Date> = activeStreaks.currentStart.map { start in
+            activeDays.filter { $0 >= start && $0 <= today }
+        } ?? []
+        let maxStreakDays: Set<Date> = activeStreaks.maxRange.map { range in
+            activeDays.filter { $0 >= range.start && $0 <= range.end }
+        } ?? []
+        let currentComposition = composition(of: currentStreakDays)
+        let maxComposition = composition(of: maxStreakDays)
+
         let consistencyActive = consistencyColumn(daysLogged, activeStreaks.current, activeStreaks.max)
         let consistencyLift = consistencyColumn(liftDays.count, liftStreaks.current, liftStreaks.max)
         let consistencyWalk = consistencyColumn(walkOnlyDays.count, walkStreaks.current, walkStreaks.max)
@@ -838,6 +897,10 @@ enum StatsEngine {
                              consistencyLift: consistencyLift,
                              consistencyWalk: consistencyWalk,
                              consistencyRest: consistencyRest,
+                             currentActiveStreakLiftDays: currentComposition.lift,
+                             currentActiveStreakWalkDays: currentComposition.walk,
+                             maxActiveStreakLiftDays: maxComposition.lift,
+                             maxActiveStreakWalkDays: maxComposition.walk,
                              ytdWorkoutDays: ytdWorkoutDays,
                              priorYearYtdWorkoutDays: priorYearYtdWorkoutDays,
                              mtdWorkoutDays: mtdWorkoutDays,

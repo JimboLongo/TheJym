@@ -358,7 +358,7 @@ struct StatsView: View {
             // columns stay adjacent and comparable while scrolling.
             ForEach(consistencyRows, id: \.label) { row in
                 ForEach(consistencyColumns, id: \.header) { col in
-                    statRow("\(row.label) — \(col.header)", row.value(col.column))
+                    statRow("\(row.label) — \(col.header)", row.value(col.header, col.column))
                 }
             }
         } else {
@@ -375,7 +375,7 @@ struct StatsView: View {
                         Text(row.label).font(.caption).foregroundStyle(.secondary)
                             .gridColumnAlignment(.leading)
                         ForEach(consistencyColumns, id: \.header) { col in
-                            Text(row.value(col.column))
+                            Text(row.value(col.header, col.column))
                                 .font(.system(.subheadline, design: .monospaced)).bold()
                                 .fixedSize()
                                 .gridColumnAlignment(.center)
@@ -395,13 +395,40 @@ struct StatsView: View {
          ("Rest", stats.consistencyRest)]
     }
 
-    /// Rows are (label, how to read one column) so the grid and the
+    /// Rows are (label, how to read one cell) so the grid and the
     /// accessibility unroll render from one list and can't drift.
-    private var consistencyRows: [(label: String, value: (ConsistencyColumn) -> String)] {
-        [("Days per week", { String(format: "%.2f", $0.daysPerWeek) }),
-         ("Days logged", { "\($0.daysLogged)" }),
-         ("Current streak", { "\($0.currentStreak)" }),
-         ("Max streak", { "\($0.maxStreak)" })]
+    ///
+    /// The closure takes the column *header* as well as its data because
+    /// the two streak rows are not read per-column the way the first two
+    /// are — see below.
+    private var consistencyRows: [(label: String, value: (String, ConsistencyColumn) -> String)] {
+        // **The streak rows show the Active streak and how it is made up**,
+        // not four independent streaks.
+        //
+        // Lift and Walk here are the composition of the Active streak — of
+        // its N days, how many were lift days and how many walk-only. That
+        // is what makes Lift + Walk = Active hold on these rows as it
+        // already does on the two above. Four independent streaks cannot
+        // sum: alternating lift/walk days give an active streak of 4 from a
+        // lift streak of 1 and a walk streak of 1.
+        //
+        // Rest is blank rather than 0 because a rest day is by definition
+        // not inside an active streak, so there is no number to show — "—"
+        // is this file's existing way of saying that (see `bestMonthLabel`).
+        return [("Days per week", { _, col in String(format: "%.2f", col.daysPerWeek) }),
+                ("Days logged", { _, col in "\(col.daysLogged)" }),
+                ("Current Active Streak", { header, _ in
+                    ConsistencyStreakCell.text(header: header,
+                                               active: stats.consistencyActive.currentStreak,
+                                               lift: stats.currentActiveStreakLiftDays,
+                                               walk: stats.currentActiveStreakWalkDays)
+                }),
+                ("Max Active Streak", { header, _ in
+                    ConsistencyStreakCell.text(header: header,
+                                               active: stats.consistencyActive.maxStreak,
+                                               lift: stats.maxActiveStreakLiftDays,
+                                               walk: stats.maxActiveStreakWalkDays)
+                })]
     }
 
     private func yearMonthCell(_ value: String, py: String) -> some View {
