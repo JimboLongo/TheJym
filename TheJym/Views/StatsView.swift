@@ -140,29 +140,42 @@ struct StatsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        // THE one StatsEngine.compute pass for this whole evaluation.
+        // `self.` is spelled out because the local deliberately shadows
+        // the computed property of the same name — every reference below
+        // this line reads the value, and any new code that writes plain
+        // `stats` gets the value too rather than silently re-running the
+        // engine.
+        //
+        // This is a caching decision about ONE body evaluation, not across
+        // evaluations: @Query still invalidates the view on any data
+        // change (so History edits still land), and `.id(refreshTick)`
+        // still forces a fresh pass on pull-to-refresh. Nothing can go
+        // stale that wasn't already going to.
+        let stats = self.stats
+        return NavigationStack {
             List {
-                consistencySection
+                consistencySection(stats)
                 if let activePhase {
-                    currentPhaseSection(activePhase)
+                    currentPhaseSection(activePhase, stats)
                 } else if let fallback = stats.perfectWeekFallback {
                     // No active phase to judge cycles against — a simpler,
                     // phase-independent progress stat instead.
                     progressFallbackSection(fallback)
                 }
-                yearMonthSection
+                yearMonthSection(stats)
                 if !stats.yearlyTotals.isEmpty {
-                    yearlyTotalsSection
+                    yearlyTotalsSection(stats)
                 }
-                milestonesSection
+                milestonesSection(stats)
                 if !stats.bigLiftGroups.isEmpty {
-                    bigLiftsSection
+                    bigLiftsSection(stats)
                 }
                 // Either page having content is enough — a phase that only
                 // ever ran deloads with the stopwatch on would otherwise
                 // hide the section that has its numbers.
                 if !stats.dayDurationGroups.isEmpty || !stats.deloadDayDurationGroups.isEmpty {
-                    dayDurationSection
+                    dayDurationSection(stats)
                 }
                 ForEach(Array(stats.completedPhaseSummaries.enumerated()), id: \.element.id) { index, summary in
                     completedPhaseSection(summary, isMostRecent: index == 0)
@@ -204,7 +217,7 @@ struct StatsView: View {
     // Purely Training-Start-Date-based — no phase concepts here. Anything
     // specific to whatever Phase is currently active lives in its own
     // section below instead.
-    private var consistencySection: some View {
+    private func consistencySection(_ stats: TrainingStats) -> some View {
         Section("Consistency") {
             if let s = settings {
                 Button {
@@ -248,8 +261,8 @@ struct StatsView: View {
                 // rather than being the same figure twice.
                 ("Miles walked", milesLabel(stats.milesSinceStart)),
             ])
-            consistencyTable
-            streakDatesFootnote
+            consistencyTable(stats)
+            streakDatesFootnote(stats)
         }
     }
 
@@ -263,7 +276,7 @@ struct StatsView: View {
     /// start date, and streakRangeLabel already renders an ongoing streak
     /// as "– Present".
     @ViewBuilder
-    private var streakDatesFootnote: some View {
+    private func streakDatesFootnote(_ stats: TrainingStats) -> some View {
         let lines: [(String, String)] = [
             stats.currentActiveStreakStartDate.map { ("Active", streakSinceLabel($0)) },
             stats.maxActiveStreakRange.map { ("Max active", streakRangeLabel($0)) },
@@ -286,7 +299,7 @@ struct StatsView: View {
         }
     }
 
-    private func currentPhaseSection(_ activePhase: Phase) -> some View {
+    private func currentPhaseSection(_ activePhase: Phase, _ stats: TrainingStats) -> some View {
         var pairs: [(String, String)] = []
         // One stat, not two — see adherenceLabel. Both halves come from
         // the same phase, so they're either both present or both absent;
@@ -332,7 +345,7 @@ struct StatsView: View {
     /// stay readable, so it falls back to the original one-stat-per-row
     /// layout instead of letting values truncate.
     @ViewBuilder
-    private var yearMonthSection: some View {
+    private func yearMonthSection(_ stats: TrainingStats) -> some View {
         Section("Year / Month to Date") {
             if dynamicTypeSize.isAccessibilitySize {
                 statRow("YTD workouts", "\(stats.ytdWorkoutDays) (PY: \(stats.priorYearYtdWorkoutDays))")
@@ -368,7 +381,7 @@ struct StatsView: View {
     /// counting once. Same basis as "All-time active days" in Milestones
     /// below, so these columns sum to it. See StatsEngine.compute's own
     /// note for which sessions qualify.
-    private var yearlyTotalsSection: some View {
+    private func yearlyTotalsSection(_ stats: TrainingStats) -> some View {
         Section {
             YearlyTotalsTable(rows: stats.yearlyTotals,
                               projection: stats.currentYearProjection,
@@ -399,14 +412,14 @@ struct StatsView: View {
     /// number in all four columns, and it stays the standalone row above
     /// that the Rest column is derived against.
     @ViewBuilder
-    private var consistencyTable: some View {
+    private func consistencyTable(_ stats: TrainingStats) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             // A 5-column grid has nowhere near the room at AX sizes, so it
             // unrolls into one labelled row per cell — 16 of them, grouped
             // by row rather than by column so each statistic's four
             // columns stay adjacent and comparable while scrolling.
-            ForEach(consistencyRows, id: \.label) { row in
-                ForEach(consistencyColumns, id: \.header) { col in
+            ForEach(consistencyRows(stats), id: \.label) { row in
+                ForEach(consistencyColumns(stats), id: \.header) { col in
                     statRow("\(row.label) — \(col.header)", row.value(col.header, col.column))
                 }
             }
@@ -414,16 +427,16 @@ struct StatsView: View {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
                 GridRow {
                     Text("")
-                    ForEach(consistencyColumns, id: \.header) { col in
+                    ForEach(consistencyColumns(stats), id: \.header) { col in
                         Text(col.header).font(.caption2.bold()).foregroundStyle(.secondary)
                             .gridColumnAlignment(.center)
                     }
                 }
-                ForEach(consistencyRows, id: \.label) { row in
+                ForEach(consistencyRows(stats), id: \.label) { row in
                     GridRow {
                         Text(row.label).font(.caption).foregroundStyle(.secondary)
                             .gridColumnAlignment(.leading)
-                        ForEach(consistencyColumns, id: \.header) { col in
+                        ForEach(consistencyColumns(stats), id: \.header) { col in
                             Text(row.value(col.header, col.column))
                                 .font(.system(.subheadline, design: .monospaced)).bold()
                                 .fixedSize()
@@ -437,7 +450,7 @@ struct StatsView: View {
     }
 
     /// Column order is the partition's order: the whole, then its parts.
-    private var consistencyColumns: [(header: String, column: ConsistencyColumn)] {
+    private func consistencyColumns(_ stats: TrainingStats) -> [(header: String, column: ConsistencyColumn)] {
         [("Active", stats.consistencyActive),
          ("Lift", stats.consistencyLift),
          ("Walk", stats.consistencyWalk),
@@ -450,7 +463,7 @@ struct StatsView: View {
     /// The closure takes the column *header* as well as its data because
     /// the two streak rows are not read per-column the way the first two
     /// are — see below.
-    private var consistencyRows: [(label: String, value: (String, ConsistencyColumn) -> String)] {
+    private func consistencyRows(_ stats: TrainingStats) -> [(label: String, value: (String, ConsistencyColumn) -> String)] {
         // **The streak rows show the Active streak and how it is made up**,
         // not four independent streaks.
         //
@@ -535,7 +548,7 @@ struct StatsView: View {
         }
     }
 
-    private var milestonesSection: some View {
+    private func milestonesSection(_ stats: TrainingStats) -> some View {
         Section {
             statGrid([
                 ("Perfect weeks", "\(stats.perfectWeeks)"),
@@ -566,7 +579,7 @@ struct StatsView: View {
     /// built. A single section for every flagged exercise, rather than a
     /// table scattered across each phase's own section, so phase-over-phase
     /// progress on the same lift reads top-to-bottom in one place.
-    private var bigLiftsSection: some View {
+    private func bigLiftsSection(_ stats: TrainingStats) -> some View {
         Section("Big Lifts") {
             ForEach(stats.bigLiftGroups) { group in
                 BigLiftGroupTable(group: group)
@@ -590,7 +603,7 @@ struct StatsView: View {
     /// ScrollView hugs its content's intrinsic height instead, so nothing
     /// clips at AX5. Both pages share the taller one's height, so swiping
     /// doesn't make the section jump.
-    private var dayDurationSection: some View {
+    private func dayDurationSection(_ stats: TrainingStats) -> some View {
         Section {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 0) {
@@ -613,7 +626,7 @@ struct StatsView: View {
             .scrollIndicators(.hidden)
             .scrollPosition(id: $dayDurationPage)
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 0, trailing: 16))
-            dayDurationPageDots
+            dayDurationPageDots(stats)
         } header: {
             Text("Workout Duration")
         } footer: {
@@ -649,7 +662,7 @@ struct StatsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var dayDurationPageDots: some View {
+    private func dayDurationPageDots(_ stats: TrainingStats) -> some View {
         HStack(spacing: 6) {
             ForEach(DayDurationPage.allCases, id: \.self) { page in
                 Circle()
