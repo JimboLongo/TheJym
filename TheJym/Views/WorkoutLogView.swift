@@ -728,6 +728,28 @@ struct WorkoutLogView: View {
         // on the Stopwatch page stays paused.
         .onChange(of: allExercisesComplete) { _, isComplete in
             if isComplete {
+                // The rest countdown stops with the workout clock. Rest is
+                // time BETWEEN sets, so once there's no next set it has
+                // nothing left to measure — and left running it keeps
+                // ticking, keeps firing its 5-4-3-2-1 beeps and 0:00 tone,
+                // keeps blinking red, and keeps a Live Activity on the
+                // Dynamic Island for a workout that's already over.
+                //
+                // Ahead of the isRunning guard below on purpose: that
+                // guard is about the WORKOUT stopwatch, and a user who
+                // paused that themselves on the Stopwatch page must still
+                // get the rest timer silenced here.
+                //
+                // Deliberately NOT resumed on the else branch, unlike the
+                // workout clock. Reopening an exercise doesn't make a
+                // stale countdown meaningful again — logging the next set
+                // calls resetAndStart and re-anchors from that set, and
+                // Warm/Ready restart it outright, so every path that
+                // should revive it already does. Reviving "12 minutes
+                // overdue" from before the workout ended would be noise.
+                restStopwatch.stop()
+                RestActivityController.shared.end()
+
                 guard workoutStopwatch.isRunning else { return }
                 workoutStopwatch.pause()
                 pausedByAllExercisesComplete = true

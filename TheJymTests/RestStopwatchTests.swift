@@ -48,6 +48,31 @@ final class RestStopwatchTests: XCTestCase {
         XCTAssertEqual(sw.displaySeconds, frozen, accuracy: 0.01, "Shouldn't advance while stopped")
     }
 
+    /// Stopping has to silence the final-approach cues, not just freeze
+    /// the number. This is what WorkoutLogView relies on when every
+    /// exercise is complete: the workout is over, and a rest timer that
+    /// kept beeping its way down to 0:00 afterwards is the actual nuisance
+    /// being fixed — freezing the display alone wouldn't do it.
+    func testStopSilencesTheRemainingAudioCues() {
+        var cues = 0
+        let sw = RestStopwatch()
+        sw.playCue = { _, _, _ in cues += 1 }
+
+        // A 1s target is already inside the 5-4-3-2-1 window, so
+        // resetAndStart fires its due cues synchronously. Everything after
+        // this point is what the ticker would go on to play.
+        sw.resetAndStart(targetSeconds: 1)
+        let firedAtStart = cues
+
+        sw.stop()
+        // Well past when the 0:00 tone would have landed.
+        Thread.sleep(forTimeInterval: 1.5)
+
+        XCTAssertFalse(sw.isRunning)
+        XCTAssertEqual(cues, firedAtStart,
+                       "a stopped rest timer must not play its way down to zero")
+    }
+
     func testResumeContinuesFromWhereItStopped() {
         let sw = makeStopwatch()
         sw.resetAndStart(targetSeconds: nil)
