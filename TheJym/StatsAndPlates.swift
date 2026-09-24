@@ -34,7 +34,7 @@ import Foundation
 /// they answer different questions:
 ///
 /// - `daysLogged` / `percentOfDays` / `daysPerWeek` are windowed to the
-///   training start date, matching `daysLogged` and `percentLogged`. Rest
+///   training start date, matching `daysLogged`. Rest
 ///   is what forces that: defined as `daysSinceStart - daysLogged`, it's
 ///   meaningless without a bounded period to be absent from.
 /// - `currentStreak` / `maxStreak` are all-history, so the Active column
@@ -43,9 +43,9 @@ import Foundation
 ///   sitting next to them.
 struct ConsistencyColumn {
     var daysLogged: Int
-    /// This column's share of `daysSinceStart`, 0...1 — the same basis
-    /// TrainingStats.percentLogged uses, so the Active column is that
-    /// same number rather than a second, subtly different one. A field
+    /// This column's share of `daysSinceStart`, 0...1. The Active column
+    /// is the page's only "% of days logged" figure now that Momentum and
+    /// the Claude Stats page are gone. A field
     /// rather than something the view derives, matching daysPerWeek, so
     /// the identities below are testable on the values themselves
     /// instead of on formatted strings.
@@ -93,7 +93,6 @@ struct TrainingStats {
     /// "– Present" rendering needs, so there's no separate flag.
     var maxActiveStreakRange: MaxStreakDateRange?
     var bankBalance: Double     // current rest-bank balance, >= 0, uncapped above
-    var percentLogged: Double   // daysLogged / daysSinceStart
     var daysPerWeek: Double
 
     /// The Consistency table's four columns. `active` restates
@@ -546,7 +545,6 @@ enum StatsEngine {
         let adherence = activePhase.map { adherencePercent(for: $0, now: effectiveNow) }
 
         let daysLogged = loggedDays.count
-        let pct = Double(daysLogged) / Double(daysSinceStart)
         let weeks = Double(daysSinceStart) / 7.0
         let perWeek = weeks > 0 ? Double(daysLogged) / weeks : 0
 
@@ -629,11 +627,7 @@ enum StatsEngine {
 
         func consistencyColumn(_ days: Int, _ current: Int, _ maxRun: Int) -> ConsistencyColumn {
             ConsistencyColumn(daysLogged: days,
-                              // Literally the expression `pct` above uses,
-                              // over the same daysSinceStart — so the
-                              // Active column IS percentLogged rather than
-                              // a near-identical recomputation of it, and
-                              // the two can't drift. daysSinceStart is
+                              // daysSinceStart is
                               // max(1, ...) at its own definition, so this
                               // needs no zero guard of its own.
                               percentOfDays: Double(days) / Double(daysSinceStart),
@@ -1019,7 +1013,6 @@ enum StatsEngine {
                              maxActiveStreak: activeStreaks.max,
                              maxActiveStreakRange: activeStreaks.maxRange,
                              bankBalance: bank.bankBalance,
-                             percentLogged: pct,
                              daysPerWeek: perWeek,
                              consistencyActive: consistencyActive,
                              consistencyLift: consistencyLift,
@@ -1562,75 +1555,6 @@ enum ConsistencyDayKind {
     case deload
     case rest
     case empty
-}
-
-/// The Claude Stats page's one new derived number: a single 0-100 "how am I
-/// doing right now" composite, distinct from anything StatsEngine itself
-/// computes. StatsEngine's own numbers are each exhaustive-and-exact by
-/// design (a lifetime percentage, an unbounded day-delta, a streak count) —
-/// this engine's only job is blending three of them into one glanceable
-/// score, which is a presentation concern, not a new fact about the data.
-enum MomentumEngine {
-    /// Maps an unbounded day-delta (StatsAndPlates.cyclePaceDelta: actual
-    /// sessions vs. scheduled-to-date, can run arbitrarily far either way)
-    /// onto a 0-1 signal — 0 at `ceilingDays` or more behind, 1 at
-    /// `ceilingDays` or more ahead, exactly 0.5 dead on pace, linear between.
-    /// `ceilingDays` defaults to 5: far enough that a single missed/bonus
-    /// session (±1 day) doesn't swing the signal wildly, close enough that a
-    /// full week's slip still reads as close to the floor rather than
-    /// barely denting it.
-    static func normalizedPace(_ delta: Int, ceilingDays: Int = 5) -> Double {
-        guard ceilingDays > 0 else { return 0.5 }
-        let clamped = max(-ceilingDays, min(ceilingDays, delta))
-        return (Double(clamped) / Double(ceilingDays) + 1) / 2
-    }
-
-    /// Maps a streak length onto a 0-1 signal — `streak / ceiling`, clamped
-    /// to 1. `ceiling` defaults to 14 (two weeks): long enough that a normal
-    /// week-to-week streak doesn't instantly max the signal out, short
-    /// enough that a genuinely long streak still saturates it rather than
-    /// asymptotically creeping toward 1 forever.
-    static func normalizedStreak(_ streak: Int, ceiling: Int = 14) -> Double {
-        guard ceiling > 0 else { return 0 }
-        return min(1, Double(streak) / Double(ceiling))
-    }
-
-    /// The composite score itself.
-    ///
-    /// WEIGHTING (a genuine design call, not a fact derivable from the data):
-    /// with an active phase, adherence 50% / pace 30% / streak 20%.
-    /// Adherence carries the most weight because it's already a clean,
-    /// lifetime-scoped 0-100 signal — direct, and hard to swing with just a
-    /// day or two. Pace comes next: it reacts fastest to how THIS block is
-    /// going right now (a couple of missed or bonus days move it visibly),
-    /// which is exactly the "right now" flavor this page wants, but that
-    /// same reactivity makes it noisier than adherence, hence the smaller
-    /// share. Streak gets the least weight on purpose — a single day off
-    /// zeroes it outright, and a score that let a streak break crater the
-    /// whole number would misrepresent someone who's otherwise training
-    /// consistently. It's still included, just as a smaller accent, because
-    /// "on a roll" is real and worth reflecting.
-    ///
-    /// With NO active phase, adherencePercent/cyclePaceDelta are both nil
-    /// (StatsEngine only computes them against a phase's own schedule) —
-    /// pace has no meaning to fall back to, so its 30% share folds into
-    /// adherence, using `percentLogged` (the same daysLogged/daysSinceStart
-    /// ratio TrainingStats always computes, phase or no phase) as the
-    /// lifetime-adherence substitute. Streak keeps its 20%.
-    static func score(adherencePercent: Double?, cyclePaceDelta: Int?,
-                      currentStreak: Int, percentLogged: Double) -> Int {
-        let streak01 = normalizedStreak(currentStreak)
-        let composite: Double
-        if let adherencePercent, let cyclePaceDelta {
-            let adherence01 = min(1, max(0, adherencePercent / 100))
-            let pace01 = normalizedPace(cyclePaceDelta)
-            composite = adherence01 * 0.5 + pace01 * 0.3 + streak01 * 0.2
-        } else {
-            let adherence01 = min(1, max(0, percentLogged))
-            composite = adherence01 * 0.8 + streak01 * 0.2
-        }
-        return Int((composite * 100).rounded())
-    }
 }
 
 // MARK: - Plate Calculator

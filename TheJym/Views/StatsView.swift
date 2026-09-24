@@ -113,6 +113,32 @@ struct StatsView: View {
         String(format: "%.1f hr", hours)
     }
 
+    /// "Cycle pace" and "Adherence" merged into one value, e.g.
+    /// "96% (4 behind)" / "104% (2 ahead)" / "100% (on pace)".
+    ///
+    /// They were never two facts. Both StatsEngine.cyclePaceDelta and
+    /// .adherencePercent derive from the same pair, over an identical
+    /// `daysElapsed`:
+    ///
+    ///     delta   = filledSlotCount - daysElapsed
+    ///     percent = filledSlotCount / daysElapsed * 100
+    ///
+    /// The percent leads because it's the comparable figure — it means the
+    /// same thing in week one and week nine, where a delta of 4 doesn't.
+    /// The delta is kept because the percent genuinely can't carry it:
+    /// rounded to a whole percent, "96%" could be 4 behind over 100 days
+    /// or 1 behind over 25, and it's the day count that tells you what to
+    /// actually do about it.
+    ///
+    /// Shared by the Current Phase section and every completed-phase
+    /// summary, which render the same pair — the two would otherwise be
+    /// free to drift into different treatments of one number.
+    private func adherenceLabel(percent: Double, delta: Int) -> String {
+        let pct = String(format: "%.0f%%", percent)
+        if delta == 0 { return "\(pct) (on pace)" }
+        return "\(pct) (\(abs(delta)) \(delta > 0 ? "ahead" : "behind"))"
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -150,14 +176,6 @@ struct StatsView: View {
             }
             .navigationTitle("Stats")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink {
-                        ClaudeStatsView()
-                    } label: {
-                        Image(systemName: "sparkles")
-                    }
-                    .accessibilityLabel("Claude Stats")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     OverflowMenuButton(overflowTab: $overflowTab)
                 }
@@ -214,14 +232,15 @@ struct StatsView: View {
             // live in `streakDatesFootnote` under the table instead — the
             // dates aren't derivable from the numbers, so they had to go
             // somewhere rather than just being dropped.
+            // "Rest days banked" moved to the Current Phase section: the
+            // bank resets at phase start and at each cycle finish
+            // (Phase.restBankResetEvents), so it was the one phase-scoped
+            // number sitting in a since-start block.
+            //
+            // "% of days logged" also used to sit here; the table's
+            // "% of days" Active cell is that number now.
+            // TrainingStats.percentLogged went with MomentumEngine.
             statGrid([
-                ("Rest days banked", String(format: "%.1f", stats.bankBalance)),
-                // "% of days logged" used to sit here. It was
-                // daysLogged/daysSinceStart, which is exactly what the
-                // table's "% of days" Active cell now shows — the same
-                // local, not a near-match — so keeping both would have
-                // been the same figure twice. TrainingStats.percentLogged
-                // itself stays: MomentumEngine.score reads it.
                 // Since-start window — deliberately kept alongside
                 // Milestones' All-time miles rather than merged into it:
                 // Training Start Date can (and here does) postdate a lot of
@@ -269,11 +288,13 @@ struct StatsView: View {
 
     private func currentPhaseSection(_ activePhase: Phase) -> some View {
         var pairs: [(String, String)] = []
-        if let delta = stats.cyclePaceDelta {
-            pairs.append(("Cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")"))
-        }
+        // One stat, not two — see adherenceLabel. Both halves come from
+        // the same phase, so they're either both present or both absent;
+        // the delta falls back to 0 ("on pace") only to satisfy the
+        // optional, and can't actually be reached with a percent in hand.
         if let adherence = stats.adherencePercent {
-            pairs.append(("Adherence", String(format: "%.0f%%", adherence)))
+            pairs.append(("Adherence",
+                          adherenceLabel(percent: adherence, delta: stats.cyclePaceDelta ?? 0)))
         }
         if let progress = stats.activePhaseCycleProgress {
             pairs.append(("Phase \(progress.number)",
@@ -284,6 +305,12 @@ struct StatsView: View {
         if let miles = stats.milesThisPhase {
             pairs.append(("Miles walked", milesLabel(miles)))
         }
+        // Moved down from the Consistency section, where it was the one
+        // phase-scoped number in a since-start block. The bank resets at
+        // phase start and again at every cycle finish
+        // (Phase.restBankResetEvents), so its balance only means anything
+        // relative to the phase you're in.
+        pairs.append(("Rest days banked", String(format: "%.1f", stats.bankBalance)))
         return Section("Current Phase — Phase \(activePhase.number)") {
             statGrid(pairs)
         }
@@ -460,9 +487,8 @@ struct StatsView: View {
         // "% of days" shares daysSinceStart as its denominator across all
         // four columns, which is what makes Lift% + Walk% = Active% and
         // Active% + Rest% = 100% hold the same way the count rows do. Its
-        // Active cell is TrainingStats.percentLogged — the same value, not
-        // a recomputation — which is why the standalone "% of days logged"
-        // grid row above no longer exists.
+        // Active cell is the page's only "% of days logged" figure, which
+        // is why the standalone grid row above no longer exists.
         //
         // Its cells are plugged rather than rounded independently, so the
         // row foots as displayed and not just underneath — see
@@ -645,10 +671,12 @@ struct StatsView: View {
     private func completedPhaseSection(_ summary: PhaseSummary, isMostRecent: Bool) -> some View {
         Section {
             DisclosureGroup(isExpanded: expandedBinding(for: summary.number, defaultExpanded: isMostRecent)) {
-                let delta = summary.cyclePaceDelta
                 statGrid([
-                    ("Final cycle pace", delta == 0 ? "On pace" : "\(abs(delta)) \(delta > 0 ? "ahead" : "behind")"),
-                    ("Adherence", String(format: "%.0f%%", summary.adherencePercent)),
+                    // Same merge as the Current Phase section, through the
+                    // same helper, so the page can't end up with two
+                    // treatments of one number.
+                    ("Final adherence", adherenceLabel(percent: summary.adherencePercent,
+                                                       delta: summary.cyclePaceDelta)),
                     ("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount)"),
                     ("Miles walked", milesLabel(summary.milesWalked)),
                 ])

@@ -370,20 +370,12 @@ final class LiftDaysPerWeekTests: XCTestCase {
                        "Active% + Rest% must equal 100%")
     }
 
-    @MainActor
-    func testActivePercentIsExactlyPercentLogged() {
-        let context = makeContext()
-        let a = lift(on: day(-5), context: context)
-        let (w, activity) = walk(on: day(-3), context: context)
-        let result = stats([a, w], activities: [activity], startOffset: -9)
-
-        // Bit-identical, not merely close: both are the same daysLogged
-        // over the same daysSinceStart, which is the whole reason the
-        // standalone "% of days logged" row could be removed. `accuracy`
-        // would let a genuine divergence through.
-        XCTAssertEqual(result.consistencyActive.percentOfDays, result.percentLogged,
-                       "the Active cell must BE percentLogged, not approximate it")
-    }
+    // testActivePercentIsExactlyPercentLogged lived here. It asserted the
+    // Active cell was bit-identical to TrainingStats.percentLogged, which
+    // guarded against two fields drifting apart. percentLogged is gone
+    // (it only survived to feed MomentumEngine, removed with the Claude
+    // Stats page), so there is no second field left to drift from — the
+    // Active cell is now the page's only "% of days logged".
 
     @MainActor
     func testEachColumnsPercentMatchesItsOwnDayCount() {
