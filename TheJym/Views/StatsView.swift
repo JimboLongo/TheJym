@@ -9,6 +9,29 @@
 import SwiftUI
 import SwiftData
 
+/// One row of the Consistency table: its label, how to read any one of
+/// its cells, and — for the four streak rows — the date line that renders
+/// underneath it, spanning the data columns.
+///
+/// `dateLine` is pre-rendered rather than a Date, so it comes through the
+/// same streakSinceLabel/streakRangeLabel helpers the rest of the page
+/// uses and keeps the "– Present" form for an ongoing streak. nil means
+/// no line at all, which is both the non-streak rows and a streak of 0
+/// (no start date to show).
+struct ConsistencyRow: Identifiable {
+    let label: String
+    let dateLine: String?
+    let value: (String, ConsistencyColumn) -> String
+    var id: String { label }
+
+    init(_ label: String, dateLine: String? = nil,
+         value: @escaping (String, ConsistencyColumn) -> String) {
+        self.label = label
+        self.dateLine = dateLine
+        self.value = value
+    }
+}
+
 struct StatsView: View {
     @Binding var overflowTab: OverflowTab?
 
@@ -240,11 +263,10 @@ struct StatsView: View {
             // against (Rest = daysSinceStart - Active) — it just isn't
             // shown any more. TrainingStats.daysSinceStart stays.
             // The two banked streak rows used to sit here as standalone
-            // rows; they're the table's bottom two rows now. Their date
-            // subtitles and the 🔥 have no room in a grid cell, so they
-            // live in `streakDatesFootnote` under the table instead — the
-            // dates aren't derivable from the numbers, so they had to go
-            // somewhere rather than just being dropped.
+            // rows; they're the table's bottom two rows now ("Program
+            // Streak" / "Max Program Streak"), each with its own date
+            // line underneath it inside the grid. The 🔥 rides on the
+            // Program Streak label.
             // "Rest days banked" moved to the Current Phase section: the
             // bank resets at phase start and at each cycle finish
             // (Phase.restBankResetEvents), so it was the one phase-scoped
@@ -262,11 +284,9 @@ struct StatsView: View {
                 ("Miles walked", milesLabel(stats.milesSinceStart)),
             ])
             consistencyTable(stats)
-            streakDatesFootnote(stats)
         }
     }
 
-    /// The dates behind the table's four streak rows, which have nowhere
     /// to go inside a grid cell. Kept because they aren't recoverable from
     /// the numbers: "16" doesn't tell you the streak began Sep 8.
     ///
@@ -275,30 +295,6 @@ struct StatsView: View {
     /// actually carry dates are listed — an active streak of 0 has no
     /// start date, and streakRangeLabel already renders an ongoing streak
     /// as "– Present".
-    @ViewBuilder
-    private func streakDatesFootnote(_ stats: TrainingStats) -> some View {
-        let lines: [(String, String)] = [
-            stats.currentActiveStreakStartDate.map { ("Active", streakSinceLabel($0)) },
-            stats.maxActiveStreakRange.map { ("Max active", streakRangeLabel($0)) },
-            stats.currentStreakStartDate.map { ("Banked 🔥", streakSinceLabel($0)) },
-            stats.maxStreakRange.map { ("Max banked", streakRangeLabel($0)) },
-        ].compactMap { $0 }
-        if !lines.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(lines, id: \.0) { label, value in
-                    // Wrapping, not truncation, at accessibility sizes —
-                    // a date that reads "Jul 12, 2026 – Pres…" is worse
-                    // than one that takes two lines.
-                    Text("\(label): \(value)")
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-            .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 6, trailing: 16))
-        }
-    }
-
     private func currentPhaseSection(_ activePhase: Phase, _ stats: TrainingStats) -> some View {
         var pairs: [(String, String)] = []
         // One stat, not two — see adherenceLabel. Both halves come from
@@ -418,9 +414,17 @@ struct StatsView: View {
             // unrolls into one labelled row per cell — 16 of them, grouped
             // by row rather than by column so each statistic's four
             // columns stay adjacent and comparable while scrolling.
-            ForEach(consistencyRows(stats), id: \.label) { row in
+            ForEach(consistencyRows(stats)) { row in
                 ForEach(consistencyColumns(stats), id: \.header) { col in
                     statRow("\(row.label) — \(col.header)", row.value(col.header, col.column))
+                }
+                // The date line can't span anything here — there are no
+                // columns left to span, every cell is already its own
+                // row — so it becomes one more labelled row right after
+                // that streak's four, keeping it adjacent to the streak
+                // it belongs to rather than orphaned at the end.
+                if let dateLine = row.dateLine {
+                    statRow("\(row.label) — Dates", dateLine)
                 }
             }
         } else {
@@ -432,7 +436,7 @@ struct StatsView: View {
                             .gridColumnAlignment(.center)
                     }
                 }
-                ForEach(consistencyRows(stats), id: \.label) { row in
+                ForEach(consistencyRows(stats)) { row in
                     GridRow {
                         Text(row.label).font(.caption).foregroundStyle(.secondary)
                             .gridColumnAlignment(.leading)
@@ -441,6 +445,27 @@ struct StatsView: View {
                                 .font(.system(.subheadline, design: .monospaced)).bold()
                                 .fixedSize()
                                 .gridColumnAlignment(.center)
+                        }
+                    }
+                    // A streak's dates, directly under its own numbers
+                    // instead of in a footnote that had to re-name every
+                    // row to say which was which. The label column is
+                    // left empty and the line spans the DATA columns, so
+                    // it reads as a continuation of the row above rather
+                    // than a row of its own.
+                    //
+                    // Span is taken from consistencyColumns rather than
+                    // hardcoded, so adding a column (Miles, say) widens
+                    // this automatically instead of silently clipping it.
+                    if let dateLine = row.dateLine {
+                        GridRow {
+                            Text("")
+                            Text(dateLine)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .gridCellColumns(consistencyColumns(stats).count)
+                                .gridCellAnchor(.leading)
                         }
                     }
                 }
@@ -463,7 +488,24 @@ struct StatsView: View {
     /// The closure takes the column *header* as well as its data because
     /// the two streak rows are not read per-column the way the first two
     /// are — see below.
-    private func consistencyRows(_ stats: TrainingStats) -> [(label: String, value: (String, ConsistencyColumn) -> String)] {
+    private func consistencyRows(_ stats: TrainingStats) -> [ConsistencyRow] {
+        // **LABEL-TO-FIELD MAP**, because the on-screen names and the
+        // engine's names deliberately differ — the labels were renamed
+        // for users; the fields were not, since renaming them buys
+        // nothing and touches the whole engine:
+        //
+        //   "Daily Streak"        -> consistencyActive.currentStreak
+        //   "Max Daily Streak"    -> consistencyActive.maxStreak
+        //        ...the ACTIVE-day streak. Plain consecutive days with
+        //        something logged; ends at the first rest day.
+        //   "Program Streak"      -> TrainingStats.currentStreak
+        //   "Max Program Streak"  -> TrainingStats.maxStreak
+        //        ...the BANKED streak. computeRestBank's; survives rest
+        //        days while the bank holds.
+        //
+        // So "active" and "banked" below are the engine's words for
+        // "Daily" and "Program" on screen.
+        //
         // **The streak rows show the Active streak and how it is made up**,
         // not four independent streaks.
         //
@@ -494,8 +536,13 @@ struct StatsView: View {
         // four. Showing the banked span's absorbed rest days in that cell
         // would redefine a number that has always meant the count.
         //
-        // Those two spans are what the footnote under the table carries;
-        // they're the part a grid cell has no room for.
+        // Those two spans are why each streak row carries a `dateLine`
+        // rendered beneath it, spanning the data columns: the dates
+        // aren't recoverable from the numbers ("16" doesn't say Sep 8),
+        // and a banked/Program streak's span is a genuinely different
+        // range from the active/Daily one above it. They used to sit in
+        // a footnote under the table, which had to re-state which row
+        // each belonged to; under their own row that's redundant.
         //
         // "% of days" shares daysSinceStart as its denominator across all
         // four columns, which is what makes Lift% + Walk% = Active% and
@@ -508,37 +555,41 @@ struct StatsView: View {
         // ConsistencyPercentCell. Like the streak rows below it, the cell
         // reads across columns rather than from its own, which is why it
         // takes the header and ignores the column passed to it.
-        return [("% of days", { header, _ in
+        return [ConsistencyRow("% of days") { header, _ in
                     ConsistencyPercentCell.text(header: header,
                                                 active: stats.consistencyActive.percentOfDays,
                                                 lift: stats.consistencyLift.percentOfDays)
-                }),
-                ("Days per week", { _, col in String(format: "%.2f", col.daysPerWeek) }),
-                ("Days logged", { _, col in "\(col.daysLogged)" }),
-                ("Current Active Streak", { header, _ in
+                },
+                ConsistencyRow("Days per week") { _, col in String(format: "%.2f", col.daysPerWeek) },
+                ConsistencyRow("Days logged") { _, col in "\(col.daysLogged)" },
+                ConsistencyRow("Daily Streak",
+                               dateLine: stats.currentActiveStreakStartDate.map(streakSinceLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
                                                active: stats.consistencyActive.currentStreak,
                                                lift: stats.currentActiveStreakLiftDays,
                                                walk: stats.currentActiveStreakWalkDays)
-                }),
-                ("Max Active Streak", { header, _ in
+                },
+                ConsistencyRow("Max Daily Streak",
+                               dateLine: stats.maxActiveStreakRange.map(streakRangeLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
                                                active: stats.consistencyActive.maxStreak,
                                                lift: stats.maxActiveStreakLiftDays,
                                                walk: stats.maxActiveStreakWalkDays)
-                }),
-                ("Current Streak (banked)", { header, _ in
+                },
+                ConsistencyRow("Program Streak 🔥",
+                               dateLine: stats.currentStreakStartDate.map(streakSinceLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
                                                active: stats.currentStreak,
                                                lift: stats.currentBankedStreakLiftDays,
                                                walk: stats.currentBankedStreakWalkDays)
-                }),
-                ("Max Streak (banked)", { header, _ in
+                },
+                ConsistencyRow("Max Program Streak",
+                               dateLine: stats.maxStreakRange.map(streakRangeLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
                                                active: stats.maxStreak,
                                                lift: stats.maxBankedStreakLiftDays,
                                                walk: stats.maxBankedStreakWalkDays)
-                })]
+                }]
     }
 
     private func yearMonthCell(_ value: String, py: String) -> some View {

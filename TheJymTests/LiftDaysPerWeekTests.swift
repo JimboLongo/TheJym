@@ -515,12 +515,21 @@ final class LiftDaysPerWeekTests: XCTestCase {
 
     // MARK: - All four streak rows share one identity
     //
-    // The two active rows and the two banked rows are different measures —
-    // an active streak ends at the first rest day, a banked one survives
-    // rest days while the bank holds — but both COUNT the same thing, days
-    // you were active, so Lift + Walk = Active holds on all four and Rest
-    // is blank on all four. Asserted for the whole set in one place so a
-    // change to either pair can't silently diverge it from the other.
+    // Label-to-field map, since the on-screen names and the engine's names
+    // deliberately differ (the labels were renamed for users; the fields
+    // were not):
+    //
+    //   "Daily Streak" / "Max Daily Streak"
+    //       -> consistencyActive.currentStreak / .maxStreak — the
+    //          ACTIVE-day streak, which ends at the first rest day.
+    //   "Program Streak" / "Max Program Streak"
+    //       -> TrainingStats.currentStreak / .maxStreak — the BANKED
+    //          streak, which survives rest days while the bank holds.
+    //
+    // Different measures, but both COUNT the same thing — days you were
+    // active — so Lift + Walk = Active holds on all four and Rest is blank
+    // on all four. Asserted for the whole set in one place so a change to
+    // either pair can't silently diverge it from the other.
 
     /// Every streak row as the table renders it: (Active, Lift, Walk, Rest).
     private func streakRows(_ s: TrainingStats) -> [(name: String, active: Int, lift: Int,
@@ -533,13 +542,13 @@ final class LiftDaysPerWeekTests: XCTestCase {
             return (name, Int(cell("Active"))!, Int(cell("Lift"))!, Int(cell("Walk"))!, cell("Rest"))
         }
         return [
-            cells("Current Active Streak", s.consistencyActive.currentStreak,
+            cells("Daily Streak", s.consistencyActive.currentStreak,
                   s.currentActiveStreakLiftDays, s.currentActiveStreakWalkDays),
-            cells("Max Active Streak", s.consistencyActive.maxStreak,
+            cells("Max Daily Streak", s.consistencyActive.maxStreak,
                   s.maxActiveStreakLiftDays, s.maxActiveStreakWalkDays),
-            cells("Current Streak (banked)", s.currentStreak,
+            cells("Program Streak", s.currentStreak,
                   s.currentBankedStreakLiftDays, s.currentBankedStreakWalkDays),
-            cells("Max Streak (banked)", s.maxStreak,
+            cells("Max Program Streak", s.maxStreak,
                   s.maxBankedStreakLiftDays, s.maxBankedStreakWalkDays),
         ]
     }
