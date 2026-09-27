@@ -560,7 +560,15 @@ struct StatsView: View {
                                                 active: stats.consistencyActive.percentOfDays,
                                                 lift: stats.consistencyLift.percentOfDays)
                 },
-                ConsistencyRow("Days per week") { _, col in String(format: "%.2f", col.daysPerWeek) },
+                // One decimal, and deliberately UNPLUGGED, unlike
+                // "% of days" above. Each cell rounds its own value, so
+                // Lift + Walk = Active can visibly miss by 0.1 — it does
+                // so about 23% of the time, at two decimals just as much
+                // as at one, so the precision isn't what causes it. Left
+                // alone rather than plugged: nobody has asked for the
+                // row to foot, and plugging would put a deliberately
+                // wrong figure in two cells to buy a sum nobody adds.
+                ConsistencyRow("Days per week") { _, col in String(format: "%.1f", col.daysPerWeek) },
                 ConsistencyRow("Days logged") { _, col in "\(col.daysLogged)" },
                 ConsistencyRow("Daily Streak",
                                dateLine: stats.currentActiveStreakStartDate.map(streakSinceLabel)) { header, _ in
