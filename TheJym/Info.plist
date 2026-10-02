@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>The Jym</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Reads your walking distance so it can fill in the mileage when you log a walk, instead of you typing it from the Health app.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

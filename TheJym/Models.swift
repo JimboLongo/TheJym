@@ -1329,6 +1329,53 @@ final class SetLog {
 /// A lightweight, non-lift activity logged on a day off (a walk, a hike,
 /// stretching, whatever). Never touches Phase/WorkoutSession — it doesn't
 /// advance the split — but counts as a "logged day" for stats/streaks.
+///
+/// AUTO-CREATING THESE FROM HEALTHKIT IS DELIBERATELY OUT OF SCOPE.
+///
+/// The app has the HealthKit read entitlement and
+/// NSHealthShareUsageDescription, so pulling walking distance to PRE-FILL a
+/// distance the user then confirms is fine and is the intended direction.
+/// Creating a RestDayActivity automatically from a day's HealthKit mileage
+/// is not, and it looks like an obvious win, so here is why it isn't —
+/// three separate problems, each of which silently corrupts data rather
+/// than failing visibly:
+///
+/// 1. NO PROVENANCE FIELD. This model is date/name/distance/distanceUnit;
+///    nothing distinguishes a HealthKit-derived row from a hand-typed one.
+///    A re-sync therefore cannot update in place — it APPENDS. Open the app
+///    twice in a day and you have two walks.
+///
+/// 2. NO PER-DAY DEDUP IN THE MILES MATH. StatsEngine's `milesEntries`
+///    (StatsAndPlates.swift) sums EVERY "mi" entry with no grouping by day,
+///    because multiple genuine activities per day are legal. Combined with
+///    (1), an auto-created row sitting next to the user's own log doesn't
+///    conflict — it just doubles the mileage, everywhere: milesSinceStart,
+///    milesThisPhase, ytd/mtd, allTimeMiles, By Year, and the 3-month
+///    projection.
+///
+/// 3. IT WOULD REWRITE THE STREAKS. A RestDayActivity isn't only a distance
+///    — it makes the day an activity-rest day. It feeds the rest bank
+///    (computeRestBank charges 0.5 for one), the Daily and Program streaks,
+///    the Consistency table's Walk column, and consistencyDayKind. Auto-
+///    creating one per day of incidental walking would start crediting days
+///    you never trained, which changes what a streak MEANS rather than just
+///    what a number says.
+///
+/// What would unblock it: a provenance field (e.g. `healthKitUUID: String?`)
+/// so sync is idempotent and a re-run updates instead of appending, plus a
+/// decision about (3) that is a product call, not a technical one.
+///
+/// One more trap for any HealthKit work here: StatsEngine counts only
+/// entries whose `distanceUnit` is literally "mi". HealthKit returns meters.
+/// Convert at the boundary and always store "mi" — writing "km" doesn't
+/// error, it just makes every miles figure on the Stats page quietly
+/// smaller.
+///
+/// Verified 2026-10-02 on-device, 14 days, iPhone + Watch both writing:
+/// summing HKSampleQuery results overstates distance by 8-42% versus
+/// HKStatisticsQuery/HKStatisticsCollectionQuery with .cumulativeSum, which
+/// agreed with each other to the 4th decimal on every day. Use a statistics
+/// query; never sum raw samples.
 @Model
 final class RestDayActivity {
     var date: Date
