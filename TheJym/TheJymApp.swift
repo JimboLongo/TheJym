@@ -28,7 +28,10 @@ struct TheJymApp: App {
 /// Presented as a sheet, so each keeps its own NavigationStack/toolbar as-is,
 /// just with a "Done" button added to close it.
 enum OverflowTab: Int, Identifiable {
-    case phases, equipment, timer, settings
+    // Steps lives here rather than in the bottom bar: that bar is already
+    // at five, and a sixth would hand UIKit's own "More" tab the overflow,
+    // colliding with this menu.
+    case phases, equipment, timer, steps, settings
     var id: Int { rawValue }
 
     var title: String {
@@ -36,6 +39,7 @@ enum OverflowTab: Int, Identifiable {
         case .phases: return "Phases"
         case .equipment: return "Equipment"
         case .timer: return "Timer"
+        case .steps: return "Steps"
         case .settings: return "Settings"
         }
     }
@@ -45,6 +49,7 @@ enum OverflowTab: Int, Identifiable {
         case .phases: return "calendar"
         case .equipment: return "circle.circle"
         case .timer: return "timer"
+        case .steps: return "shoeprints.fill"
         case .settings: return "gearshape.fill"
         }
     }
@@ -67,7 +72,7 @@ struct OverflowMenuButton: View {
 
     var body: some View {
         Menu {
-            ForEach([OverflowTab.phases, .equipment, .timer, .settings]) { tab in
+            ForEach([OverflowTab.phases, .equipment, .timer, .steps, .settings]) { tab in
                 Button(tab.title, systemImage: tab.icon) { overflowTab = tab }
             }
         } label: {
@@ -110,6 +115,7 @@ struct ContentView: View {
             case .phases: PhasesView()
             case .equipment: EquipmentView()
             case .timer: TimerTemplatesListView()
+            case .steps: NavigationStack { StepsView() }
             case .settings: SettingsView()
             }
         }
