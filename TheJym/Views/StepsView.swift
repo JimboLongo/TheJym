@@ -325,11 +325,13 @@ struct StepPeriodTable: View {
                 }
             }
         } else {
-            // 8, not the 14 the Stats tables use: five columns of
-            // grouped digits is tighter than anything there, and at 375pt
-            // the extra 24pt across four gaps is the difference between
-            // "Sep 28 – Oct 4" fitting and truncating to "Sep 28 – Oct…".
-            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
+            // Five columns of grouped digits is tighter than any Stats
+            // table, so the numbers are .caption rather than .subheadline
+            // — about 20% narrower, which is what buys the gaps back up
+            // to 12 instead of the 8 they needed at subheadline size.
+            // Smaller type AND more air reads less cramped than either
+            // alone; at 375pt "Sep 28 – Oct 4" still fits whole.
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
                     Text("")
                     ForEach(["Average", "Total", "Best", "Worst"], id: \.self) { h in
@@ -345,7 +347,7 @@ struct StepPeriodTable: View {
                         ForEach([bucket.dailyAverage, bucket.total,
                                  bucket.best, bucket.worst], id: \.self) { v in
                             Text(value(v))
-                                .font(.system(.subheadline, design: .monospaced)).bold()
+                                .font(.system(.caption, design: .monospaced)).bold()
                                 .fixedSize()
                         }
                     }
