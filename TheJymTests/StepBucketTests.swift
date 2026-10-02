@@ -126,6 +126,49 @@ final class StepBucketTests: XCTestCase {
         XCTAssertEqual(years[1].dailyAverage, 200, accuracy: 0.001)
     }
 
+    // MARK: - Best / worst day
+
+    func testBestAndWorstAreTheExtremeDaysInThePeriod() {
+        let days = counts([(2026, 9, 28, 5000), (2026, 9, 29, 21453),
+                           (2026, 9, 30, 900), (2026, 10, 1, 12000)])
+        let week = StepBucket.buckets(from: days, scale: .week)[0]
+        XCTAssertEqual(week.best, 21453)
+        XCTAssertEqual(week.worst, 900)
+        XCTAssertEqual(week.total, 39353)
+    }
+
+    /// Best/worst respect Since for the same reason the average does —
+    /// they're computed from the already-filtered days, so a day outside
+    /// the window can't win either column.
+    func testSinceExcludesDaysFromBestAndWorst() {
+        let days = counts([(2026, 9, 28, 30000), (2026, 9, 29, 100),
+                           (2026, 10, 1, 9000), (2026, 10, 2, 11000)])
+        let visible = StepBucket.visible(days, since: day(2026, 10, 1))
+        let week = StepBucket.buckets(from: visible, scale: .week)[0]
+        XCTAssertEqual(week.best, 11000, "the excluded 30,000 day must not win Best")
+        XCTAssertEqual(week.worst, 9000, "nor the excluded 100 day win Worst")
+    }
+
+    func testSingleDayPeriodHasBestEqualToWorst() {
+        let days = counts([(2026, 10, 1, 7777)])
+        let month = StepBucket.buckets(from: days, scale: .month)[0]
+        XCTAssertEqual(month.best, 7777)
+        XCTAssertEqual(month.worst, 7777)
+        XCTAssertEqual(month.dailyAverage, 7777, accuracy: 0.001)
+    }
+
+    /// A day with no HealthKit data is ABSENT, not zero — so it can never
+    /// become the "worst" day. Worst means worst RECORDED day. Pinned
+    /// because the opposite is the intuitive reading.
+    func testAbsentDaysDoNotBecomeAZeroWorstDay() {
+        // Mon and Wed only; Tue has no data at all.
+        let days = counts([(2026, 9, 28, 4000), (2026, 9, 30, 6000)])
+        let week = StepBucket.buckets(from: days, scale: .week)[0]
+        XCTAssertEqual(week.worst, 4000, "a missing Tuesday must not read as 0")
+        XCTAssertEqual(week.days, 2)
+        XCTAssertEqual(week.dailyAverage, 5000, accuracy: 0.001)
+    }
+
     func testEmptyInputGivesNoBuckets() {
         for scale in StepScale.allCases {
             XCTAssertTrue(StepBucket.buckets(from: [], scale: scale).isEmpty)

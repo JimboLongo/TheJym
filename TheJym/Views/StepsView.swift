@@ -26,6 +26,13 @@ struct StepBucket: Identifiable, Hashable {
     let label: String
     let total: Double
     let days: Int
+    /// Highest and lowest single day INSIDE this bucket, after the Since
+    /// filter. Both are days that actually have data: HealthKit only
+    /// returns days with a non-zero count, so a day you left the phone at
+    /// home is absent rather than zero, and "worst" therefore means worst
+    /// RECORDED day — not "the day you moved least".
+    let best: Double
+    let worst: Double
     var id: String { label }
     var dailyAverage: Double { days > 0 ? total / Double(days) : 0 }
 }
@@ -70,16 +77,20 @@ extension StepBucket {
             Dictionary(grouping: days) { key($0.day) }
                 .sorted { $0.key > $1.key }
                 .map { periodStart, inPeriod in
-                    StepBucket(label: label(periodStart),
-                               total: inPeriod.reduce(0) { $0 + $1.value },
-                               days: inPeriod.count)
+                    let values = inPeriod.map(\.value)
+                    return StepBucket(label: label(periodStart),
+                                      total: values.reduce(0, +),
+                                      days: inPeriod.count,
+                                      best: values.max() ?? 0,
+                                      worst: values.min() ?? 0)
                 }
         }
         switch scale {
         case .day:
             return days.sorted { $0.day > $1.day }
                 .map { StepBucket(label: dayFormat.string(from: $0.day),
-                                  total: $0.value, days: 1) }
+                                  total: $0.value, days: 1,
+                                  best: $0.value, worst: $0.value) }
         case .week:
             // Monday-start, matching Formatters.nearestPastMonday, which
             // is what BodyWeightView/TodayView already snap weigh-ins to.
@@ -302,7 +313,8 @@ struct StepPeriodTable: View {
             // 80", "2,771 / ,928" — which is worse than any amount of
             // vertical space. Same stacked treatment the summary rows use.
             ForEach(buckets) { bucket in
-                ForEach([("Average", bucket.dailyAverage), ("Total", bucket.total)], id: \.0) { pair in
+                ForEach([("Average", bucket.dailyAverage), ("Total", bucket.total),
+                         ("Best day", bucket.best), ("Worst day", bucket.worst)], id: \.0) { pair in
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(bucket.label) — \(pair.0)")
                             .font(.caption).foregroundStyle(.secondary)
@@ -313,25 +325,29 @@ struct StepPeriodTable: View {
                 }
             }
         } else {
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 8) {
+            // 8, not the 14 the Stats tables use: five columns of
+            // grouped digits is tighter than anything there, and at 375pt
+            // the extra 24pt across four gaps is the difference between
+            // "Sep 28 – Oct 4" fitting and truncating to "Sep 28 – Oct…".
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
                 GridRow {
                     Text("")
-                    Text("Average").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.trailing)
-                    Text("Total").font(.caption2.bold()).foregroundStyle(.secondary)
-                        .gridColumnAlignment(.trailing)
+                    ForEach(["Average", "Total", "Best", "Worst"], id: \.self) { h in
+                        Text(h).font(.caption2.bold()).foregroundStyle(.secondary)
+                            .gridColumnAlignment(.trailing)
+                    }
                 }
                 ForEach(buckets) { bucket in
                     GridRow {
                         Text(bucket.label).font(.caption).foregroundStyle(.secondary)
                             .lineLimit(1).minimumScaleFactor(0.6)
                             .gridColumnAlignment(.leading)
-                        Text(value(bucket.dailyAverage))
-                            .font(.system(.subheadline, design: .monospaced)).bold()
-                            .fixedSize()
-                        Text(value(bucket.total))
-                            .font(.system(.subheadline, design: .monospaced)).bold()
-                            .fixedSize()
+                        ForEach([bucket.dailyAverage, bucket.total,
+                                 bucket.best, bucket.worst], id: \.self) { v in
+                            Text(value(v))
+                                .font(.system(.subheadline, design: .monospaced)).bold()
+                                .fixedSize()
+                        }
                     }
                 }
             }
