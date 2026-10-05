@@ -178,6 +178,7 @@ struct StatsView: View {
         let stats = self.stats
         return NavigationStack {
             List {
+                rollingWindowSection(stats)
                 consistencySection(stats)
                 if let activePhase {
                     currentPhaseSection(activePhase, stats)
@@ -236,6 +237,19 @@ struct StatsView: View {
     }
 
     // MARK: - Sections
+
+    @ViewBuilder
+    private func rollingWindowSection(_ stats: TrainingStats) -> some View {
+        if !stats.rollingWindows.isEmpty {
+            Section {
+                RollingWindowTable(windows: stats.rollingWindows)
+            } header: {
+                Text("Last 30 / 60 / 90 Days")
+            } footer: {
+                Text("Each window divides by its own length, so days before your training start count as Rest. That's deliberately different from the Consistency table below, which divides by days since you started.")
+            }
+        }
+    }
 
     // Purely Training-Start-Date-based — no phase concepts here. Anything
     // specific to whatever Phase is currently active lives in its own
@@ -1128,6 +1142,76 @@ struct YearlyTotalsTable: View {
                 }
             }
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+        }
+    }
+}
+
+/// "Last N days" rows: Active / Lift / Walk / Rest, each as a count with
+/// its share of the window underneath.
+///
+/// TWO LINES PER CELL, and that was forced by measurement rather than
+/// chosen. The one-line form "176 (48.2%)" needs 458.7pt of table against
+/// 393pt of phone — over by 66pt, and no amount of tightening saves it:
+/// even at zero column spacing it wants 410.7pt. Stacking the count above
+/// the percentage makes the cell exactly as wide as its wider line, the
+/// percentage, which is what "48.2%"-only would have cost — so it fits in
+/// 310pt while keeping the count that percentage-only would have thrown
+/// away. The window ("176/365") never appears in the cell because the row
+/// label already states it.
+struct RollingWindowTable: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let windows: [RollingWindow]
+
+    private static let columns = ["Active", "Lift", "Walk", "Rest"]
+
+    private func pct(_ v: Double) -> String { String(format: "%.1f%%", v) }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            // Label ABOVE value, not LabeledContent — the Steps screen
+            // found that side-by-side squeezes a long value into wrapping
+            // mid-number at AX5, and "176 (48.2%)" is exactly that shape.
+            // Here the two halves get their own line anyway, so the cell
+            // reads as one phrase: "176 of 365 days · 48.2%".
+            ForEach(windows) { window in
+                ForEach(Self.columns, id: \.self) { column in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Last \(window.days) days — \(column)")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(window.count(for: column)) of \(window.days) days · \(pct(window.percent(for: column)))")
+                            .font(.system(.body, design: .monospaced)).bold()
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        } else {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    Text("")
+                    ForEach(Self.columns, id: \.self) { column in
+                        Text(column).font(.caption2.bold()).foregroundStyle(.secondary)
+                            .gridColumnAlignment(.trailing)
+                    }
+                }
+                ForEach(windows) { window in
+                    GridRow {
+                        Text("\(window.days) days").font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).gridColumnAlignment(.leading)
+                        ForEach(Self.columns, id: \.self) { column in
+                            VStack(alignment: .trailing, spacing: 0) {
+                                Text("\(window.count(for: column))")
+                                    .font(.system(.caption, design: .monospaced)).bold()
+                                Text(pct(window.percent(for: column)))
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .fixedSize()
+                        }
+                    }
+                }
+            }
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
         }
     }
 }

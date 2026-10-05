@@ -133,6 +133,10 @@ struct TrainingStats {
     // same days and differ only in what breaks them; see
     // ConsistencyStreakCell for why that isn't the duplication it looks
     // like.
+    /// "Last N days" rows, ascending by window length. Denominator is
+    /// the window, not daysSinceStart — see RollingWindow.
+    var rollingWindows: [RollingWindow]
+
     var currentBankedStreakLiftDays: Int
     var currentBankedStreakWalkDays: Int
     var maxBankedStreakLiftDays: Int
@@ -263,6 +267,49 @@ enum ConsistencyStreakCell {
         case "Rest": return "—"
         default: return "\(active)"
         }
+    }
+}
+
+/// One "last N days" row: how the window ending today breaks down.
+///
+/// THE DENOMINATOR IS THE WINDOW, ALWAYS — 365 for the 365-day row, even
+/// if your training start date is more recent than that, even if there is
+/// no data at all that far back. Days before you started, and days before
+/// HealthKit/the app existed, count as Rest.
+///
+/// That is deliberate and it is NOT the Consistency table's rule. There,
+/// every rate divides by `daysSinceStart`, because the question is "how
+/// have I done since I started tracking". Here the question is "how have
+/// I done over the last N days", which a shrinking denominator would
+/// quietly refuse to answer: with a 90-day history, a 365-day window
+/// divided by 90 would report the same figure as the 90-day row and the
+/// row would be pointless. Do NOT "reconcile" the two — they disagree on
+/// purpose.
+///
+/// Two identities hold on every row, by construction rather than by
+/// arithmetic afterwards:
+///
+///     lift + walk == active
+///     active + rest == days
+struct RollingWindow: Identifiable, Hashable {
+    /// 30, 60, 90, 120, 180, 365.
+    let days: Int
+    let active: Int
+    let lift: Int
+    let walk: Int
+    var rest: Int { days - active }
+    var id: Int { days }
+
+    func count(for column: String) -> Int {
+        switch column {
+        case "Lift": return lift
+        case "Walk": return walk
+        case "Rest": return rest
+        default: return active
+        }
+    }
+    func percent(for column: String) -> Double {
+        days > 0 ? Double(count(for: column)) / Double(days) * 100 : 0
     }
 }
 
@@ -599,6 +646,41 @@ enum StatsEngine {
         // way liftDays/walkOnlyDays partition `loggedDays`, so a day with
         // both a lift and a walk extends the Lift streak only.
         let streakLiftDays = allLiftDays.intersection(activeDays)
+        // ── Rolling "last N days" windows ────────────────────────────
+        //
+        // Same classifier as everything else: `streakLiftDays` is the
+        // lift/walk partition of `activeDays` the streak columns already
+        // run on, so a day with both a lift and a walk lands in Lift here
+        // too. No fourth bucketing rule.
+        //
+        // ONE pass over activeDays, not 6 windows x 4 counts = 24 scans.
+        // Each active day is reduced to its AGE in days and dropped into
+        // the lift or walk list; the lists are then swept once in
+        // ascending window order. Because the windows nest (every day in
+        // the 30 is in the 60), the two cursors only ever move forward —
+        // the running totals at each boundary ARE that window's counts.
+        let rollingLengths = [30, 60, 90, 120, 180, 365]
+        var liftAges: [Int] = [], walkAges: [Int] = []
+        for day in activeDays {
+            guard let age = cal.dateComponents([.day], from: day, to: today).day,
+                  age >= 0, age < (rollingLengths.last ?? 0) else { continue }
+            if streakLiftDays.contains(day) { liftAges.append(age) } else { walkAges.append(age) }
+        }
+        liftAges.sort(); walkAges.sort()
+        var liftCursor = 0, walkCursor = 0, liftSoFar = 0, walkSoFar = 0
+        let rollingWindows: [RollingWindow] = rollingLengths.map { length in
+            while liftCursor < liftAges.count, liftAges[liftCursor] < length {
+                liftCursor += 1; liftSoFar += 1
+            }
+            while walkCursor < walkAges.count, walkAges[walkCursor] < length {
+                walkCursor += 1; walkSoFar += 1
+            }
+            // active is the SUM, never counted separately, which is what
+            // makes lift + walk == active true by construction.
+            return RollingWindow(days: length, active: liftSoFar + walkSoFar,
+                                 lift: liftSoFar, walk: walkSoFar)
+        }
+
         let liftStreaks = activeDayStreaks(activeDays: streakLiftDays, today: today, cal: cal)
         let walkStreaks = activeDayStreaks(activeDays: activeDays.subtracting(streakLiftDays),
                                            today: today, cal: cal)
@@ -1022,6 +1104,7 @@ enum StatsEngine {
                              currentActiveStreakWalkDays: currentComposition.walk,
                              maxActiveStreakLiftDays: maxComposition.lift,
                              maxActiveStreakWalkDays: maxComposition.walk,
+                             rollingWindows: rollingWindows,
                              currentBankedStreakLiftDays: bankedCurrentComposition.lift,
                              currentBankedStreakWalkDays: bankedCurrentComposition.walk,
                              maxBankedStreakLiftDays: bankedMaxComposition.lift,
