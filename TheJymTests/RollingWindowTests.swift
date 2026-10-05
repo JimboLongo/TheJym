@@ -134,6 +134,63 @@ final class RollingWindowTests: XCTestCase {
         XCTAssertNotEqual(thirty.percent(for: "Active"), year.percent(for: "Active"))
     }
 
+    // MARK: - The window anchor
+    //
+    // Windows end at effectiveToday, not today: an unlogged today
+    // shouldn't drag every percentage down just because it's 9am. Both
+    // branches seed a solid run of 30 lift days and expect a perfect
+    // 30/30 — which only comes out right if the window sits where it
+    // should. Under the other anchor each case loses a day off one end
+    // and reads 29.
+
+    /// Nothing logged today, so the window is the 30 days ending
+    /// YESTERDAY: day(-30) ... day(-1).
+    @MainActor
+    func testWindowEndsYesterdayWhenNothingIsLoggedToday() {
+        let context = makeContext()
+        let sessions = (1...30).map { lift(on: day(-$0), context: context) }
+        let result = stats(sessions, startOffset: -60)
+
+        let thirty = result.rollingWindows.first { $0.days == 30 }!
+        XCTAssertEqual(thirty.active, 30,
+                       "the window should cover day(-30)...day(-1) exactly; anchoring at today would drop day(-30) and leave 29")
+        XCTAssertEqual(thirty.rest, 0,
+                       "an unlogged today must be excluded from the window, not counted as a Rest day inside it")
+        XCTAssertEqual(thirty.percent(for: "Active"), 100, accuracy: 0.0001)
+    }
+
+    /// Something logged today, so the window ends TODAY:
+    /// day(-29) ... day(0).
+    @MainActor
+    func testWindowEndsTodayWhenSomethingIsLoggedToday() {
+        let context = makeContext()
+        let sessions = (0...29).map { lift(on: day(-$0), context: context) }
+        let result = stats(sessions, startOffset: -60)
+
+        let thirty = result.rollingWindows.first { $0.days == 30 }!
+        XCTAssertEqual(thirty.active, 30,
+                       "the window should cover day(-29)...today exactly")
+        XCTAssertEqual(thirty.rest, 0)
+    }
+
+    /// The boundary day itself, isolated: day(-30) is inside the window
+    /// when today is unlogged and outside it when today is logged.
+    @MainActor
+    func testTheOldestIncludedDayShiftsWithTheAnchor() {
+        let unloggedToday = makeContext()
+        let onlyOld = lift(on: day(-30), context: unloggedToday)
+        let shifted = stats([onlyOld], startOffset: -60)
+        XCTAssertEqual(shifted.rollingWindows.first { $0.days == 30 }!.active, 1,
+                       "with today unlogged the window reaches back to day(-30)")
+
+        let loggedToday = makeContext()
+        let old = lift(on: day(-30), context: loggedToday)
+        let now = lift(on: day(0), context: loggedToday)
+        let anchored = stats([old, now], startOffset: -60)
+        XCTAssertEqual(anchored.rollingWindows.first { $0.days == 30 }!.active, 1,
+                       "logging today pushes day(-30) out — only today remains inside")
+    }
+
     @MainActor
     func testADayWithBothALiftAndAWalkCountsOnceAsLift() {
         let context = makeContext()

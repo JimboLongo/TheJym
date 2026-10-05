@@ -270,7 +270,9 @@ enum ConsistencyStreakCell {
     }
 }
 
-/// One "last N days" row: how the window ending today breaks down.
+/// One "last N days" row: how the window ending at `effectiveToday`
+/// breaks down — today once anything is logged for it, yesterday until
+/// then. See the anchor comment in compute() for why.
 ///
 /// THE DENOMINATOR IS THE WINDOW, ALWAYS — 365 for the 365-day row, even
 /// if your training start date is more recent than that, even if there is
@@ -659,10 +661,24 @@ enum StatsEngine {
         // ascending window order. Because the windows nest (every day in
         // the 30 is in the 60), the two cursors only ever move forward —
         // the running totals at each boundary ARE that window's counts.
+        //
+        // ANCHORED AT effectiveToday, NOT today. An unlogged today
+        // shouldn't drag every percentage down just because it's 9am: the
+        // day enters the window once it has something in it, and until
+        // then the window is the 30 days ending YESTERDAY rather than 30
+        // days one of which is guaranteed empty. Note that today is then
+        // excluded outright — the `age >= 0` guard drops it, since
+        // relative to an effectiveToday of yesterday it ages to -1 — so
+        // it isn't silently counted as Rest either.
+        //
+        // Reuses the local the rest of compute() already runs on rather
+        // than re-deriving the rule; daysSinceStart depends on the same
+        // value, and two copies of "is today logged yet" would eventually
+        // disagree.
         let rollingLengths = [30, 60, 90, 120, 180, 365]
         var liftAges: [Int] = [], walkAges: [Int] = []
         for day in activeDays {
-            guard let age = cal.dateComponents([.day], from: day, to: today).day,
+            guard let age = cal.dateComponents([.day], from: day, to: effectiveToday).day,
                   age >= 0, age < (rollingLengths.last ?? 0) else { continue }
             if streakLiftDays.contains(day) { liftAges.append(age) } else { walkAges.append(age) }
         }
