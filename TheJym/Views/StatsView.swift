@@ -1189,19 +1189,26 @@ struct RollingWindowTable: View {
             // Headers and data both CENTER on the column, so a header
             // sits over its numbers rather than off to one side of them.
             //
-            // Sizes are up a step from the first pass (count .caption ->
-            // .subheadline, percent 10pt -> .caption, label .caption ->
-            // .subheadline) and still fit: a stacked cell is only as wide
-            // as its wider line, and that's the percentage, which at
-            // .caption is 44.5pt. Label 64 + 4x44.5 + 4x12 spacing + 32
-            // insets = 322pt against 375 — 53pt of slack, so nothing
-            // wraps or shrinks.
+            // The four data columns are EQUAL WIDTH, not content-sized:
+            // each cell is .fixedSize() (so its own text can't wrap) and
+            // then .frame(maxWidth: .infinity), which makes the column
+            // flexible. Four equally-flexible columns split the leftover
+            // evenly, so Rest gets the same span as Active even though
+            // "1" is narrower than "176". Only the row label stays
+            // intrinsic.
+            //
+            // The narrowest case clears comfortably. At 375pt:
+            // (375 - 32 insets - 64 label - 48 spacing) / 4 = 57.8pt per
+            // column, against the 44.5pt that "100.0%" needs at .caption
+            // — the widest line any cell can contain. 13pt spare, so
+            // nothing wraps or shrinks at equal width.
             Grid(alignment: .center, horizontalSpacing: 12, verticalSpacing: 10) {
                 GridRow {
                     Text("")
                     ForEach(Self.columns, id: \.self) { column in
                         Text(column).font(.caption.bold()).foregroundStyle(.secondary)
                             .fixedSize()
+                            .frame(maxWidth: .infinity)
                             .gridColumnAlignment(.center)
                     }
                 }
@@ -1214,11 +1221,13 @@ struct RollingWindowTable: View {
                             VStack(alignment: .center, spacing: 1) {
                                 Text("\(window.count(for: column))")
                                     .font(.system(.subheadline, design: .monospaced)).bold()
+                                    .fixedSize()
                                 Text(pct(window.percent(for: column)))
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
+                                    .fixedSize()
                             }
-                            .fixedSize()
+                            .frame(maxWidth: .infinity)
                         }
                     }
                 }
