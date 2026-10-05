@@ -244,7 +244,7 @@ struct StatsView: View {
             Section {
                 RollingWindowTable(windows: stats.rollingWindows)
             } header: {
-                Text("Last 30 / 60 / 90 Days")
+                Text("Rolling Averages")
             } footer: {
                 Text("Each window divides by its own length, so days before your training start count as Rest. That's deliberately different from the Consistency table below, which divides by days since you started.")
             }
@@ -1186,24 +1186,36 @@ struct RollingWindowTable: View {
                 }
             }
         } else {
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+            // Headers and data both CENTER on the column, so a header
+            // sits over its numbers rather than off to one side of them.
+            //
+            // Sizes are up a step from the first pass (count .caption ->
+            // .subheadline, percent 10pt -> .caption, label .caption ->
+            // .subheadline) and still fit: a stacked cell is only as wide
+            // as its wider line, and that's the percentage, which at
+            // .caption is 44.5pt. Label 64 + 4x44.5 + 4x12 spacing + 32
+            // insets = 322pt against 375 — 53pt of slack, so nothing
+            // wraps or shrinks.
+            Grid(alignment: .center, horizontalSpacing: 12, verticalSpacing: 10) {
                 GridRow {
                     Text("")
                     ForEach(Self.columns, id: \.self) { column in
-                        Text(column).font(.caption2.bold()).foregroundStyle(.secondary)
-                            .gridColumnAlignment(.trailing)
+                        Text(column).font(.caption.bold()).foregroundStyle(.secondary)
+                            .fixedSize()
+                            .gridColumnAlignment(.center)
                     }
                 }
                 ForEach(windows) { window in
                     GridRow {
-                        Text("\(window.days) days").font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).gridColumnAlignment(.leading)
+                        Text("\(window.days) days").font(.subheadline).foregroundStyle(.secondary)
+                            .lineLimit(1).fixedSize()
+                            .gridColumnAlignment(.leading)
                         ForEach(Self.columns, id: \.self) { column in
-                            VStack(alignment: .trailing, spacing: 0) {
+                            VStack(alignment: .center, spacing: 1) {
                                 Text("\(window.count(for: column))")
-                                    .font(.system(.caption, design: .monospaced)).bold()
+                                    .font(.system(.subheadline, design: .monospaced)).bold()
                                 Text(pct(window.percent(for: column)))
-                                    .font(.system(size: 10, design: .monospaced))
+                                    .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                             }
                             .fixedSize()
