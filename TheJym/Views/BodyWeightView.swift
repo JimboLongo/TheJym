@@ -17,11 +17,13 @@ struct BodyWeightView: View {
     @Query(sort: \BodyWeightEntry.date) private var weights: [BodyWeightEntry]
 
     @State private var newWeightText = ""
-    @State private var selectedWeightDate = Formatters.nearestPastMonday()
+    @State private var selectedWeightDate = Calendar.current.startOfDay(for: .now)
     @FocusState private var weightFieldFocused: Bool
 
-    private var existingEntryThisWeek: BodyWeightEntry? {
-        weights.first { Calendar.current.isDate($0.date, inSameDayAs: selectedWeightDate) }
+    /// One entry per calendar day — logging twice on a day updates it,
+    /// two different days in one week are two entries.
+    private var existingEntryOnSelectedDay: BodyWeightEntry? {
+        BodyWeightEntry.entry(on: selectedWeightDate, in: weights)
     }
 
     var body: some View {
@@ -31,12 +33,19 @@ struct BodyWeightView: View {
                     // Weight is tracked weekly, not daily — whatever day is
                     // tapped snaps to that week's Monday, so only a Monday
                     // is ever actually selectable.
-                    DatePicker("Week Starting Monday", selection: Binding(
+                                        // Weigh-ins are recorded to the day they're taken.
+                    // Normalised to midnight rather than stored raw: a
+                    // date-only picker carries the bound value's time
+                    // along, and BodyWeightEntry.resolved(asOf:) matches
+                    // `entry.date <= date`, so an entry stamped 3pm would
+                    // not resolve for a workout logged at 9am the same
+                    // day.
+                    DatePicker("Date", selection: Binding(
                         get: { selectedWeightDate },
-                        set: { selectedWeightDate = Formatters.nearestPastMonday(from: $0) }
+                        set: { selectedWeightDate = Calendar.current.startOfDay(for: $0) }
                     ), in: ...Date(), displayedComponents: .date)
-                    if existingEntryThisWeek != nil {
-                        Text("Already logged this week — logging again updates it.")
+                    if existingEntryOnSelectedDay != nil {
+                        Text("Already logged on this date — logging again updates it.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     HStack {
@@ -101,14 +110,14 @@ struct BodyWeightView: View {
 
     private func logWeight() {
         guard let w = Double(newWeightText) else { return }
-        if let existing = existingEntryThisWeek {
+        if let existing = existingEntryOnSelectedDay {
             existing.weight = w
         } else {
             context.insert(BodyWeightEntry(date: selectedWeightDate, weight: w))
         }
         try? context.save()
         newWeightText = ""
-        selectedWeightDate = Formatters.nearestPastMonday()
+        selectedWeightDate = Calendar.current.startOfDay(for: .now)
         weightFieldFocused = false
     }
 }

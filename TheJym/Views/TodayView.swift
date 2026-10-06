@@ -60,7 +60,7 @@ struct TodayView: View {
     @State private var editingQuickWorkout: PhaseDay?
 
     @State private var newWeightText = ""
-    @State private var selectedWeightDate = Formatters.nearestPastMonday()
+    @State private var selectedWeightDate = Calendar.current.startOfDay(for: .now)
     @FocusState private var weightFieldFocused: Bool
     /// Bumped whenever this tab reappears (e.g. returning from a workout) —
     /// forces the exercise preview to re-read the in-progress draft from
@@ -68,8 +68,10 @@ struct TodayView: View {
     /// invalidate this view on their own.
     @State private var draftRefreshTick = 0
 
-    private var existingWeightEntryThisWeek: BodyWeightEntry? {
-        bodyWeightsForQuickAdd.first { Calendar.current.isDate($0.date, inSameDayAs: selectedWeightDate) }
+    /// One entry per calendar day — logging twice on a day updates it,
+    /// two different days in one week are two entries.
+    private var existingEntryOnSelectedDay: BodyWeightEntry? {
+        BodyWeightEntry.entry(on: selectedWeightDate, in: bodyWeightsForQuickAdd)
     }
 
     private var activePhase: Phase? { phases.first(where: \.isActive) }
@@ -249,15 +251,19 @@ struct TodayView: View {
     /// copy), just a faster path than switching tabs.
     private var bodyWeightQuickAddSection: some View {
         Section("Body Weight") {
-            // Weight is tracked weekly, not daily — whatever day is tapped
-            // snaps to that week's Monday, so only a Monday is ever
-            // actually selectable.
-            DatePicker("Week Starting Monday", selection: Binding(
+                        // Weigh-ins are recorded to the day they're taken.
+            // Normalised to midnight rather than stored raw: a
+            // date-only picker carries the bound value's time
+            // along, and BodyWeightEntry.resolved(asOf:) matches
+            // `entry.date <= date`, so an entry stamped 3pm would
+            // not resolve for a workout logged at 9am the same
+            // day.
+            DatePicker("Date", selection: Binding(
                 get: { selectedWeightDate },
-                set: { selectedWeightDate = Formatters.nearestPastMonday(from: $0) }
+                set: { selectedWeightDate = Calendar.current.startOfDay(for: $0) }
             ), in: ...Date(), displayedComponents: .date)
-            if existingWeightEntryThisWeek != nil {
-                Text("Already logged this week — logging again updates it.")
+            if existingEntryOnSelectedDay != nil {
+                Text("Already logged on this date — logging again updates it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
@@ -288,14 +294,14 @@ struct TodayView: View {
 
     private func logWeight() {
         guard let w = Double(newWeightText) else { return }
-        if let existing = existingWeightEntryThisWeek {
+        if let existing = existingEntryOnSelectedDay {
             existing.weight = w
         } else {
             context.insert(BodyWeightEntry(date: selectedWeightDate, weight: w))
         }
         try? context.save()
         newWeightText = ""
-        selectedWeightDate = Formatters.nearestPastMonday()
+        selectedWeightDate = Calendar.current.startOfDay(for: .now)
         weightFieldFocused = false
     }
 

@@ -1467,6 +1467,34 @@ final class BodyWeightEntry {
     static func resolved(asOf date: Date, in entries: [BodyWeightEntry]) -> Double? {
         entries.last { $0.date <= date }?.weight
     }
+
+    /// The entry already on `day`, if any — one entry per CALENDAR DAY is
+    /// the upsert rule, so logging twice on a day updates rather than
+    /// appends, while two different days in one week are two entries.
+    ///
+    /// Shared by the Weight tab and the Train tab's quick-add, which ran
+    /// identical copies of this before weigh-ins could land on any day.
+    static func entry(on day: Date, in entries: [BodyWeightEntry],
+                      cal: Calendar = .current) -> BodyWeightEntry? {
+        entries.first { cal.isDate($0.date, inSameDayAs: day) }
+    }
+
+    /// Whether ANY entry falls in the Monday-to-Sunday week containing
+    /// `day` — what the weekly reminder asks, which is a different
+    /// question from the per-day upsert above.
+    ///
+    /// Still weekly on purpose: the reminder's job is "you haven't weighed
+    /// in this week", and that didn't change just because an entry can now
+    /// land on a Wednesday. Monday boundaries via
+    /// Formatters.nearestPastMonday, the same week definition the Steps
+    /// screen buckets on, so nothing in the app disagrees about which week
+    /// a day belongs to.
+    static func loggedInWeek(of day: Date, in entries: [BodyWeightEntry],
+                             cal: Calendar = .current) -> Bool {
+        let start = Formatters.nearestPastMonday(from: day)
+        guard let end = cal.date(byAdding: .day, value: 7, to: start) else { return false }
+        return entries.contains { $0.date >= start && $0.date < end }
+    }
 }
 
 // MARK: - Timers

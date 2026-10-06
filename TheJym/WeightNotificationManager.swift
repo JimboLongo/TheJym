@@ -2,12 +2,16 @@
 //  WeightNotificationManager.swift
 //  TheJym
 //
-//  A local notification on Mondays — the only day weight is ever logged to
-//  (BodyWeightView/TodayView both snap to Formatters.nearestPastMonday) —
-//  reminding you to log it. Rescheduled fresh every time the app's scene
-//  phase changes (TheJymApp.ContentView), same pattern as
-//  StreakNotificationManager, so it never fires once this week's entry
-//  already exists.
+//  A local notification on Mondays, reminding you to weigh in for the week
+//  ahead. Rescheduled fresh every time the app's scene phase changes
+//  (TheJymApp.ContentView), same pattern as StreakNotificationManager, so
+//  it never fires once this week's entry already exists.
+//
+//  Monday is just when the nudge lands; it is NOT when weight has to be
+//  logged. Weigh-ins record to whatever day they're taken, and
+//  `alreadyLoggedThisWeek` is satisfied by any entry in the Mon-Sun week
+//  (BodyWeightEntry.loggedInWeek) — a Wednesday weigh-in silences it for
+//  the rest of that week.
 //
 
 import Foundation

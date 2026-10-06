@@ -185,17 +185,26 @@ struct ContentView: View {
                                           reminderHour: settings.streakReminderHour)
     }
 
-    /// "Already logged this week" mirrors BodyWeightView/TodayView's own
-    /// upsert check — an entry dated to this week's Monday
-    /// (Formatters.nearestPastMonday) already exists.
+    /// Satisfied by ANY entry in the current Monday-to-Sunday week, not
+    /// by one dated exactly to that Monday.
+    ///
+    /// It used to check the Monday itself, which was equivalent only
+    /// while every weigh-in snapped there. Now that an entry records to
+    /// the day it was taken, that check would miss a Wednesday weigh-in
+    /// and the reminder would keep firing all week at someone who'd
+    /// already logged.
+    ///
+    /// Deliberately still WEEKLY — this no longer mirrors the views'
+    /// per-day upsert, because the two answer different questions: the
+    /// upsert asks "is there already an entry on this day", the reminder
+    /// asks "have I weighed in at all this week".
     private func refreshWeightNotification() {
         guard let settings = settingsList.first, settings.weightRemindersEnabled else {
             WeightNotificationManager.cancel()
             return
         }
-        let monday = Formatters.nearestPastMonday()
         let bodyWeights = (try? context.fetch(FetchDescriptor<BodyWeightEntry>())) ?? []
-        let alreadyLoggedThisWeek = bodyWeights.contains { Calendar.current.isDate($0.date, inSameDayAs: monday) }
+        let alreadyLoggedThisWeek = BodyWeightEntry.loggedInWeek(of: .now, in: bodyWeights)
         WeightNotificationManager.refresh(enabled: true, alreadyLoggedThisWeek: alreadyLoggedThisWeek,
                                           reminderHour: settings.weightReminderHour)
     }
