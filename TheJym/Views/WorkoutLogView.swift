@@ -1070,6 +1070,12 @@ struct WorkoutLogView: View {
         // Must be read BEFORE the new session is linked to the phase, since
         // it reflects slot-fill state as of right now.
         let isBonus = !day.isRest && (phase?.isSlotFilled(for: day) ?? false)
+        // Likewise read BEFORE the insert below: these describe the day as
+        // it stood WITHOUT this workout, which is what makes the delta a
+        // delta. `allWorkoutSessions` is the @Query, so this is a filter
+        // over sessions already in hand — no extra fetch, no stats
+        // snapshot, no second compute pass.
+        let sessionsBeforeSave = allWorkoutSessions
         // A logged workout overrides a gap-filled "nothing happened" Rest
         // Day placeholder for this same date — they shouldn't coexist.
         WorkoutSession.removeBackfilledRestPlaceholder(on: loggedDate, context: context)
@@ -1182,6 +1188,15 @@ struct WorkoutLogView: View {
             session.durationSeconds = Int(workoutStopwatch.elapsed.rounded())
         }
         try? context.save()
+        // The new session counts as a lift exactly when it produced at
+        // least one non-rest-activity ExerciseLog — the same thing
+        // WorkoutSession.hasLiftingLog asks, read off the session now that
+        // its logs exist. A finish with nothing logged leaves this false
+        // and records no impact at all.
+        WorkoutImpact.shared.record(
+            WorkoutImpact.deltas(forFinishingOn: loggedDate,
+                                 existingSessions: sessionsBeforeSave,
+                                 newSessionIsLift: session.hasLiftingLog))
         clearSavedDraft()
         // The workout is done — stop counting (see WorkoutStopwatch.pause's
         // own doc) and drop its persisted state, matching the draft's own

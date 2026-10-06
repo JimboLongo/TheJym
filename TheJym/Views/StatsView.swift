@@ -37,6 +37,11 @@ struct StatsView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Set by finishWorkout, shown once, cleared on leaving the tab. Two
+    /// Ints — observing it costs one extra body evaluation when the badge
+    /// appears and one when it clears, not anything per render.
+    @State private var impact = WorkoutImpact.shared
     @Query private var settingsList: [AppSettings]
     @Query(sort: \WorkoutSession.date) private var sessions: [WorkoutSession]
     @Query private var restActivities: [RestDayActivity]
@@ -90,6 +95,39 @@ struct StatsView: View {
                             defaultTrainingDaysPerWeek: settings?.trainingDaysPerWeek ?? 3,
                             allSessions: sessions,
                             bigLiftNames: exerciseDefs.filter(\.isBigLift).map(\.name))
+    }
+
+    /// The "+1" for one cell of the Consistency table, or nil.
+    ///
+    /// Only the Days logged row, and only its Active and Lift columns —
+    /// the two counts finishWorkout can derive without computing
+    /// anything. A column whose delta is 0 returns nil and renders
+    /// nothing at all, so a lift on a day you'd already walked badges
+    /// Lift alone rather than putting "+0" over Active.
+    private func impactDelta(row: String, column: String) -> Int? {
+        guard let pending = impact.pending, row == "Days logged" else { return nil }
+        let delta = column == "Active" ? pending.active
+                  : column == "Lift" ? pending.lift : 0
+        return delta > 0 ? delta : nil
+    }
+
+    /// Headroom for a floated badge, on every cell of the row that has
+    /// one so the row grows evenly rather than knocking one cell's digits
+    /// off the shared baseline.
+    private func badgedRowPadding(_ row: String) -> CGFloat {
+        impact.pending != nil && row == "Days logged" ? 15 : 0
+    }
+
+    /// Matches the weight wheel's cascade indicator exactly
+    /// (WorkoutLogView's cascadeIndicator badge): same capsule,
+    /// .thinMaterial, .caption2.bold, green, fading in.
+    private func impactBadge(_ delta: Int) -> some View {
+        Text("+\(delta)")
+            .font(.caption2.bold())
+            .foregroundStyle(.green)
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(.thinMaterial, in: Capsule())
+            .transition(.opacity)
     }
 
     private func milesLabel(_ miles: Double) -> String {
@@ -212,6 +250,11 @@ struct StatsView: View {
                 refreshTick.toggle()
             }
             .navigationTitle("Stats")
+            // No timer. The badge is accurate for as long as it's shown —
+            // only a new launch could make it stale, and the singleton is
+            // in-memory so that can't happen — and a countdown can expire
+            // before you've even focused on the page you just arrived at.
+            .onDisappear { impact.clear() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     OverflowMenuButton(overflowTab: $overflowTab)
@@ -429,7 +472,14 @@ struct StatsView: View {
             // columns stay adjacent and comparable while scrolling.
             ForEach(consistencyRows(stats)) { row in
                 ForEach(consistencyColumns(stats), id: \.header) { col in
-                    statRow("\(row.label) — \(col.header)", row.value(col.header, col.column))
+                    // At AX sizes a floating capsule has nowhere to float
+                    // to, so the delta joins the value instead.
+                    if let delta = impactDelta(row: row.label, column: col.header) {
+                        statRow("\(row.label) — \(col.header)",
+                                "\(row.value(col.header, col.column))  +\(delta)")
+                    } else {
+                        statRow("\(row.label) — \(col.header)", row.value(col.header, col.column))
+                    }
                 }
                 // The date line can't span anything here — there are no
                 // columns left to span, every cell is already its own
@@ -472,6 +522,23 @@ struct StatsView: View {
                             Text(row.value(col.header, col.column))
                                 .font(.system(.subheadline, design: .monospaced)).bold()
                                 .fixedSize()
+                                // The padding is applied to EVERY cell of
+                                // a badged row, not just the badged ones,
+                                // so the row grows uniformly and the
+                                // digits stay on one baseline. The badge
+                                // then lives in that new space instead of
+                                // floating up into the row above.
+                                .padding(.top, badgedRowPadding(row.label))
+                                .overlay(alignment: .top) {
+                                    if let delta = impactDelta(row: row.label, column: col.header) {
+                                        // .fixedSize() because an overlay
+                                        // is proposed its parent's width —
+                                        // without it the capsule is
+                                        // squeezed to the number's width
+                                        // and the "+1" is clipped.
+                                        impactBadge(delta).fixedSize()
+                                    }
+                                }
                                 .gridColumnAlignment(.center)
                         }
                     }
@@ -499,7 +566,10 @@ struct StatsView: View {
                     }
                 }
             }
+            // Extra top inset only while a badge is up, so the floated
+            // capsule has room instead of clipping into the header row.
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+            .animation(reduceMotion ? nil : .easeInOut, value: impact.pending)
         }
     }
 
