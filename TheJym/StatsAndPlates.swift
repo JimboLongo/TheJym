@@ -51,6 +51,13 @@ struct ConsistencyColumn {
     /// instead of on formatted strings.
     var percentOfDays: Double
     var daysPerWeek: Double
+    /// Miles walked on this column's days, within the same window as
+    /// daysLogged. Partitions exactly as the day counts do — miles on
+    /// lift days plus miles on walk-only days equals total miles — so the
+    /// Miles row obeys Lift + Walk = Active like every other row. Rest is
+    /// always 0 and renders as "—": a day with nothing logged has no
+    /// RestDayActivity and therefore no distance.
+    var miles: Double
     var currentStreak: Int
     var maxStreak: Int
 }
@@ -723,13 +730,15 @@ enum StatsEngine {
             max(0, (cal.dateComponents([.day], from: $0, to: today).day ?? 0) - 1)
         } ?? 0
 
-        func consistencyColumn(_ days: Int, _ current: Int, _ maxRun: Int) -> ConsistencyColumn {
+        func consistencyColumn(_ days: Int, _ current: Int, _ maxRun: Int,
+                              miles: Double = 0) -> ConsistencyColumn {
             ConsistencyColumn(daysLogged: days,
                               // daysSinceStart is
                               // max(1, ...) at its own definition, so this
                               // needs no zero guard of its own.
                               percentOfDays: Double(days) / Double(daysSinceStart),
                               daysPerWeek: weeks > 0 ? Double(days) / weeks : 0,
+                              miles: miles,
                               currentStreak: current,
                               maxStreak: maxRun)
         }
@@ -767,9 +776,25 @@ enum StatsEngine {
         let bankedCurrentComposition = composition(of: bankedCurrentStreakDays)
         let bankedMaxComposition = composition(of: bankedMaxStreakDays)
 
-        let consistencyActive = consistencyColumn(daysLogged, activeStreaks.current, activeStreaks.max)
-        let consistencyLift = consistencyColumn(liftDays.count, liftStreaks.current, liftStreaks.max)
-        let consistencyWalk = consistencyColumn(walkOnlyDays.count, walkStreaks.current, walkStreaks.max)
+        let milesEntries: [(day: Date, miles: Double)] = restActivities.compactMap { activity in
+            guard let distance = activity.distance, activity.distanceUnit.lowercased() == "mi" else { return nil }
+            return (cal.startOfDay(for: activity.date), distance)
+        }
+
+        // Miles split the same way the days are. Summed from the same
+        // milesEntries every other miles figure on the page uses, bucketed
+        // by whether the day was a lift day — so Lift + Walk == Active
+        // holds here by construction, not by coincidence.
+        let windowMilesByDay = milesEntries.filter { $0.day >= start && $0.day <= today }
+        let liftMiles = windowMilesByDay.filter { liftDays.contains($0.day) }.map(\.miles).reduce(0, +)
+        let walkMiles = windowMilesByDay.filter { walkOnlyDays.contains($0.day) }.map(\.miles).reduce(0, +)
+
+        let consistencyActive = consistencyColumn(daysLogged, activeStreaks.current, activeStreaks.max,
+                                                  miles: liftMiles + walkMiles)
+        let consistencyLift = consistencyColumn(liftDays.count, liftStreaks.current, liftStreaks.max,
+                                                miles: liftMiles)
+        let consistencyWalk = consistencyColumn(walkOnlyDays.count, walkStreaks.current, walkStreaks.max,
+                                                miles: walkMiles)
         let consistencyRest = consistencyColumn(restDayCount, currentRestRun,
                                                 max(maxRestRun, currentRestRun))
 
@@ -823,10 +848,6 @@ enum StatsEngine {
         // Miles walked — only entries whose distanceUnit is literally "mi";
         // an imported/logged non-mile unit (e.g. "km") isn't converted, just
         // excluded from these totals.
-        let milesEntries: [(day: Date, miles: Double)] = restActivities.compactMap { activity in
-            guard let distance = activity.distance, activity.distanceUnit.lowercased() == "mi" else { return nil }
-            return (cal.startOfDay(for: activity.date), distance)
-        }
         func milesSum(from windowStart: Date, through windowEnd: Date) -> Double {
             milesEntries.filter { $0.day >= windowStart && $0.day <= windowEnd }.map(\.miles).reduce(0, +)
         }

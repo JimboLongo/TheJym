@@ -674,4 +674,45 @@ final class LiftDaysPerWeekTests: XCTestCase {
                        "training today ends the rest run outright")
         XCTAssertEqual(result.consistencyRest.maxStreak, 3, "the -3...-1 gap")
     }
+
+    // MARK: - The Miles row
+
+    /// Miles partition by day-kind exactly as the counts do, so the Miles
+    /// row obeys the same Lift + Walk = Active identity as every other
+    /// row. That's the whole reason Miles is a ROW and not a column: as a
+    /// column it would break every row label it touched, and it wouldn't
+    /// fit anyway.
+    @MainActor
+    func testMilesPartitionLikeTheDayCounts() {
+        let context = makeContext()
+        // A walk-only day...
+        let (w, walkActivity) = walk(on: day(-5), context: context)
+        // ...and a day with BOTH a lift and a walk, which belongs to Lift.
+        let lifted = lift(on: day(-3), context: context)
+        let (bothWalk, bothActivity) = walk(on: day(-3), context: context)
+
+        let result = stats([w, lifted, bothWalk],
+                           activities: [walkActivity, bothActivity], startOffset: -10)
+
+        XCTAssertEqual(result.consistencyLift.miles + result.consistencyWalk.miles,
+                       result.consistencyActive.miles, accuracy: 0.0001,
+                       "Lift miles + Walk miles must equal Active miles")
+        XCTAssertEqual(result.consistencyWalk.miles, 2.5, accuracy: 0.0001,
+                       "the walk-only day's distance")
+        XCTAssertEqual(result.consistencyLift.miles, 2.5, accuracy: 0.0001,
+                       "the both-day's distance counts under Lift, matching its day count")
+        XCTAssertEqual(result.consistencyRest.miles, 0,
+                       "a day with nothing logged has no distance")
+    }
+
+    @MainActor
+    func testMilesAreZeroWithNoWalks() {
+        let context = makeContext()
+        let s = lift(on: day(-2), context: context)
+        let result = stats([s], startOffset: -10)
+        for col in [result.consistencyActive, result.consistencyLift,
+                    result.consistencyWalk, result.consistencyRest] {
+            XCTAssertEqual(col.miles, 0)
+        }
+    }
 }

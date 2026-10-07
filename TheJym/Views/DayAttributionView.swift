@@ -34,7 +34,21 @@ struct DayAttributionView: View {
     var body: some View {
         NavigationStack {
             List {
-                if proposals.isEmpty {
+                if applied {
+                    // The projection is only meaningful BEFORE applying.
+                    // project() walks phase.sessions PLUS the proposals,
+                    // and once applied those are the same sessions — so
+                    // leaving it on screen double-counted them and the
+                    // number climbed on its own (41 -> 45) with nothing
+                    // touched. Reloading clears the stale proposals; this
+                    // guard makes the stale state unreachable even so.
+                    Section {
+                        Label("Applied", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Relaunch to assign cycle numbers, then check the cycle count on the Phases screen.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else if proposals.isEmpty {
                     Section {
                         Text("Nothing to attribute — every session in Phase \(phase.number)'s date range already has a day.")
                             .foregroundStyle(.secondary)
@@ -109,6 +123,11 @@ struct DayAttributionView: View {
                 Button("Apply to \(selected.count) sessions") {
                     undo = DayAttributionEngine.apply(selected, to: phase, context: context)
                     applied = true
+                    // Drop the now-stale proposals. Without this they stay
+                    // live alongside the sessions they just wrote, and any
+                    // re-render projects both populations.
+                    proposals = []
+                    excluded = []
                 }
                 .disabled(selected.isEmpty)
             }

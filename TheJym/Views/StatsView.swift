@@ -667,6 +667,17 @@ struct StatsView: View {
                 // wrong figure in two cells to buy a sum nobody adds.
                 ConsistencyRow("Days per week") { _, col in String(format: "%.1f", col.daysPerWeek) },
                 ConsistencyRow("Days logged") { _, col in "\(col.daysLogged)" },
+                // A ROW, not a column. Measured: five data columns need
+                // 458.7pt against 393 and can't be made to fit, and every
+                // row label ("Days per week", "Days logged") would be
+                // false for a miles cell. As a row it costs no width, and
+                // miles partition by day-kind exactly as the counts do, so
+                // Lift + Walk = Active still holds. Rest is "—" rather
+                // than 0.0 — a day with nothing logged has no distance,
+                // which is different from having walked zero.
+                ConsistencyRow("Miles") { header, col in
+                    header == "Rest" ? "—" : String(format: "%.1f", col.miles)
+                },
                 ConsistencyRow("Daily Streak",
                                dateLine: stats.currentActiveStreakStartDate.map(streakSinceLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
