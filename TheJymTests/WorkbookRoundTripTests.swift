@@ -276,4 +276,50 @@ final class WorkbookRoundTripTests: XCTestCase {
             }
         }
     }
+
+    /// sourceRowCount is the WHOLE sheet, independent of the range — the
+    /// denominator of the invariant, not a post-filter count.
+    ///
+    /// Shaped like the real file: a large body of pre-floor history and a
+    /// small in-range tail. A truncated denominator would make the
+    /// invariant pass over a population that excludes exactly the rows
+    /// most worth accounting for.
+    func testSourceRowCountIsTheWholeFileNotTheFilteredTail() {
+        var rows: [[XLSXCell]] = []
+        // 1,284 pre-floor exercise rows, as in the Sept 9 snapshot.
+        for i in 0..<1284 {
+            let d = 1 + (i % 8)
+            rows.append([.string(String(format: "2026-09-%02d", d)), .string("Bench Press"),
+                         .string("5"), .string("135"), .string("5")])
+        }
+        // 20 pre-floor weigh-ins.
+        for i in 0..<20 {
+            rows.append([.string(String(format: "2026-09-%02d", 1 + (i % 8))),
+                         .string("Body Weight"), .blank, .number(180), .blank])
+        }
+        // The tail: 122 exercise logs, 9 walks, 4 weigh-ins.
+        for i in 0..<122 {
+            rows.append([.string(String(format: "2026-09-%02d", 10 + (i % 20))), .string("Bench Press"),
+                         .string("5"), .string("135"), .string("5")])
+        }
+        for i in 0..<9 {
+            rows.append([.string(String(format: "2026-09-%02d", 10 + i)), .string("Walk"),
+                         .string("1x1"), .number(3.1), .number(1)])
+        }
+        for i in 0..<4 {
+            rows.append([.string(String(format: "2026-09-%02d", 11 + i * 4)),
+                         .string("Body Weight"), .blank, .number(181), .blank])
+        }
+        XCTAssertEqual(rows.count, 1439)
+
+        let floor = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 10))!
+        guard let wb = workbook(rows, activities: ["walk"], from: floor) else {
+            return XCTFail("no workbook")
+        }
+        XCTAssertEqual(wb.sourceRowCount, 1439,
+                       "the denominator must be the whole file, not the in-range tail")
+        XCTAssertEqual(wb.historyRows.count, 135, "122 lifts + 9 walks + 4 weigh-ins")
+        XCTAssertEqual(wb.skipped.outOfRange, 1304, "1,284 lifts + 20 weigh-ins before the floor")
+        assertFullyAccounted(wb, "whole-file denominator")
+    }
 }
