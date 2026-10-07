@@ -22,6 +22,7 @@ struct SettingsView: View {
     @Query private var activeRecoveries: [ActiveRecovery]
     @Query private var tdpwChanges: [TrainingDaysPerWeekChange]
 
+    @State private var showingRecoveryImport = false
     @State private var showingDeleteHistoryConfirm = false
     @State private var showingDeleteExercisesConfirm = false
     @State private var showingDeleteAllDataConfirm = false
@@ -187,12 +188,17 @@ struct SettingsView: View {
                         Label("Export to Excel…", systemImage: "square.and.arrow.up")
                             .foregroundStyle(.secondary)
                     }
+                    Button {
+                        showingRecoveryImport = true
+                    } label: {
+                        Label("Restore from Export…", systemImage: "doc.badge.arrow.up")
+                    }
                     Button("Delete All History", role: .destructive) {
                         showingDeleteHistoryConfirm = true
                     }
                     .disabled(sessions.isEmpty)
                 } footer: {
-                    Text("Export saves a 3-tab .xlsx workbook: History (every logged workout plus weigh-ins), Exercises (your Exercises tab library — equipment, saved sets, notes), and Equipment (bars, dumbbells, bands, and plates owned). Delete All History permanently deletes every logged workout — Phases, exercises, and equipment are untouched.")
+                    Text("Export saves a 3-tab .xlsx workbook: History (every logged workout plus weigh-ins), Exercises (your Exercises tab library — equipment, saved sets, notes), and Equipment (bars, dumbbells, bands, and plates owned). Restore reads one back, with a preview before anything is written. Delete All History permanently deletes every logged workout — Phases, exercises, and equipment are untouched.")
                 }
 
                 if let s = settingsList.first {
@@ -224,6 +230,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .sheet(isPresented: $showingRecoveryImport) { RecoveryImportView() }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }

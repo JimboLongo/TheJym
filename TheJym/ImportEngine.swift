@@ -152,6 +152,16 @@ enum ImportEngine {
     /// (TheJymApp.backfillRestDays), so a user filling in history by hand
     /// naturally types that instead of the bare "Rest" the import docs ask
     /// for.
+    /// "Weight", "Body Weight", "Bodyweight", "Body weight (lbs)" — any of
+    /// the spellings the app or a hand-made file has used for a weigh-in
+    /// row. Deliberately tolerant: a false positive here needs the word
+    /// "weight" to be the WHOLE exercise name, which no real exercise is.
+    static func isBodyWeightLabel(_ name: String) -> Bool {
+        let n = name.lowercased().trimmingCharacters(in: .whitespaces)
+        return n == "weight" || n == "body weight" || n == "bodyweight"
+            || n.hasPrefix("body weight") || n.hasPrefix("bodyweight")
+    }
+
     private static func isRestLabel(_ label: String) -> Bool {
         let lower = label.lowercased()
         return lower == "rest" || lower == "rest day"
@@ -388,7 +398,8 @@ enum ImportEngine {
 
     /// Shared row-processing logic once a CSV/xlsx source has been reduced to
     /// a plain header row + data rows of string fields.
-    private static func parseFields(header rawHeader: [String], rows: [[String]]) -> (rows: [ImportedEntry], skipped: Int) {
+    private static func parseFields(header rawHeader: [String], rows: [[String]],
+                                    restActivityNames: Set<String> = []) -> (rows: [ImportedEntry], skipped: Int) {
         let header = rawHeader.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
         guard let dateIdx = header.firstIndex(where: { $0.hasPrefix("date") }),
               let exerciseIdx = header.firstIndex(where: { $0.hasPrefix("exercise") }),
@@ -426,18 +437,43 @@ enum ImportEngine {
             let explicitCycleNumber = cycleStr.flatMap { parseFlexibleInt($0) }
             let matchedNotes = (notesStr?.isEmpty == false) ? notesStr : nil
 
-            // Exercise == "Weight" (case-insensitive) marks a body weight
-            // log instead of a real exercise — the weight itself is read
-            // from Reps (Sets/Weights are unused), so it can share the file
-            // with real exercise rows without needing its own columns.
-            if name.lowercased() == "weight" {
-                if let weight = Double(repsStr) {
+            // A body-weight row instead of a real exercise. Two spellings
+            // and two column positions, because the app's own export and
+            // the older hand-made files disagree on both:
+            //
+            //   name   "Weight" (the old CSV convention) or "Body Weight"
+            //          (what SettingsView.historySheetRows actually writes)
+            //   value  Weights (where the export puts it) falling back to
+            //          Reps (where the old convention put it)
+            //
+            // Matching only "weight" exactly sent every exported weigh-in
+            // down the exercise path; fixing the name alone would then have
+            // made them SKIP, since the export leaves Reps blank. Both
+            // halves have to move together.
+            if isBodyWeightLabel(name) {
+                if let weight = Double(weightsStr) ?? Double(repsStr) {
                     out.append(ImportedEntry(date: date, exerciseName: name,
                                              kind: .bodyWeight(weight: weight),
                                              phaseNumber: nil, dayLabel: nil, equipmentName: nil))
                 } else {
                     skipped += 1
                 }
+                continue
+            }
+
+            // A row the user has confirmed is really a rest-day activity.
+            // The Day-column test below can't fire on an exported History
+            // sheet (it has no Day column), so a walk would otherwise
+            // import as a lifting log and contaminate hasLiftingLog, both
+            // streaks, the Walk column and the rest bank. Distance comes
+            // from Weights, which is where TodayView.logActivity puts it
+            // (one SetLog, weight = distance, reps = 1).
+            if restActivityNames.contains(name.lowercased()) {
+                let (distance, unit) = parseDistance(weightsStr.isEmpty ? repsStr : weightsStr)
+                out.append(ImportedEntry(date: date, exerciseName: name,
+                                         kind: .restActivity(distance: distance, distanceUnit: unit),
+                                         phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
+                                         equipmentName: nil))
                 continue
             }
 
@@ -1107,5 +1143,257 @@ enum ImportEngine {
         guard serial > 20_000, serial < 60_000 else { return nil }
         guard let epoch = utcCalendar.date(from: DateComponents(year: 1899, month: 12, day: 30)) else { return nil }
         return utcCalendar.date(byAdding: .day, value: serial, to: epoch)
+    }
+}
+
+// MARK: - Workbook recovery (all three sheets, preview before writing)
+
+extension ImportEngine {
+    /// What one TheJym-Export.xlsx holds, parsed but NOT written.
+    struct Workbook {
+        var historyRows: [ImportedEntry] = []
+        var skipped = 0
+        var library: [LibraryEntry] = []
+        var equipment: [EquipmentEntry] = []
+        var platesOwned: [Double] = []
+        /// Distinct exercise names in History, for the rest-activity
+        /// ticklist. Nothing is treated as a walk until the user says so.
+        var candidateNames: [String] = []
+    }
+
+    struct LibraryEntry {
+        var name: String
+        var equipmentName: String
+        var isBodyweight: Bool
+        /// "5/5/5; 100 total" — rep schemes and rep-total targets together,
+        /// exactly as exercisesSheetRows writes them.
+        var setsText: String
+        var notes: String
+    }
+
+    struct EquipmentEntry {
+        var name: String
+        var isDumbbell: Bool
+        var weight: Double
+        var loadableSides: Int
+        var dumbbellWeights: [Double]
+    }
+
+    /// Counts for the confirm screen. Nothing is persisted to produce this.
+    struct RecoveryPreview {
+        var sessions = 0
+        var exerciseLogs = 0
+        var sets = 0
+        var weighIns = 0
+        var restActivities = 0
+        var firstDate: Date?
+        var lastDate: Date?
+        /// Bodyweight sets that will get a frozen bodyweightAtLog from an
+        /// earlier weigh-in, and those with no weigh-in on or before their
+        /// date — the latter resolve to nil and are skipped by Big Lifts.
+        var bodyweightSetsResolved = 0
+        var bodyweightSetsUnresolved = 0
+    }
+
+    /// Reads History / Exercises / Equipment by sheet NAME, falling back to
+    /// the first sheet for a foreign file that has no sheet called
+    /// "History" (which is how every pre-existing import behaved).
+    static func parseWorkbook(xlsxData: Data, restActivityNames: Set<String> = []) -> Workbook? {
+        guard let sheets = XLSXReader.readSheetsByName(data: xlsxData) else { return nil }
+
+        func sheet(_ wanted: String) -> [[String]]? {
+            sheets.first { $0.key.compare(wanted, options: .caseInsensitive) == .orderedSame }?.value
+        }
+
+        var wb = Workbook()
+        let history = sheet("History") ?? sheets.sorted { $0.key < $1.key }.first?.value
+        if let history, let header = history.first {
+            let dataRows = history.dropFirst().filter { row in
+                !row.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+            }
+            let parsed = parseFields(header: header, rows: Array(dataRows),
+                                     restActivityNames: restActivityNames)
+            wb.historyRows = parsed.rows
+            wb.skipped = parsed.skipped
+
+            // Candidate names for the ticklist: distinct exercise names
+            // that aren't weigh-ins. Taken from a NAME-ONLY re-read rather
+            // than from parsed rows, so a name already ticked still appears
+            // (it's now a restActivity entry, not an exercise one).
+            if let exIdx = header.map({ $0.trimmingCharacters(in: .whitespaces).lowercased() })
+                .firstIndex(where: { $0.hasPrefix("exercise") }) {
+                var seen = Set<String>(), names: [String] = []
+                for row in dataRows {
+                    guard let raw = row[safe: exIdx]?.trimmingCharacters(in: .whitespaces),
+                          !raw.isEmpty, !isBodyWeightLabel(raw) else { continue }
+                    if seen.insert(raw.lowercased()).inserted { names.append(raw) }
+                }
+                wb.candidateNames = names.sorted()
+            }
+        }
+
+        if let rows = sheet("Exercises"), rows.count > 1 {
+            for row in rows.dropFirst() {
+                let name = (row[safe: 0] ?? "").trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { continue }
+                wb.library.append(LibraryEntry(
+                    name: name,
+                    equipmentName: (row[safe: 1] ?? "").trimmingCharacters(in: .whitespaces),
+                    isBodyweight: (row[safe: 2] ?? "").lowercased().hasPrefix("y"),
+                    setsText: (row[safe: 3] ?? "").trimmingCharacters(in: .whitespaces),
+                    notes: (row[safe: 4] ?? "").trimmingCharacters(in: .whitespaces)))
+            }
+        }
+
+        if let rows = sheet("Equipment"), rows.count > 1 {
+            for row in rows.dropFirst() {
+                let name = (row[safe: 0] ?? "").trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { continue }
+                // The plates row is appended after a blank spacer as
+                // ["Plates Owned", "45, 25, 10"] — same sheet, different
+                // shape, so it's matched by name rather than by position.
+                if name.compare("Plates Owned", options: .caseInsensitive) == .orderedSame {
+                    wb.platesOwned = (row[safe: 1] ?? "").split(separator: ",")
+                        .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                    continue
+                }
+                let isDumbbell = (row[safe: 1] ?? "").lowercased().contains("dumbbell")
+                    || (row[safe: 1] ?? "").lowercased().contains("band")
+                wb.equipment.append(EquipmentEntry(
+                    name: name,
+                    isDumbbell: isDumbbell,
+                    weight: Double((row[safe: 2] ?? "").trimmingCharacters(in: .whitespaces)) ?? 0,
+                    loadableSides: Int((row[safe: 3] ?? "").trimmingCharacters(in: .whitespaces)) ?? 2,
+                    dumbbellWeights: (row[safe: 4] ?? "").split(separator: ",")
+                        .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }))
+            }
+        }
+        return wb
+    }
+
+    /// Test seam onto the private row parser, so the body-weight and
+    /// rest-activity rules can be exercised on a literal sheet grid rather
+    /// than by building an .xlsx.
+    static func parseHistorySheetForTesting(_ grid: [[String]],
+                                            restActivityNames: Set<String> = []) -> [ImportedEntry] {
+        guard let header = grid.first else { return [] }
+        return parseFields(header: header, rows: Array(grid.dropFirst()),
+                           restActivityNames: restActivityNames).rows
+    }
+
+    /// Rows whose date falls inside [from, through], both inclusive and
+    /// both optional.
+    ///
+    /// This is the duplicate guard as much as a filter: the import is
+    /// additive with no dedup, so a floor one day after the last restored
+    /// session is what keeps a re-run from doubling everything.
+    static func rows(_ rows: [ImportedEntry], from: Date?, through: Date?,
+                     cal: Calendar = .current) -> [ImportedEntry] {
+        let lower = from.map { cal.startOfDay(for: $0) }
+        let upper = through.map { cal.startOfDay(for: $0) }
+        return rows.filter { row in
+            let day = cal.startOfDay(for: row.date)
+            if let lower, day < lower { return false }
+            if let upper, day > upper { return false }
+            return true
+        }
+    }
+
+    /// Counts for the confirm screen, including how many bodyweight sets
+    /// will find a frozen bodyweightAtLog. `existingWeighIns` is the store's
+    /// current BodyWeightEntry dates+weights, since a restored store's
+    /// earlier weigh-ins are legitimate sources for a later imported set.
+    static func preview(_ rows: [ImportedEntry], existingWeighIns: [(date: Date, weight: Double)],
+                        bodyweightExerciseNames: Set<String>,
+                        cal: Calendar = .current) -> RecoveryPreview {
+        var p = RecoveryPreview()
+        var sessionDays = Set<Date>()
+
+        // Every weigh-in available to resolve against: what's already in the
+        // store plus the ones this import is about to add.
+        var sources = existingWeighIns
+        for row in rows {
+            if case .bodyWeight(let w) = row.kind { sources.append((row.date, w)) }
+        }
+        sources.sort { $0.date < $1.date }
+
+        for row in rows {
+            switch row.kind {
+            case .bodyWeight:
+                p.weighIns += 1
+            case .restActivity:
+                p.restActivities += 1
+                sessionDays.insert(cal.startOfDay(for: row.date))
+            case .exercise(_, _, let weights, _):
+                p.exerciseLogs += 1
+                p.sets += weights.count
+                sessionDays.insert(cal.startOfDay(for: row.date))
+                if bodyweightExerciseNames.contains(row.exerciseName) {
+                    let resolved = sources.last { $0.date <= row.date } != nil
+                    if resolved { p.bodyweightSetsResolved += weights.count }
+                    else { p.bodyweightSetsUnresolved += weights.count }
+                }
+            }
+            p.firstDate = min(p.firstDate ?? row.date, row.date)
+            p.lastDate = max(p.lastDate ?? row.date, row.date)
+        }
+        p.sessions = sessionDays.count
+        return p
+    }
+
+    /// Writes the Exercises and Equipment sheets back into the store.
+    /// Additive and idempotent by NAME — an exercise or bar that already
+    /// exists is updated in place rather than duplicated, so re-running
+    /// this half is safe even though the history half is not.
+    @MainActor
+    static func restoreLibraryAndEquipment(_ wb: Workbook, context: ModelContext) {
+        let existingBars = (try? context.fetch(FetchDescriptor<Bar>())) ?? []
+        var barsByName = Dictionary(existingBars.map { ($0.name.lowercased(), $0) },
+                                    uniquingKeysWith: { a, _ in a })
+        for e in wb.equipment {
+            let bar = barsByName[e.name.lowercased()] ?? {
+                let b = Bar(name: e.name, weight: 0)
+                context.insert(b)
+                barsByName[e.name.lowercased()] = b
+                return b
+            }()
+            bar.isDumbbell = e.isDumbbell
+            bar.weight = e.weight
+            bar.loadableSides = e.loadableSides
+            if !e.dumbbellWeights.isEmpty { bar.dumbbellWeights = e.dumbbellWeights }
+        }
+
+        let existingDefs = (try? context.fetch(FetchDescriptor<ExerciseDef>())) ?? []
+        var defsByName = Dictionary(existingDefs.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        for l in wb.library {
+            let def = defsByName[l.name] ?? {
+                let d = ExerciseDef(name: l.name)
+                context.insert(d)
+                defsByName[l.name] = d
+                return d
+            }()
+            def.isBodyweight = l.isBodyweight
+            if !l.notes.isEmpty { def.notes = l.notes }
+            if !l.equipmentName.isEmpty { def.equipment = barsByName[l.equipmentName.lowercased()] }
+            // "5/5/5; 8/8/8; 100 total" -> two rep schemes and one rep-total
+            for part in l.setsText.split(separator: ";") {
+                let token = part.trimmingCharacters(in: .whitespaces)
+                guard !token.isEmpty else { continue }
+                if token.lowercased().hasSuffix("total") {
+                    if let n = Int(token.split(separator: " ").first.map(String.init) ?? "") {
+                        def.addRepTotalTarget(n)
+                    }
+                } else {
+                    let reps = token.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                    if !reps.isEmpty, !def.repSchemes.contains(reps) { def.repSchemes.append(reps) }
+                }
+            }
+        }
+
+        if !wb.platesOwned.isEmpty,
+           let settings = (try? context.fetch(FetchDescriptor<AppSettings>()))?.first {
+            settings.availablePlateSizes = wb.platesOwned
+        }
+        try? context.save()
     }
 }

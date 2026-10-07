@@ -41,6 +41,107 @@ enum XLSXReader {
         parser.parse()
         return delegate.rows
     }
+
+    /// Every worksheet, keyed by the NAME shown on its tab in Excel.
+    ///
+    /// The tab name isn't in the worksheet part — that's `sheet1.xml`,
+    /// `sheet2.xml` and so on. xl/workbook.xml lists the display names in
+    /// document order along with an r:id, and xl/_rels/workbook.xml.rels
+    /// maps each r:id to its part. This walks both so "History" finds the
+    /// right file even if the sheets were reordered.
+    ///
+    /// Returns nil only when the file isn't readable at all; a workbook
+    /// whose names can't be resolved falls back to positional order
+    /// (sheet1 -> first declared name), which is right for every file this
+    /// app writes.
+    static func readSheetsByName(data: Data) -> [String: [[String]]]? {
+        guard let zip = MiniZip(data: data) else { return nil }
+
+        var sharedStrings: [String] = []
+        if let ssData = zip.data(for: "xl/sharedStrings.xml") {
+            let parser = XMLParser(data: ssData)
+            let delegate = SharedStringsXMLDelegate()
+            parser.delegate = delegate
+            parser.parse()
+            sharedStrings = delegate.strings
+        }
+
+        // Tab names, in document order.
+        var names: [(name: String, rid: String?)] = []
+        if let wbData = zip.data(for: "xl/workbook.xml") {
+            let parser = XMLParser(data: wbData)
+            let delegate = WorkbookXMLDelegate()
+            parser.delegate = delegate
+            parser.parse()
+            names = delegate.sheets
+        }
+        // r:id -> part path.
+        var relTargets: [String: String] = [:]
+        if let relData = zip.data(for: "xl/_rels/workbook.xml.rels") {
+            let parser = XMLParser(data: relData)
+            let delegate = RelationshipsXMLDelegate()
+            parser.delegate = delegate
+            parser.parse()
+            relTargets = delegate.targets
+        }
+
+        let sheetParts = zip.fileNames
+            .filter { $0.hasPrefix("xl/worksheets/sheet") && $0.hasSuffix(".xml") }
+            .sorted()
+        guard !sheetParts.isEmpty else { return nil }
+
+        func rows(of part: String) -> [[String]]? {
+            guard let sheetData = zip.data(for: part) else { return nil }
+            let parser = XMLParser(data: sheetData)
+            let delegate = WorksheetXMLDelegate(sharedStrings: sharedStrings)
+            parser.delegate = delegate
+            parser.parse()
+            return delegate.rows
+        }
+
+        var out: [String: [[String]]] = [:]
+        for (index, sheet) in names.enumerated() {
+            var part: String?
+            if let rid = sheet.rid, let target = relTargets[rid] {
+                let normalized = target.hasPrefix("/") ? String(target.dropFirst())
+                               : target.hasPrefix("xl/") ? target : "xl/" + target
+                part = sheetParts.first { $0 == normalized }
+            }
+            // Positional fallback — correct for anything this app writes.
+            if part == nil, index < sheetParts.count { part = sheetParts[index] }
+            guard let part, let r = rows(of: part) else { continue }
+            out[sheet.name] = r
+        }
+        // A workbook we couldn't name at all still yields its sheets, so a
+        // caller can fall back to "whatever the first one is".
+        if out.isEmpty, let first = rows(of: sheetParts[0]) { out[""] = first }
+        return out.isEmpty ? nil : out
+    }
+}
+
+// MARK: - Workbook sheet names (xl/workbook.xml)
+
+private final class WorkbookXMLDelegate: NSObject, XMLParserDelegate {
+    var sheets: [(name: String, rid: String?)] = []
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
+               qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+        guard elementName == "sheet" || elementName.hasSuffix(":sheet") else { return }
+        guard let name = attributeDict["name"] else { return }
+        let rid = attributeDict["r:id"] ?? attributeDict["id"]
+        sheets.append((name, rid))
+    }
+}
+
+// MARK: - Workbook relationships (xl/_rels/workbook.xml.rels)
+
+private final class RelationshipsXMLDelegate: NSObject, XMLParserDelegate {
+    var targets: [String: String] = [:]
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
+               qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+        guard elementName == "Relationship" || elementName.hasSuffix(":Relationship") else { return }
+        guard let id = attributeDict["Id"], let target = attributeDict["Target"] else { return }
+        targets[id] = target
+    }
 }
 
 // MARK: - Shared strings (xl/sharedStrings.xml)
