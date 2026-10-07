@@ -566,8 +566,6 @@ struct StatsView: View {
                     }
                 }
             }
-            // Extra top inset only while a badge is up, so the floated
-            // capsule has room instead of clipping into the header row.
             .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
             .animation(reduceMotion ? nil : .easeInOut, value: impact.pending)
         }
