@@ -144,11 +144,24 @@ enum ImportEngine {
         /// weigh-ins as before.
         var addedWeights: [Double?] = []
         var bodyweightAtLogs: [Double?] = []
+        var achievedRank: Int?
+        var missedTarget = false
+        var selectedWeightAdjustment: Double?
+        /// The LOG's own bodyweight flag. Previously inferred from the
+        /// ExerciseDef, which is right for a fresh log but wrong for one
+        /// recorded before the exercise was flagged.
+        var logIsBodyweight: Bool?
 
         init(date: Date, exerciseName: String, kind: ImportedRowKind, phaseNumber: Int?,
              dayLabel: String?, equipmentName: String?, cycleNumber: Int? = nil, notes: String? = nil,
              durationSeconds: Int? = nil, isDeload: Bool = false, isBonusSession: Bool = false,
-             addedWeights: [Double?] = [], bodyweightAtLogs: [Double?] = []) {
+             addedWeights: [Double?] = [], bodyweightAtLogs: [Double?] = [],
+             achievedRank: Int? = nil, missedTarget: Bool = false,
+             selectedWeightAdjustment: Double? = nil, logIsBodyweight: Bool? = nil) {
+            self.achievedRank = achievedRank
+            self.missedTarget = missedTarget
+            self.selectedWeightAdjustment = selectedWeightAdjustment
+            self.logIsBodyweight = logIsBodyweight
             self.durationSeconds = durationSeconds
             self.isDeload = isDeload
             self.isBonusSession = isBonusSession
@@ -469,6 +482,11 @@ enum ImportEngine {
         let bonusIdx = header.firstIndex(where: { $0.hasPrefix("bonus") })
         let addedIdx = header.firstIndex(where: { $0.hasPrefix("addedweight") })
         let bwAtIdx = header.firstIndex(where: { $0.hasPrefix("bodyweightatlog") })
+        let rankIdx = header.firstIndex(where: { $0.hasPrefix("rank") })
+        let missedIdx = header.firstIndex(where: { $0.hasPrefix("missed") })
+        let weightAdjIdx = header.firstIndex(where: { $0.hasPrefix("weightadj") })
+        let logBWIdx = header.firstIndex(where: { $0.hasPrefix("logbodyweight") })
+        let unitIdx = header.firstIndex(where: { $0 == "unit" })
 
         var out: [ImportedEntry] = []
         var reasons = SkipReasons()
@@ -548,7 +566,11 @@ enum ImportEngine {
             // from Weights, which is where TodayView.logActivity puts it
             // (one SetLog, weight = distance, reps = 1).
             if restActivityNames.contains(name.lowercased()) {
-                let (distance, unit) = parseDistance(weightsStr.isEmpty ? repsStr : weightsStr)
+                var (distance, unit) = parseDistance(weightsStr.isEmpty ? repsStr : weightsStr)
+                // An explicit Unit column wins. Without it every activity
+                // was assumed "mi", which silently dropped a km walk from
+                // every miles figure on the Stats page.
+                if let unitIdx, case let u = cell(unitIdx), !u.isEmpty { unit = u }
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),
                                          phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
@@ -610,7 +632,11 @@ enum ImportEngine {
                                      isDeload: deloadIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
                                      isBonusSession: bonusIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
                                      addedWeights: optionalDoubles(addedIdx),
-                                     bodyweightAtLogs: optionalDoubles(bwAtIdx)))
+                                     bodyweightAtLogs: optionalDoubles(bwAtIdx),
+                                     achievedRank: rankIdx.flatMap { Int(cell($0)) },
+                                     missedTarget: missedIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
+                                     selectedWeightAdjustment: weightAdjIdx.flatMap { Double(cell($0)) },
+                                     logIsBodyweight: logBWIdx.map { cell($0).lowercased().hasPrefix("y") }))
         }
         return (out, reasons)
     }
@@ -974,10 +1000,13 @@ enum ImportEngine {
                 applyEquipment(entry.equipmentName, to: entry.exerciseName)
                 // isBodyweight comes from an already-existing exercise, or
                 // this row's own Equipment column if it said "Bodyweight".
-                let isBW = knownDefs[entry.exerciseName]?.isBodyweight ?? false
+                let isBW = entry.logIsBodyweight ?? (knownDefs[entry.exerciseName]?.isBodyweight ?? false)
                 let log = ExerciseLog(exerciseName: entry.exerciseName, targetReps: targetReps,
                                       order: order, isBodyweight: isBW, goalType: goalType)
                 log.session = session
+                log.achievedRank = entry.achievedRank
+                log.missedTarget = entry.missedTarget
+                log.selectedWeightAdjustment = entry.selectedWeightAdjustment
                 context.insert(log)
 
                 // For a bodyweight exercise, Weights is ADDED weight (same
@@ -1284,6 +1313,11 @@ extension ImportEngine {
         /// exactly as exercisesSheetRows writes them.
         var setsText: String
         var notes: String
+        var isBigLift = false
+        /// "5/5/5>8/8/8@5" per ceiling, semicolon-separated.
+        var ceilingsText = ""
+        var additionalNotes = ""
+        var dateAdded: Date?
     }
 
     struct EquipmentEntry {
@@ -1363,7 +1397,11 @@ extension ImportEngine {
                     equipmentName: (row[safe: 1] ?? "").trimmingCharacters(in: .whitespaces),
                     isBodyweight: (row[safe: 2] ?? "").lowercased().hasPrefix("y"),
                     setsText: (row[safe: 3] ?? "").trimmingCharacters(in: .whitespaces),
-                    notes: (row[safe: 4] ?? "").trimmingCharacters(in: .whitespaces)))
+                    notes: (row[safe: 4] ?? "").trimmingCharacters(in: .whitespaces),
+                    isBigLift: (row[safe: 5] ?? "").lowercased().hasPrefix("y"),
+                    ceilingsText: (row[safe: 6] ?? "").trimmingCharacters(in: .whitespaces),
+                    additionalNotes: (row[safe: 7] ?? "").trimmingCharacters(in: .whitespaces),
+                    dateAdded: parseDate((row[safe: 8] ?? "").trimmingCharacters(in: .whitespaces))))
             }
         }
 
@@ -1503,7 +1541,22 @@ extension ImportEngine {
                 return d
             }()
             def.isBodyweight = l.isBodyweight
+            def.isBigLift = l.isBigLift
             if !l.notes.isEmpty { def.notes = l.notes }
+            if !l.additionalNotes.isEmpty { def.additionalNotes = l.additionalNotes }
+            if let d = l.dateAdded { def.dateAdded = d }
+            // "5/5/5>8/8/8@5" -> RepSchemeCeiling. Parsed strictly: a
+            // malformed entry is skipped rather than half-built, since a
+            // wrong ceiling changes how weights progress.
+            for token in l.ceilingsText.split(separator: ";") {
+                let t = token.trimmingCharacters(in: .whitespaces)
+                guard let gt = t.firstIndex(of: ">"), let at = t.firstIndex(of: "@"), gt < at else { continue }
+                let reps = t[t.startIndex..<gt].split(separator: "/").compactMap { Int($0) }
+                let upper = t[t.index(after: gt)..<at].split(separator: "/").compactMap { Int($0) }
+                guard let amount = Double(t[t.index(after: at)...]), !reps.isEmpty, !upper.isEmpty else { continue }
+                let ceiling = RepSchemeCeiling(reps: reps, upperTargetReps: upper, weightIncreaseAmount: amount)
+                if !def.repSchemeCeilings.contains(ceiling) { def.repSchemeCeilings.append(ceiling) }
+            }
             if !l.equipmentName.isEmpty { def.equipment = barsByName[l.equipmentName.lowercased()] }
             // "5/5/5; 8/8/8; 100 total" -> two rep schemes and one rep-total
             for part in l.setsText.split(separator: ";") {
@@ -1567,10 +1620,14 @@ extension ImportEngine {
         var recoveries: [(date: Date, typeRaw: Int)] = []
         var tdpwChanges: [(date: Date, value: Int)] = []
         var settings: [String: String] = [:]
+        var timerTemplates: [(name: String, order: Int, continuous: Bool)] = []
+        var timerPresets: [(template: String, name: String, seconds: Double,
+                            repeatCount: Int, order: Int, isRest: Bool)] = []
 
         var isEmpty: Bool {
             phases.isEmpty && days.isEmpty && planned.isEmpty
                 && recoveries.isEmpty && tdpwChanges.isEmpty && settings.isEmpty
+                && timerTemplates.isEmpty && timerPresets.isEmpty
         }
     }
 
@@ -1615,6 +1672,12 @@ extension ImportEngine {
                 if let d = parseDate(str(row, 1)) { p.recoveries.append((d, int(row, 2))) }
             case "trainingdaysperweek":
                 if let d = parseDate(str(row, 1)) { p.tdpwChanges.append((d, int(row, 2))) }
+            case "timertemplate":
+                p.timerTemplates.append((str(row, 1), int(row, 2), yes(row, 3)))
+            case "timerpreset":
+                p.timerPresets.append((str(row, 1), str(row, 2),
+                                       Double(str(row, 3)) ?? 0, int(row, 4),
+                                       int(row, 5), yes(row, 6)))
             case "setting":
                 p.settings[str(row, 1)] = str(row, 2)
             default:
@@ -1705,6 +1768,28 @@ extension ImportEngine {
             .map { Calendar.current.startOfDay(for: $0.date) })
         for row in p.tdpwChanges where !existingChangeDays.contains(Calendar.current.startOfDay(for: row.date)) {
             context.insert(TrainingDaysPerWeekChange(date: row.date, trainingDaysPerWeek: row.value))
+        }
+
+        var templatesByName = Dictionary(
+            ((try? context.fetch(FetchDescriptor<TimerTemplate>())) ?? []).map { ($0.name, $0) },
+            uniquingKeysWith: { a, _ in a })
+        for row in p.timerTemplates {
+            let t = templatesByName[row.name] ?? {
+                let new = TimerTemplate(name: row.name, order: row.order)
+                context.insert(new)
+                templatesByName[row.name] = new
+                return new
+            }()
+            t.order = row.order
+            t.continuous = row.continuous
+        }
+        for row in p.timerPresets {
+            guard let template = templatesByName[row.template] else { continue }
+            guard !template.presets.contains(where: { $0.name == row.name && $0.order == row.order }) else { continue }
+            let preset = TimerPreset(name: row.name, seconds: row.seconds,
+                                     repeatCount: row.repeatCount, order: row.order, isRest: row.isRest)
+            preset.template = template
+            context.insert(preset)
         }
 
         if let settings = (try? context.fetch(FetchDescriptor<AppSettings>()))?.first {

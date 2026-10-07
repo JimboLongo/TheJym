@@ -300,193 +300,21 @@ struct SettingsView: View {
         try? context.save()
     }
 
-    /// Everything exportable, as a 3-tab .xlsx workbook, written to a temp
+    /// Everything exportable, as a 4-tab .xlsx workbook, written to a temp
     /// file so it can be handed to ShareLink. Regenerated each time this is
     /// read; cheap enough at personal-history scale.
     ///
-    /// - "History": every logged workout (Date, Exercise, Sets, Weights,
-    ///   Reps — same columns ImportEngine reads for a workout row) plus
-    ///   every body-weight entry, interleaved chronologically as
-    ///   "Body Weight" pseudo-exercise rows.
-    /// - "Exercises": the Exercises tab library — name, tagged equipment,
-    ///   bodyweight flag, saved sets (rep schemes + rep-total targets),
-    ///   and notes.
-    /// - "Equipment": every Bar (barbells, dumbbell sets, bands — bands are
-    ///   just a Bar with isDumbbell = true) and the plate sizes owned.
+    /// The row building itself lives in ExportBuilder so the round trip can
+    /// be tested against the real exporter instead of a copy of it.
     private var exportXLSXURL: URL? {
         guard !sessions.isEmpty || !exerciseDefs.isEmpty || !bars.isEmpty else { return nil }
-        let workbook = XLSXWriter.makeWorkbook(sheets: [
-            ("History", historySheetRows),
-            ("Exercises", exercisesSheetRows),
-            ("Equipment", equipmentSheetRows),
-            ("Program", programSheetRows),
-        ])
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("TheJym-Export.xlsx")
         do {
-            try workbook.write(to: url, options: .atomic)
+            try ExportBuilder.workbook(from: context).write(to: url, options: .atomic)
             return url
         } catch {
             return nil
         }
-    }
-
-    /// Columns after Reps are what makes this a round trip rather than a
-    /// one-way dump. Phase/Day/Cycle restore a session's attribution (an
-    /// import without them lands everything as "Imported" with no phase,
-    /// which is exactly what the Oct 2026 recovery hit); Duration, Deload
-    /// and Bonus are per-session facts nothing else carries; AddedWeight
-    /// and BodyweightAtLog are what let a bodyweight set be rebuilt
-    /// instead of guessed at.
-    ///
-    /// BodyweightAtLog is exported rather than re-resolved on import
-    /// because it's FROZEN at log time by design (SetLog's own doc) — a
-    /// later weigh-in edit must not retroactively change an old set, and
-    /// re-resolving on import would do precisely that.
-    private var historySheetRows: [[XLSXCell]] {
-        var rows: [[XLSXCell]] = [[.string("Date"), .string("Exercise"), .string("Sets"),
-                                   .string("Weights"), .string("Reps"),
-                                   .string("Phase"), .string("Day"), .string("Cycle"),
-                                   .string("Duration"), .string("Deload"), .string("Bonus"),
-                                   .string("AddedWeight"), .string("BodyweightAtLog")]]
-        var dated: [(date: Date, row: [XLSXCell])] = []
-        for session in sessions {
-            let dateStr = Formatters.exportDate.string(from: session.date)
-            for log in session.exerciseLogs.sorted(by: { $0.order < $1.order }) {
-                let sortedSets = log.sortedSets
-                guard !sortedSets.isEmpty else { continue }
-                let weights = sortedSets.map { Formatters.trim($0.weight) }.joined(separator: "/")
-                let reps = sortedSets.map { String($0.reps) }.joined(separator: "/")
-                // Per-set, slash-joined like Weights/Reps so they line up
-                // index for index. Blank when no set carries one.
-                let added = sortedSets.map { $0.addedWeight.map(Formatters.trim) ?? "" }.joined(separator: "/")
-                let bwAt = sortedSets.map { $0.bodyweightAtLog.map(Formatters.trim) ?? "" }.joined(separator: "/")
-                dated.append((session.date, [
-                    .string(dateStr), .string(log.exerciseName),
-                    .string(log.setsSummaryText), .string(weights), .string(reps),
-                    session.phase.map { .number(Double($0.number)) } ?? .blank,
-                    .string(session.dayLabel),
-                    session.cycleNumber > 0 ? .number(Double(session.cycleNumber)) : .blank,
-                    session.durationSeconds.map { .number(Double($0)) } ?? .blank,
-                    session.isDeload ? .string("Yes") : .blank,
-                    session.isBonusSession ? .string("Yes") : .blank,
-                    added.replacingOccurrences(of: "/", with: "").isEmpty ? .blank : .string(added),
-                    bwAt.replacingOccurrences(of: "/", with: "").isEmpty ? .blank : .string(bwAt),
-                ]))
-            }
-        }
-        for entry in bodyWeights {
-            let dateStr = Formatters.exportDate.string(from: entry.date)
-            dated.append((entry.date, [.string(dateStr), .string("Body Weight"), .blank,
-                                       .number(entry.weight), .blank]))
-        }
-        rows.append(contentsOf: dated.sorted { $0.date < $1.date }.map(\.row))
-        return rows
-    }
-
-    /// Everything the three original sheets drop: the program itself.
-    ///
-    /// One row per record, tagged by Type in column A, because these are
-    /// six different shapes and a sheet each would be six more tabs to
-    /// keep in sync. The importer dispatches on that tag and ignores a
-    /// type it doesn't know, so adding a row type later doesn't break an
-    /// older build reading a newer file.
-    private var programSheetRows: [[XLSXCell]] {
-        var rows: [[XLSXCell]] = [[.string("Type"), .string("A"), .string("B"), .string("C"),
-                                   .string("D"), .string("E"), .string("F"), .string("G"),
-                                   .string("H"), .string("I"), .string("J"), .string("K"), .string("L")]]
-        for phase in phases.sorted(by: { $0.number < $1.number }) {
-            rows.append([.string("Phase"), .number(Double(phase.number)),
-                         .number(Double(phase.totalCycles)),
-                         .string(Formatters.exportDate.string(from: phase.startDate)),
-                         .string(phase.isActive ? "Yes" : "No"),
-                         .number(Double(phase.deloadCycle)),
-                         .string(phase.manualDeloadCycles.map(String.init).joined(separator: ",")),
-                         phase.legacyCompletedCycles.map { .number(Double($0)) } ?? .blank])
-            for day in phase.orderedDays {
-                rows.append([.string("PhaseDay"), .number(Double(phase.number)),
-                             .number(Double(day.order)), .string(day.name),
-                             .string(day.isRest ? "Yes" : "No")])
-                for pe in day.plannedExercises.sorted(by: { $0.order < $1.order }) {
-                    // Built in steps: as one literal this exceeded the
-                    // type checker's budget for a single expression.
-                    let targets = pe.targetReps.map(String.init).joined(separator: "/")
-                    let weights = pe.suggestedWeights.map { Formatters.trim($0) }.joined(separator: "/")
-                    let rest: XLSXCell = pe.restTimeSeconds.map { .number(Double($0)) } ?? .blank
-                    var row: [XLSXCell] = [.string("PlannedExercise")]
-                    row.append(.number(Double(phase.number)))
-                    row.append(.string(day.name))
-                    row.append(.number(Double(pe.order)))
-                    row.append(.string(pe.exerciseName))
-                    row.append(.string(targets))
-                    row.append(.string(weights))
-                    row.append(.string(pe.isBodyweight ? "Yes" : "No"))
-                    row.append(.number(Double(pe.goalKindRaw)))
-                    row.append(.number(Double(pe.repTotalTarget)))
-                    row.append(rest)
-                    row.append(.number(Double(pe.cycleOverride)))
-                    // Column L — the owning day's order, because "Rest"
-                    // is not a unique day name within a phase.
-                    row.append(.number(Double(day.order)))
-                    rows.append(row)
-                }
-            }
-        }
-        for recovery in activeRecoveries.sorted(by: { $0.date < $1.date }) {
-            rows.append([.string("ActiveRecovery"),
-                         .string(Formatters.exportDate.string(from: recovery.date)),
-                         .number(Double(recovery.typeRaw))])
-        }
-        for change in tdpwChanges.sorted(by: { $0.date < $1.date }) {
-            rows.append([.string("TrainingDaysPerWeek"),
-                         .string(Formatters.exportDate.string(from: change.date)),
-                         .number(Double(change.trainingDaysPerWeek))])
-        }
-        if let s = settingsList.first {
-            func setting(_ key: String, _ value: XLSXCell) {
-                rows.append([.string("Setting"), .string(key), value])
-            }
-            setting("trainingStartDate", .string(Formatters.exportDate.string(from: s.trainingStartDate)))
-            setting("trainingDaysPerWeek", .number(Double(s.trainingDaysPerWeek)))
-            setting("aiAggressivenessRaw", .number(Double(s.aiAggressivenessRaw)))
-            setting("deloadWeeksEnabled", .string(s.deloadWeeksEnabled ? "Yes" : "No"))
-            setting("hasDumbbell125Attachment", .string(s.hasDumbbell125Attachment ? "Yes" : "No"))
-            setting("hasDumbbell25Attachment", .string(s.hasDumbbell25Attachment ? "Yes" : "No"))
-            setting("customWeightIncreaseEnabled", .string(s.customWeightIncreaseEnabled ? "Yes" : "No"))
-            setting("customWeightIncreaseStreak", .number(Double(s.customWeightIncreaseStreak)))
-            setting("customWeightIncreaseAmount", .number(s.customWeightIncreaseAmount))
-            setting("streakRemindersEnabled", .string(s.streakRemindersEnabled ? "Yes" : "No"))
-            setting("streakReminderHour", .number(Double(s.streakReminderHour)))
-            setting("weightRemindersEnabled", .string(s.weightRemindersEnabled ? "Yes" : "No"))
-            setting("weightReminderHour", .number(Double(s.weightReminderHour)))
-            setting("includeDefaultExercises", .string(s.includeDefaultExercises ? "Yes" : "No"))
-        }
-        return rows
-    }
-
-    private var exercisesSheetRows: [[XLSXCell]] {
-        var rows: [[XLSXCell]] = [[.string("Exercise"), .string("Equipment"), .string("Bodyweight"), .string("Sets"), .string("Notes")]]
-        for def in exerciseDefs.sorted(by: { $0.name < $1.name }) {
-            let sets = (def.repSchemes.map { $0.map(String.init).joined(separator: "/") }
-                        + def.repTotalTargets.map { "\($0) total" }).joined(separator: "; ")
-            rows.append([.string(def.name), .string(def.equipment?.name ?? ""),
-                        .string(def.isBodyweight ? "Yes" : "No"), .string(sets), .string(def.notes)])
-        }
-        return rows
-    }
-
-    private var equipmentSheetRows: [[XLSXCell]] {
-        var rows: [[XLSXCell]] = [[.string("Name"), .string("Type"), .string("Weight"), .string("Sides"), .string("Dumbbell/Band Weights")]]
-        for bar in bars.sorted(by: { $0.name < $1.name }) {
-            rows.append([.string(bar.name), .string(bar.isDumbbell ? "Dumbbell/Band" : "Barbell"),
-                        bar.isDumbbell ? .blank : .number(bar.weight),
-                        bar.isDumbbell ? .blank : .int(bar.loadableSides),
-                        .string(bar.dumbbellWeights.map { Formatters.trim($0) }.joined(separator: ", "))])
-        }
-        if let plates = settingsList.first?.availablePlateSizes, !plates.isEmpty {
-            rows.append([.blank])
-            rows.append([.string("Plates Owned"), .string(plates.map { Formatters.trim($0) }.joined(separator: ", "))])
-        }
-        return rows
     }
 }
 
