@@ -33,7 +33,7 @@ final class BodyWeightImportTests: XCTestCase {
         2026-01-06,Back Squat,5/5/5,135/135/135,5/5/5
         """
         let (rows, skipped) = ImportEngine.parseRows(csv: csv)
-        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(skipped.total, 0)
         XCTAssertEqual(rows.count, 2)
 
         let context = makeContext()

@@ -30,6 +30,18 @@ final class RecoveryImportTests: XCTestCase {
         [["Date", "Exercise", "Sets", "Weights", "Reps"]] + body
     }
 
+    /// The shape the EXPORT actually produces for a weigh-in. XLSXExport
+    /// omits .blank cells entirely and XLSXReader sizes a row to its last
+    /// populated column, so a "Body Weight" row — blank Sets, blank Reps —
+    /// arrives as FOUR cells against a five-column header, not five.
+    ///
+    /// This is the shape the original test got wrong: it wrote "" for Reps,
+    /// producing five cells, which sailed through a length guard the real
+    /// file failed. 24 weigh-ins were silently skipped as a result.
+    private func exportedWeighInRow(_ y: Int, _ m: Int, _ d: Int, _ weight: String) -> [String] {
+        [dateStr(y, m, d), "Body Weight", "", weight]     // no fifth cell
+    }
+
     private func parse(_ rows: [[String]], activities: Set<String> = []) -> [ImportEngine.ImportedEntry] {
         // parseFields is private; go through the public workbook path by
         // building a one-sheet grid the same way parseWorkbook does.
@@ -50,6 +62,38 @@ final class RecoveryImportTests: XCTestCase {
         XCTAssertEqual(w, 181.4)
     }
 
+    /// The regression that actually bit: a row SHORTER than the header.
+    func testWeighInRowWithNoTrailingRepsCellImports() {
+        let rows = historySheet([exportedWeighInRow(2026, 9, 15, "181.4")])
+        XCTAssertEqual(rows[1].count, 4, "fixture must be 4 cells — that's what the export yields")
+        let parsed = parse(rows)
+        XCTAssertEqual(parsed.count, 1, "a short row must not be dropped for missing optional columns")
+        guard case .bodyWeight(let w) = parsed[0].kind else {
+            return XCTFail("imported as \(parsed[0].kind)")
+        }
+        XCTAssertEqual(w, 181.4)
+    }
+
+    /// A short EXERCISE row is still skipped, and says why — the guard was
+    /// loosened for optional columns, not removed.
+    func testSkipReasonsAreItemised() {
+        let rows = historySheet([
+            exportedWeighInRow(2026, 9, 15, "181.4"),          // imports
+            [dateStr(2026, 9, 16), "", "", "", ""],            // no name
+            ["not-a-date", "Bench Press", "5/5", "135/135", "5/5"],  // bad date
+            [dateStr(2026, 9, 17), "Bench Press", "5/5", "", ""],    // no weights
+            [dateStr(2026, 9, 18), "Body Weight", "", "", ""],       // unreadable weight
+        ])
+        let (imported, reasons) = ImportEngine.parseHistorySheetWithReasonsForTesting(rows)
+        XCTAssertEqual(imported.count, 1)
+        XCTAssertEqual(reasons.missingName, 1)
+        XCTAssertEqual(reasons.unparseableDate, 1)
+        XCTAssertEqual(reasons.unusableSets, 1)
+        XCTAssertEqual(reasons.unreadableBodyWeight, 1)
+        XCTAssertEqual(reasons.total, 4)
+        XCTAssertEqual(reasons.breakdown.count, 4, "every non-zero reason is named")
+    }
+
     func testOldWeightSpellingWithValueInRepsStillWorks() {
         // The pre-existing CSV convention, which must not regress.
         let rows = historySheet([[dateStr(2026, 9, 15), "Weight", "", "", "181.4"]])
@@ -62,6 +106,9 @@ final class RecoveryImportTests: XCTestCase {
     }
 
     func testBodyWeightLabelVariants() {
+        // The literal string SettingsView.historySheetRows writes, space
+        // and capital W included.
+        XCTAssertTrue(ImportEngine.isBodyWeightLabel("Body Weight"))
         for name in ["Weight", "weight", "Body Weight", "body weight", "Bodyweight"] {
             XCTAssertTrue(ImportEngine.isBodyWeightLabel(name), "\(name) should be a weigh-in label")
         }

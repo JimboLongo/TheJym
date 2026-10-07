@@ -48,7 +48,7 @@ struct HistoryView: View {
     @State private var showingImportPhaseReview = false
     @State private var seededPhaseDayDrafts: [PhaseBuilderView.DayDraft]?
     @State private var pendingImportRows: [ImportEngine.ImportedEntry] = []
-    @State private var pendingImportSkipped = 0
+    @State private var pendingImportSkipped = ImportEngine.SkipReasons()
     // The just-created Phase, held until the review sheet has fully
     // dismissed — see the .sheet(onDismiss:) below for why the actual
     // import/alert can't run in the same moment as dismiss().
@@ -342,7 +342,7 @@ struct HistoryView: View {
             let didAccess = url.startAccessingSecurityScopedResource()
             defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
 
-            let parsed: (rows: [ImportEngine.ImportedEntry], skipped: Int)?
+            let parsed: (rows: [ImportEngine.ImportedEntry], skipped: ImportEngine.SkipReasons)?
             if url.pathExtension.lowercased() == "xlsx" {
                 guard let data = try? Data(contentsOf: url) else {
                     importResultMessage = "Couldn't read that file."
@@ -405,7 +405,7 @@ struct HistoryView: View {
                 if outcome.bodyWeightEntriesCreated > 0 {
                     msg += " Logged \(outcome.bodyWeightEntriesCreated) body weight entr\(outcome.bodyWeightEntriesCreated == 1 ? "y" : "ies")."
                 }
-                if skipped > 0 { msg += " Skipped \(skipped) row\(skipped == 1 ? "" : "s") that didn't parse." }
+                if skipped.total > 0 { msg += " Skipped \(skipped.total) row\(skipped.total == 1 ? "" : "s") that didn't parse." }
                 importResultMessage = msg
                 isImporting = false
             }
@@ -435,12 +435,12 @@ struct HistoryView: View {
             if outcome.bodyWeightEntriesCreated > 0 {
                 msg += " Logged \(outcome.bodyWeightEntriesCreated) body weight entr\(outcome.bodyWeightEntriesCreated == 1 ? "y" : "ies")."
             }
-            if pendingImportSkipped > 0 {
-                msg += " Skipped \(pendingImportSkipped) row\(pendingImportSkipped == 1 ? "" : "s") that didn't parse."
+            if pendingImportSkipped.total > 0 {
+                msg += " Skipped \(pendingImportSkipped.total) row\(pendingImportSkipped.total == 1 ? "" : "s") that didn't parse."
             }
             importResultMessage = msg
             pendingImportRows = []
-            pendingImportSkipped = 0
+            pendingImportSkipped = ImportEngine.SkipReasons()
             seededPhaseDayDrafts = nil
             isImporting = false
         }

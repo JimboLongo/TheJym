@@ -173,9 +173,15 @@ struct RecoveryImportView: View {
                 LabeledContent("…with no prior weigh-in", value: "\(p.bodyweightSetsUnresolved)")
                     .foregroundStyle(p.bodyweightSetsUnresolved > 0 ? .orange : .primary)
             }
-            if wb.skipped > 0 {
-                LabeledContent("Rows skipped", value: "\(wb.skipped)")
-                    .foregroundStyle(.secondary)
+            // Itemised, never a bare total — a silent skip count is
+            // what let 24 dropped weigh-ins look like a detail.
+            if wb.skipped.total > 0 {
+                LabeledContent("Rows skipped", value: "\(wb.skipped.total)")
+                    .foregroundStyle(.orange)
+                ForEach(wb.skipped.breakdown, id: \.0) { reason, count in
+                    LabeledContent("   \(reason)", value: "\(count)")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
 
             Button {

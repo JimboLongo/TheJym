@@ -171,7 +171,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
     func testParseRowsNormalizesRestDayLabelToCanonicalRest() {
         let csv = "Date,Day,Exercise,Sets,Weights,Reps\n2026-01-02,Rest Day,Walk,,,3.1mi"
         let (rows, skipped) = ImportEngine.parseRows(csv: csv)
-        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(skipped.total, 0)
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows.first?.dayLabel, "Rest", "\"Rest Day\" in the Day column should normalize to \"Rest\"")
     }
@@ -189,7 +189,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
     func testPhaseAndCycleColumnsParseTheDotZeroFormExcelStoresIntegersAs() {
         let csv = "Date,Phase,Cycle,Day,Exercise,Sets,Weights,Reps\n2026-01-01,1.0,3.0,Train A,Back Squat,5,135,5"
         let (rows, skipped) = ImportEngine.parseRows(csv: csv)
-        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(skipped.total, 0)
         XCTAssertEqual(rows.first?.phaseNumber, 1)
         XCTAssertEqual(rows.first?.cycleNumber, 3)
     }
@@ -223,7 +223,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
         2026-01-06,1,3,Rest Day,Walk,,,3.1mi
         """
         let (rows, skipped) = ImportEngine.parseRows(csv: csv)
-        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(skipped.total, 0)
 
         _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)
 
@@ -561,7 +561,7 @@ final class ImportPhaseAttributionTests: XCTestCase {
 
         let csv = "Date,Phase,Day,Cycle,Exercise,Sets,Weights,Reps\n2026-01-01,1,Train A,7,Back Squat,5,135,5"
         let (rows, skipped) = ImportEngine.parseRows(csv: csv)
-        XCTAssertEqual(skipped, 0)
+        XCTAssertEqual(skipped.total, 0)
         XCTAssertEqual(rows.first?.cycleNumber, 7, "Cycle column should parse")
 
         _ = await ImportEngine.importIntoStore(rows, context: context, attributeTo: phase)

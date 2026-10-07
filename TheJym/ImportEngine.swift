@@ -167,6 +167,28 @@ enum ImportEngine {
         return lower == "rest" || lower == "rest day"
     }
 
+    /// Why rows didn't import. A bare total is what let 24 silently-dropped
+    /// weigh-ins look like a rounding detail instead of a bug.
+    struct SkipReasons: Equatable {
+        var shortRow = 0          // no Date or Exercise cell at all
+        var missingName = 0
+        var unparseableDate = 0
+        var unreadableBodyWeight = 0
+        /// An exercise row whose Weights/Reps don't line up — no weights,
+        /// or a different count of each.
+        var unusableSets = 0
+        var total: Int {
+            shortRow + missingName + unparseableDate + unreadableBodyWeight + unusableSets
+        }
+        /// Human-readable, non-zero reasons only.
+        var breakdown: [(String, Int)] {
+            [("Row too short", shortRow), ("No exercise name", missingName),
+             ("Unreadable date", unparseableDate),
+             ("Unreadable body weight", unreadableBodyWeight),
+             ("Weights/reps don't match", unusableSets)].filter { $0.1 > 0 }
+        }
+    }
+
     struct ImportResult {
         var sessionsCreated: Int
         var setsImported: Int
@@ -375,9 +397,9 @@ enum ImportEngine {
     /// often carries tabs, not commas) text into rows, matching the header
     /// case-insensitively. Returns the parsed rows plus a count of data rows
     /// that didn't parse.
-    static func parseRows(csv: String) -> (rows: [ImportedEntry], skipped: Int) {
+    static func parseRows(csv: String) -> (rows: [ImportedEntry], skipped: SkipReasons) {
         let lines = csv.split(whereSeparator: { $0 == "\n" || $0 == "\r\n" }).map(String.init)
-        guard let headerLine = lines.first else { return ([], 0) }
+        guard let headerLine = lines.first else { return ([], SkipReasons()) }
         let delimiter: Character = headerLine.contains("\t") ? "\t" : ","
         let header = splitDelimitedLine(headerLine, delimiter: delimiter)
         let dataRows = lines.dropFirst()
@@ -388,7 +410,7 @@ enum ImportEngine {
 
     /// Parses an .xlsx workbook's first sheet the same way. Returns nil only
     /// if the file itself couldn't be read as a valid .xlsx at all.
-    static func parseRows(xlsxData: Data) -> (rows: [ImportedEntry], skipped: Int)? {
+    static func parseRows(xlsxData: Data) -> (rows: [ImportedEntry], skipped: SkipReasons)? {
         guard let grid = XLSXReader.readFirstSheetAsRows(data: xlsxData), let header = grid.first else { return nil }
         let dataRows = grid.dropFirst().filter { row in
             !row.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -399,14 +421,14 @@ enum ImportEngine {
     /// Shared row-processing logic once a CSV/xlsx source has been reduced to
     /// a plain header row + data rows of string fields.
     private static func parseFields(header rawHeader: [String], rows: [[String]],
-                                    restActivityNames: Set<String> = []) -> (rows: [ImportedEntry], skipped: Int) {
+                                    restActivityNames: Set<String> = []) -> (rows: [ImportedEntry], skipped: SkipReasons) {
         let header = rawHeader.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
         guard let dateIdx = header.firstIndex(where: { $0.hasPrefix("date") }),
               let exerciseIdx = header.firstIndex(where: { $0.hasPrefix("exercise") }),
               let setsIdx = header.firstIndex(where: { $0.hasPrefix("set") }),
               let weightsIdx = header.firstIndex(where: { $0.hasPrefix("weight") }),
               let repsIdx = header.firstIndex(where: { $0.hasPrefix("rep") })
-        else { return ([], 0) }
+        else { return ([], SkipReasons()) }
         // Optional — the import still works fine without any of these.
         let phaseIdx = header.firstIndex(where: { $0.hasPrefix("phase") })
         let dayIdx = header.firstIndex(where: { $0.hasPrefix("day") })
@@ -415,16 +437,32 @@ enum ImportEngine {
         let notesIdx = header.firstIndex(where: { $0.hasPrefix("note") })
 
         var out: [ImportedEntry] = []
-        var skipped = 0
+        var reasons = SkipReasons()
         for fields in rows {
-            guard fields.count > max(dateIdx, exerciseIdx, setsIdx, weightsIdx, repsIdx) else { skipped += 1; continue }
-            let name = fields[exerciseIdx].trimmingCharacters(in: .whitespaces)
-            let dateStr = fields[dateIdx].trimmingCharacters(in: .whitespaces)
-            let setsStr = fields[setsIdx].trimmingCharacters(in: .whitespaces)
-            let weightsStr = fields[weightsIdx].trimmingCharacters(in: .whitespaces)
-            let repsStr = fields[repsIdx].trimmingCharacters(in: .whitespaces)
+            // Only DATE and EXERCISE are structurally required. Sets,
+            // Weights and Reps are read positionally if present and
+            // treated as blank if not.
+            //
+            // This used to demand a cell for every declared column, which
+            // silently dropped every weigh-in the app itself exports:
+            // XLSXExport omits .blank cells entirely (`case .blank:
+            // continue`), and XLSXReader sizes a row to its last populated
+            // column — so "Body Weight" rows, which leave Sets and Reps
+            // blank, come back as 4 cells against a 5-column header and
+            // failed `count > repsIdx` before the body-weight branch below
+            // could ever run.
+            guard fields.count > max(dateIdx, exerciseIdx) else { reasons.shortRow += 1; continue }
+            func cell(_ idx: Int) -> String {
+                (fields[safe: idx] ?? "").trimmingCharacters(in: .whitespaces)
+            }
+            let name = cell(exerciseIdx)
+            let dateStr = cell(dateIdx)
+            let setsStr = cell(setsIdx)
+            let weightsStr = cell(weightsIdx)
+            let repsStr = cell(repsIdx)
 
-            guard !name.isEmpty, let date = parseDate(dateStr) else { skipped += 1; continue }
+            guard !name.isEmpty else { reasons.missingName += 1; continue }
+            guard let date = parseDate(dateStr) else { reasons.unparseableDate += 1; continue }
 
             let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
@@ -456,7 +494,7 @@ enum ImportEngine {
                                              kind: .bodyWeight(weight: weight),
                                              phaseNumber: nil, dayLabel: nil, equipmentName: nil))
                 } else {
-                    skipped += 1
+                    reasons.unreadableBodyWeight += 1
                 }
                 continue
             }
@@ -514,14 +552,14 @@ enum ImportEngine {
             }
             let weights = weightsStr.split(separator: "/").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
             let reps = repsStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-            guard !weights.isEmpty, weights.count == reps.count else { skipped += 1; continue }
+            guard !weights.isEmpty, weights.count == reps.count else { reasons.unusableSets += 1; continue }
 
             out.append(ImportedEntry(date: date, exerciseName: name,
                                      kind: .exercise(goalType: goalType, targetReps: targetReps, weights: weights, reps: reps),
                                      phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
                                      equipmentName: matchedEquipment, cycleNumber: explicitCycleNumber, notes: matchedNotes))
         }
-        return (out, skipped)
+        return (out, reasons)
     }
 
     /// Groups rows into one WorkoutSession per calendar day (further split if
@@ -1152,7 +1190,7 @@ extension ImportEngine {
     /// What one TheJym-Export.xlsx holds, parsed but NOT written.
     struct Workbook {
         var historyRows: [ImportedEntry] = []
-        var skipped = 0
+        var skipped = SkipReasons()
         var library: [LibraryEntry] = []
         var equipment: [EquipmentEntry] = []
         var platesOwned: [Double] = []
@@ -1279,6 +1317,14 @@ extension ImportEngine {
         guard let header = grid.first else { return [] }
         return parseFields(header: header, rows: Array(grid.dropFirst()),
                            restActivityNames: restActivityNames).rows
+    }
+
+    static func parseHistorySheetWithReasonsForTesting(_ grid: [[String]],
+                                                       restActivityNames: Set<String> = [])
+    -> (rows: [ImportedEntry], skipped: SkipReasons) {
+        guard let header = grid.first else { return ([], SkipReasons()) }
+        return parseFields(header: header, rows: Array(grid.dropFirst()),
+                           restActivityNames: restActivityNames)
     }
 
     /// Rows whose date falls inside [from, through], both inclusive and

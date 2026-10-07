@@ -330,7 +330,7 @@ struct PhaseBuilderView: View {
                 return
             }
 
-            let parsed: (rows: [ImportEngine.ImportedEntry], skipped: Int)?
+            let parsed: (rows: [ImportEngine.ImportedEntry], skipped: ImportEngine.SkipReasons)?
             if isXLSX {
                 guard let data = try? Data(contentsOf: url) else {
                     importErrorMessage = "Couldn't read that file."
