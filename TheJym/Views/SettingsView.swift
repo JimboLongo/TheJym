@@ -179,6 +179,8 @@ struct SettingsView: View {
                     }
                 }
 
+                BackupSettingsSection()
+
                 Section {
                     if let url = exportXLSXURL {
                         ShareLink(item: url) {

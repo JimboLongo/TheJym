@@ -18,7 +18,11 @@ struct TheJymApp: App {
             WorkoutSession.self, ExerciseLog.self, SetLog.self,
             BodyWeightEntry.self, RestDayActivity.self,
             ActiveRecovery.self, TrainingDaysPerWeekChange.self,
-            TimerTemplate.self, TimerPreset.self
+            TimerTemplate.self, TimerPreset.self,
+            // Local-only: deliberately not carried by ExportBuilder, so a
+            // restored install can't inherit the old device's "last
+            // backup" date. See BackupStatus.
+            BackupStatus.self
         ])
     }
 }
@@ -88,6 +92,7 @@ struct ContentView: View {
     @Query private var bars: [Bar]
     @Query private var exerciseDefs: [ExerciseDef]
     @Query private var phases: [Phase]
+    @Query private var backupStatuses: [BackupStatus]
 
     @State private var overflowTab: OverflowTab?
     @State private var selectedTab: MainTab = .train
@@ -144,6 +149,7 @@ struct ContentView: View {
             refreshStreakNotification()
             refreshWeightNotification()
             removeOrphanedExerciseDefs()
+            runBackupIfDue()
         }
         // Re-evaluated on every foreground/background transition — not just
         // launch — so the reminder reflects whatever was just logged (on
@@ -160,10 +166,18 @@ struct ContentView: View {
                 WorkoutSession.creditYesterdayAsRestIfNothingLogged(context: context)
                 undoPrematurePhaseAutoContinue()
                 autoContinueQueuedPhases()
+                runBackupIfDue()
             }
             if newPhase == .active || newPhase == .background {
                 refreshStreakNotification()
                 refreshWeightNotification()
+            }
+            // Backgrounding is the single most reliable trigger there is —
+            // it fires on every use, needs no permission, and can't be
+            // deferred by the system the way a BGTask can. The write is
+            // ~76 KB, so the few seconds UIKit grants are ample.
+            if newPhase == .background {
+                runBackupIfDue()
             }
         }
     }
@@ -685,6 +699,20 @@ struct ContentView: View {
             changed = true
         }
         if changed { try? context.save() }
+    }
+
+    // MARK: - Automatic backup
+    //
+    // App-lifecycle triggers are the PRIMARY mechanism, not a fallback.
+    // BGTaskScheduler is opportunistic — it never runs after a force-quit,
+    // never with Background App Refresh off, never in Low Power Mode, and
+    // Apple publishes no rate. Measured against this store's own history,
+    // the app was opened on 84 of the last 90 days with a longest gap of
+    // 3 days, so "back up when the app is used" is both more reliable than
+    // a nightly task and entirely under the user's control.
+
+    private func runBackupIfDue() {
+        BackupEngine.runIfConfigured(context: context, force: false)
     }
 
     /// Create default settings, bars, dumbbells, and exercise library on first launch.

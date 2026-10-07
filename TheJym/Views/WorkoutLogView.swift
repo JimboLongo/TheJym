@@ -1209,6 +1209,12 @@ struct WorkoutLogView: View {
         clearSavedWorkoutStopwatch()
         RestActivityController.shared.end()
 
+        // The highest-value moment to back up: new data exists right now,
+        // and this is the one action guaranteed to have just happened.
+        // Forced past the staleness check — a second workout in a day is
+        // still data worth not losing.
+        BackupEngine.runIfConfigured(context: context, force: true)
+
         if !entries.isEmpty {
             recapEntries = entries
             // Initial wheel position per entry — computed from the same

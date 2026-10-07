@@ -45,6 +45,10 @@ struct RecoveryImportView: View {
     var body: some View {
         NavigationStack {
             List {
+                // Before the file picker, not after: if you're on this
+                // screen you may be looking for a backup you forgot the
+                // location of, and that's the question to answer first.
+                BackupLocationNote()
                 fileSection
                 if let workbook {
                     dateSection
