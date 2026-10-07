@@ -564,6 +564,29 @@ struct SessionDetailView: View {
                         Text("Phase \(p.number)").tag(Optional(p.persistentModelID))
                     }
                 }
+                // Settable directly, not only re-matched by name when the
+                // Phase changes. An imported session has no day at all, and
+                // until this existed there was nowhere to give it one —
+                // which left 27 sessions unable to fill a cycle slot.
+                if let phase = session.phase {
+                    Picker("Day", selection: Binding(
+                        get: { session.day?.persistentModelID },
+                        set: { newID in
+                            session.day = newID.flatMap { id in
+                                phase.orderedDays.first { $0.persistentModelID == id }
+                            }
+                            if let name = session.day?.name { session.dayLabel = name }
+                            dayReattachmentNote = nil
+                            try? context.save()
+                        })) {
+                        Text("None").tag(PersistentIdentifier?.none)
+                        // Two days can share a name ("Rest"), so each is
+                        // shown with its position in the rotation.
+                        ForEach(phase.orderedDays, id: \.persistentModelID) { d in
+                            Text("\(d.order + 1). \(d.name)").tag(Optional(d.persistentModelID))
+                        }
+                    }
+                }
                 if session.phase != nil {
                     HStack {
                         Text("Cycle")
@@ -583,7 +606,7 @@ struct SessionDetailView: View {
                 if let dayReattachmentNote {
                     Text(dayReattachmentNote).foregroundStyle(.orange)
                 } else {
-                    Text("Changing Phase moves this day's cycle progress — the day (e.g. \"Push A\") re-matches by name in the new Phase where possible.")
+                    Text("Changing Phase re-matches the day by name where possible. A cycle only completes when every slot in the split is filled — rest days included — so a session with no Day fills nothing.")
                 }
             }
             ForEach(sortedLogs, id: \.persistentModelID) { log in
@@ -687,15 +710,20 @@ struct SessionDetailView: View {
     /// needs correcting for the new Phase.
     private func changePhase(to newPhase: Phase?) {
         guard newPhase?.persistentModelID != session.phase?.persistentModelID else { return }
-        let oldDayName = session.day?.name
+        // dayLabel, not day?.name. The relationship is nil for every
+        // imported session, so reading it meant the re-match never ran for
+        // exactly the sessions that needed it most. dayLabel is the
+        // display name captured at log time and survives the day being
+        // renamed or deleted, so it's the better key regardless.
+        let oldDayName = session.day?.name ?? session.dayLabel
         session.phase = newPhase
-        if let newPhase, let oldDayName {
+        if let newPhase, !oldDayName.isEmpty {
             session.day = newPhase.orderedDays.first { $0.name.localizedCaseInsensitiveCompare(oldDayName) == .orderedSame }
         } else {
             session.day = nil
         }
-        dayReattachmentNote = (oldDayName != nil && session.day == nil)
-            ? "No day named \"\(oldDayName!)\" in Phase \(newPhase?.number ?? 0) — day cleared."
+        dayReattachmentNote = (newPhase != nil && !oldDayName.isEmpty && session.day == nil)
+            ? "No day named \"\(oldDayName)\" in Phase \(newPhase?.number ?? 0) — pick one below."
             : nil
         try? context.save()
     }

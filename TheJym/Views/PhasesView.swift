@@ -16,6 +16,8 @@ struct PhasesView: View {
     @Query(sort: \Phase.number, order: .reverse) private var phases: [Phase]
 
     @State private var showingAdd = false
+    /// Non-nil while the day-attribution review is open for that phase.
+    @State private var attributing: Phase?
     @State private var phasePendingDelete: Phase?
 
     var body: some View {
@@ -50,10 +52,18 @@ struct PhasesView: View {
                         Button(role: .destructive) { phasePendingDelete = phase } label: {
                             Label("Delete", systemImage: "trash")
                         }
+                        // Only offered when there's something to fix: a
+                        // session inside this phase's dates with no day,
+                        // which fills no cycle slot until it gets one.
+                        Button { attributing = phase } label: {
+                            Label("Attribute Days", systemImage: "calendar.badge.plus")
+                        }
+                        .tint(.blue)
                     }
                 }
             }
             .navigationTitle("Phases")
+            .sheet(item: $attributing) { DayAttributionView(phase: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
