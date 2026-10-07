@@ -133,9 +133,27 @@ enum ImportEngine {
         /// exercise's ExerciseDef.notes — there's no per-log notes field, so
         /// this only applies to real exercise rows, not rest/weight rows.
         let notes: String?
+        /// Per-session facts the enriched export carries and nothing else
+        /// can reconstruct. nil from an older file, which is why every one
+        /// is optional rather than defaulted.
+        var durationSeconds: Int?
+        var isDeload = false
+        var isBonusSession = false
+        /// Per-set, index-aligned with the row's weights. Empty from an
+        /// older file, in which case bodyweightAtLog is resolved from
+        /// weigh-ins as before.
+        var addedWeights: [Double?] = []
+        var bodyweightAtLogs: [Double?] = []
 
         init(date: Date, exerciseName: String, kind: ImportedRowKind, phaseNumber: Int?,
-             dayLabel: String?, equipmentName: String?, cycleNumber: Int? = nil, notes: String? = nil) {
+             dayLabel: String?, equipmentName: String?, cycleNumber: Int? = nil, notes: String? = nil,
+             durationSeconds: Int? = nil, isDeload: Bool = false, isBonusSession: Bool = false,
+             addedWeights: [Double?] = [], bodyweightAtLogs: [Double?] = []) {
+            self.durationSeconds = durationSeconds
+            self.isDeload = isDeload
+            self.isBonusSession = isBonusSession
+            self.addedWeights = addedWeights
+            self.bodyweightAtLogs = bodyweightAtLogs
             self.date = date
             self.exerciseName = exerciseName
             self.kind = kind
@@ -444,6 +462,13 @@ enum ImportEngine {
         let equipmentIdx = header.firstIndex(where: { $0.hasPrefix("equipment") })
         let cycleIdx = header.firstIndex(where: { $0.hasPrefix("cycle") })
         let notesIdx = header.firstIndex(where: { $0.hasPrefix("note") })
+        // Enriched-export columns. All optional: a file without them
+        // imports exactly as before.
+        let durationIdx = header.firstIndex(where: { $0.hasPrefix("duration") })
+        let deloadIdx = header.firstIndex(where: { $0.hasPrefix("deload") })
+        let bonusIdx = header.firstIndex(where: { $0.hasPrefix("bonus") })
+        let addedIdx = header.firstIndex(where: { $0.hasPrefix("addedweight") })
+        let bwAtIdx = header.firstIndex(where: { $0.hasPrefix("bodyweightatlog") })
 
         var out: [ImportedEntry] = []
         var reasons = SkipReasons()
@@ -570,10 +595,22 @@ enum ImportEngine {
             let reps = repsStr.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard !weights.isEmpty, weights.count == reps.count else { reasons.unusableSets += 1; continue }
 
+            /// "12//15" -> [12, nil, 15]: an empty slot means that set had
+            /// no value, which is different from zero.
+            func optionalDoubles(_ idx: Int?) -> [Double?] {
+                guard let idx, case let text = cell(idx), !text.isEmpty else { return [] }
+                return text.split(separator: "/", omittingEmptySubsequences: false)
+                    .map { Double($0.trimmingCharacters(in: .whitespaces)) }
+            }
             out.append(ImportedEntry(date: date, exerciseName: name,
                                      kind: .exercise(goalType: goalType, targetReps: targetReps, weights: weights, reps: reps),
                                      phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
-                                     equipmentName: matchedEquipment, cycleNumber: explicitCycleNumber, notes: matchedNotes))
+                                     equipmentName: matchedEquipment, cycleNumber: explicitCycleNumber, notes: matchedNotes,
+                                     durationSeconds: durationIdx.flatMap { Int(cell($0)) },
+                                     isDeload: deloadIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
+                                     isBonusSession: bonusIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
+                                     addedWeights: optionalDoubles(addedIdx),
+                                     bodyweightAtLogs: optionalDoubles(bwAtIdx)))
         }
         return (out, reasons)
     }
@@ -923,6 +960,12 @@ enum ImportEngine {
             let session = WorkoutSession(date: key.day, day: matchedDay,
                                          dayLabel: key.dayLabel ?? "Imported", cycleNumber: cycle)
             session.phase = matchedPhase
+            // Per-session facts from the enriched export. Taken from the
+            // first row that carries one, since every row of a session
+            // writes the same value.
+            if let d = dayRows.compactMap(\.durationSeconds).first { session.durationSeconds = d }
+            if dayRows.contains(where: \.isDeload) { session.isDeload = true }
+            if dayRows.contains(where: \.isBonusSession) { session.isBonusSession = true }
             context.insert(session)
             sessionsCreated += 1
 
@@ -943,7 +986,17 @@ enum ImportEngine {
                 let bw = isBW ? resolvedBodyweight(asOf: key.day) : nil
                 for (i, pair) in zip(weights, reps).enumerated() {
                     let set: SetLog
-                    if isBW {
+                    // An exported bodyweightAtLog WINS over re-resolution.
+                    // It was frozen at log time by design (SetLog's doc),
+                    // and re-resolving would let a later weigh-in edit
+                    // retroactively rewrite an old set's weight.
+                    let exportedBW = entry.bodyweightAtLogs[safe: i] ?? nil
+                    let exportedAdded = entry.addedWeights[safe: i] ?? nil
+                    if let exportedBW {
+                        set = SetLog(index: i, weight: pair.0, reps: pair.1,
+                                     addedWeight: exportedAdded ?? (pair.0 - exportedBW),
+                                     bodyweightAtLog: exportedBW)
+                    } else if isBW {
                         set = SetLog(index: i, weight: pair.0 + (bw ?? 0), reps: pair.1,
                                     addedWeight: pair.0, bodyweightAtLog: bw)
                     } else {
@@ -1210,6 +1263,9 @@ extension ImportEngine {
         var library: [LibraryEntry] = []
         var equipment: [EquipmentEntry] = []
         var platesOwned: [Double] = []
+        /// The program half. Empty for any export older than this one,
+        /// which is normal — restoreProgram is then a no-op.
+        var program = Program()
         /// Distinct exercise names in History, for the rest-activity
         /// ticklist. Nothing is treated as a walk until the user says so.
         var candidateNames: [String] = []
@@ -1292,6 +1348,10 @@ extension ImportEngine {
                 }
                 wb.candidateNames = names.sorted()
             }
+        }
+
+        if let rows = sheet("Program"), rows.count > 1 {
+            wb.program = parseProgramSheet(rows)
         }
 
         if let rows = sheet("Exercises"), rows.count > 1 {
@@ -1463,6 +1523,206 @@ extension ImportEngine {
         if !wb.platesOwned.isEmpty,
            let settings = (try? context.fetch(FetchDescriptor<AppSettings>()))?.first {
             settings.availablePlateSizes = wb.platesOwned
+        }
+        try? context.save()
+    }
+}
+
+// MARK: - Program sheet (Phase / PhaseDay / PlannedExercise / settings)
+
+extension ImportEngine {
+    /// The program half of an enriched export: everything the original
+    /// three sheets dropped.
+    ///
+    /// A file WITHOUT a Program sheet is normal, not an error — every
+    /// export before this one lacks it, including the one used for the
+    /// Oct 2026 recovery. `isEmpty` is then true and restoreProgram is a
+    /// no-op, so an older file imports exactly as it always did.
+    struct Program {
+        struct PhaseRow {
+            var number = 0, totalCycles = 0, deloadCycle = 0
+            var startDate = Date()
+            var isActive = false
+            var manualDeloadCycles: [Int] = []
+            var legacyCompletedCycles: Int?
+        }
+        struct DayRow { var phaseNumber = 0, order = 0; var name = ""; var isRest = false }
+        struct PlannedRow {
+            var phaseNumber = 0, order = 0
+            var dayName = "", exerciseName = ""
+            var targetReps: [Int] = []
+            var suggestedWeights: [Double] = []
+            var isBodyweight = false
+            var goalKindRaw = 0, repTotalTarget = 0, cycleOverride = 0
+            var restTimeSeconds: Int?
+            /// The owning day's order. Carried alongside dayName for the
+            /// same reason days are matched by order: "Rest" is not a
+            /// unique name within a phase. -1 means an older file that
+            /// didn't carry it, which falls back to name matching.
+            var dayOrder = -1
+        }
+        var phases: [PhaseRow] = []
+        var days: [DayRow] = []
+        var planned: [PlannedRow] = []
+        var recoveries: [(date: Date, typeRaw: Int)] = []
+        var tdpwChanges: [(date: Date, value: Int)] = []
+        var settings: [String: String] = [:]
+
+        var isEmpty: Bool {
+            phases.isEmpty && days.isEmpty && planned.isEmpty
+                && recoveries.isEmpty && tdpwChanges.isEmpty && settings.isEmpty
+        }
+    }
+
+    /// Row-type dispatch on column A. An unrecognised Type is SKIPPED
+    /// rather than treated as an error, so a newer file adding a row kind
+    /// still imports on an older build.
+    static func parseProgramSheet(_ grid: [[String]]) -> Program {
+        var p = Program()
+        func str(_ r: [String], _ i: Int) -> String { (r[safe: i] ?? "").trimmingCharacters(in: .whitespaces) }
+        func int(_ r: [String], _ i: Int) -> Int { parseFlexibleInt(str(r, i)) ?? 0 }
+        func yes(_ r: [String], _ i: Int) -> Bool { str(r, i).lowercased().hasPrefix("y") }
+        func ints(_ s: String) -> [Int] {
+            s.split(whereSeparator: { $0 == "," || $0 == "/" })
+                .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        }
+
+        for row in grid.dropFirst() {
+            switch str(row, 0).lowercased() {
+            case "phase":
+                guard let date = parseDate(str(row, 3)) else { continue }
+                p.phases.append(.init(number: int(row, 1), totalCycles: int(row, 2),
+                                      deloadCycle: int(row, 5), startDate: date,
+                                      isActive: yes(row, 4),
+                                      manualDeloadCycles: ints(str(row, 6)),
+                                      legacyCompletedCycles: parseFlexibleInt(str(row, 7))))
+            case "phaseday":
+                p.days.append(.init(phaseNumber: int(row, 1), order: int(row, 2),
+                                    name: str(row, 3), isRest: yes(row, 4)))
+            case "plannedexercise":
+                p.planned.append(.init(
+                    phaseNumber: int(row, 1), order: int(row, 3),
+                    dayName: str(row, 2), exerciseName: str(row, 4),
+                    targetReps: ints(str(row, 5)),
+                    suggestedWeights: str(row, 6).split(separator: "/")
+                        .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) },
+                    isBodyweight: yes(row, 7),
+                    goalKindRaw: int(row, 8), repTotalTarget: int(row, 9),
+                    cycleOverride: int(row, 11),
+                    restTimeSeconds: parseFlexibleInt(str(row, 10)),
+                    dayOrder: parseFlexibleInt(str(row, 12)) ?? -1))
+            case "activerecovery":
+                if let d = parseDate(str(row, 1)) { p.recoveries.append((d, int(row, 2))) }
+            case "trainingdaysperweek":
+                if let d = parseDate(str(row, 1)) { p.tdpwChanges.append((d, int(row, 2))) }
+            case "setting":
+                p.settings[str(row, 1)] = str(row, 2)
+            default:
+                continue
+            }
+        }
+        return p
+    }
+
+    /// Writes the program back. Must run BEFORE importIntoStore so the
+    /// history's Phase/Day/Cycle columns have phases to attach to —
+    /// resolvePhase matches on an existing Phase by number, and a session
+    /// imported before its phase exists would land unattributed with no
+    /// second chance.
+    ///
+    /// Matches phases by NUMBER and days by name within a phase, updating
+    /// in place rather than duplicating, so re-running is safe.
+    @MainActor
+    static func restoreProgram(_ p: Program, context: ModelContext) {
+        guard !p.isEmpty else { return }
+        var existingPhases = (try? context.fetch(FetchDescriptor<Phase>())) ?? []
+
+        for row in p.phases {
+            let phase = existingPhases.first { $0.number == row.number } ?? {
+                let new = Phase(number: row.number, totalCycles: row.totalCycles,
+                                startDate: row.startDate)
+                context.insert(new)
+                existingPhases.append(new)
+                return new
+            }()
+            phase.totalCycles = row.totalCycles
+            phase.startDate = row.startDate
+            phase.isActive = row.isActive
+            phase.deloadCycle = row.deloadCycle
+            phase.manualDeloadCycles = row.manualDeloadCycles
+            phase.legacyCompletedCycles = row.legacyCompletedCycles
+        }
+
+        for row in p.days {
+            guard let phase = existingPhases.first(where: { $0.number == row.phaseNumber }) else { continue }
+            // Matched by ORDER, not name. A six-day split has TWO days
+            // called "Rest", so name-matching made the second Rest row
+            // find the first and update it — silently collapsing every
+            // split from six days to five. Order is unique within a phase
+            // and is what orderedDays sorts on anyway.
+            if let existing = phase.days.first(where: { $0.order == row.order }) {
+                existing.name = row.name
+                existing.isRest = row.isRest
+            } else {
+                let day = PhaseDay(order: row.order, name: row.name, isRest: row.isRest)
+                day.phase = phase
+                context.insert(day)
+            }
+        }
+
+        for row in p.planned {
+            guard let phase = existingPhases.first(where: { $0.number == row.phaseNumber }),
+                  let day = phase.days.first(where: { $0.order == row.dayOrder })
+                      ?? phase.days.first(where: {
+                          $0.name.localizedCaseInsensitiveCompare(row.dayName) == .orderedSame
+                      }) else { continue }
+            // Keyed by (order, cycleOverride) within the day, which is
+            // what makes a per-cycle override distinct from its base slot.
+            if day.plannedExercises.contains(where: {
+                $0.order == row.order && $0.cycleOverride == row.cycleOverride
+                    && $0.exerciseName == row.exerciseName
+            }) { continue }
+            let goal: GoalType = row.goalKindRaw == 1
+                ? .repTotal(target: row.repTotalTarget) : .fixedSets
+            let pe = PlannedExercise(order: row.order, exerciseName: row.exerciseName,
+                                     targetReps: row.targetReps,
+                                     suggestedWeights: row.suggestedWeights,
+                                     isBodyweight: row.isBodyweight, goalType: goal,
+                                     restTimeSeconds: row.restTimeSeconds,
+                                     cycleOverride: row.cycleOverride)
+            pe.day = day
+            context.insert(pe)
+        }
+
+        let existingRecoveryDays = Set(((try? context.fetch(FetchDescriptor<ActiveRecovery>())) ?? [])
+            .map { Calendar.current.startOfDay(for: $0.date) })
+        for row in p.recoveries where !existingRecoveryDays.contains(Calendar.current.startOfDay(for: row.date)) {
+            context.insert(ActiveRecovery(date: row.date,
+                                          type: ActiveRecoveryType(rawValue: row.typeRaw) ?? .rest))
+        }
+
+        let existingChangeDays = Set(((try? context.fetch(FetchDescriptor<TrainingDaysPerWeekChange>())) ?? [])
+            .map { Calendar.current.startOfDay(for: $0.date) })
+        for row in p.tdpwChanges where !existingChangeDays.contains(Calendar.current.startOfDay(for: row.date)) {
+            context.insert(TrainingDaysPerWeekChange(date: row.date, trainingDaysPerWeek: row.value))
+        }
+
+        if let settings = (try? context.fetch(FetchDescriptor<AppSettings>()))?.first {
+            func bool(_ k: String) -> Bool? { p.settings[k].map { $0.lowercased().hasPrefix("y") } }
+            if let v = p.settings["trainingStartDate"].flatMap({ parseDate($0) }) { settings.trainingStartDate = v }
+            if let v = p.settings["trainingDaysPerWeek"].flatMap({ Int($0) }) { settings.trainingDaysPerWeek = v }
+            if let v = p.settings["aiAggressivenessRaw"].flatMap({ Int($0) }) { settings.aiAggressivenessRaw = v }
+            if let v = bool("deloadWeeksEnabled") { settings.deloadWeeksEnabled = v }
+            if let v = bool("hasDumbbell125Attachment") { settings.hasDumbbell125Attachment = v }
+            if let v = bool("hasDumbbell25Attachment") { settings.hasDumbbell25Attachment = v }
+            if let v = bool("customWeightIncreaseEnabled") { settings.customWeightIncreaseEnabled = v }
+            if let v = p.settings["customWeightIncreaseStreak"].flatMap({ Int($0) }) { settings.customWeightIncreaseStreak = v }
+            if let v = p.settings["customWeightIncreaseAmount"].flatMap({ Double($0) }) { settings.customWeightIncreaseAmount = v }
+            if let v = bool("streakRemindersEnabled") { settings.streakRemindersEnabled = v }
+            if let v = p.settings["streakReminderHour"].flatMap({ Int($0) }) { settings.streakReminderHour = v }
+            if let v = bool("weightRemindersEnabled") { settings.weightRemindersEnabled = v }
+            if let v = p.settings["weightReminderHour"].flatMap({ Int($0) }) { settings.weightReminderHour = v }
+            if let v = bool("includeDefaultExercises") { settings.includeDefaultExercises = v }
         }
         try? context.save()
     }

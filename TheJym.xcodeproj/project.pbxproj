@@ -82,8 +82,6 @@
 		};
 		607E71C8ED6AA4AA640C629B /* TheJymTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = TheJymTests;
 			sourceTree = "<group>";
 		};
@@ -134,7 +132,6 @@
 				C64E87C40B836B05DB5FCE9F /* TheJymWidgetLiveActivity.swift */,
 				CAB1BE6E497779D771B32F6D /* Info.plist */,
 			);
-			name = TheJymWidget;
 			path = TheJymWidget;
 			sourceTree = "<group>";
 		};

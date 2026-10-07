@@ -140,7 +140,7 @@ struct RecoveryImportView: View {
 
     @ViewBuilder
     private func librarySection(_ wb: ImportEngine.Workbook) -> some View {
-        if !wb.library.isEmpty || !wb.equipment.isEmpty {
+        if !wb.library.isEmpty || !wb.equipment.isEmpty || !wb.program.isEmpty {
             Section("Also Restoring") {
                 if !wb.library.isEmpty {
                     LabeledContent("Exercise library", value: "\(wb.library.count)")
@@ -150,6 +150,14 @@ struct RecoveryImportView: View {
                 }
                 if !wb.platesOwned.isEmpty {
                     LabeledContent("Plates owned", value: "\(wb.platesOwned.count) sizes")
+                }
+                if !wb.program.isEmpty {
+                    LabeledContent("Phases", value: "\(wb.program.phases.count)")
+                    LabeledContent("Phase days", value: "\(wb.program.days.count)")
+                    LabeledContent("Planned exercises", value: "\(wb.program.planned.count)")
+                    if !wb.program.recoveries.isEmpty {
+                        LabeledContent("Rest-day credits", value: "\(wb.program.recoveries.count)")
+                    }
                 }
             }
         }
@@ -243,6 +251,11 @@ struct RecoveryImportView: View {
     private func runImport(_ wb: ImportEngine.Workbook) async {
         importing = true
         defer { importing = false }
+        // Program FIRST: importIntoStore's resolvePhase matches a row's
+        // Phase column against an EXISTING Phase, so a session imported
+        // before its phase exists lands unattributed with no second pass
+        // to fix it.
+        ImportEngine.restoreProgram(wb.program, context: context)
         ImportEngine.restoreLibraryAndEquipment(wb, context: context)
         result = await ImportEngine.importIntoStore(filteredRows(wb), context: context)
     }
