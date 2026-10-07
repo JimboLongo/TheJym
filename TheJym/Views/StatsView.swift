@@ -331,14 +331,17 @@ struct StatsView: View {
             // "% of days logged" also used to sit here; the table's
             // "% of days" Active cell is that number now.
             // TrainingStats.percentLogged went with MomentumEngine.
-            statGrid([
-                // Since-start window — deliberately kept alongside
-                // Milestones' All-time miles rather than merged into it:
-                // Training Start Date can (and here does) postdate a lot of
-                // imported history, so the two numbers genuinely diverge
-                // rather than being the same figure twice.
-                ("Miles walked", milesLabel(stats.milesSinceStart)),
-            ])
+            // "Miles walked" used to sit here as a standalone row. The
+            // table's Miles/Active cell is the same number — not by
+            // coincidence but by construction: both sum the same
+            // milesEntries over the same [start, today] window, one as
+            // milesSum and one as liftMiles + walkMiles. So this was the
+            // figure printed twice.
+            //
+            // TrainingStats.milesSinceStart stays — MilesWalkedTests
+            // asserts on it, and it's the since-start total the table's
+            // partition has to add up to. Current Phase's "Miles walked"
+            // is a different, phase-scoped number and is NOT a duplicate.
             consistencyTable(stats)
         }
     }
@@ -362,7 +365,10 @@ struct StatsView: View {
                           adherenceLabel(percent: adherence, delta: stats.cyclePaceDelta ?? 0)))
         }
         if let progress = stats.activePhaseCycleProgress {
-            pairs.append(("Phase \(progress.number)",
+            // Named for what the number IS, not which phase it's from —
+            // the section header already says the phase, and "Phase 2"
+            // as a label told you nothing about "7 of 7" meaning.
+            pairs.append(("Perfect Cycles",
                           progress.completedCount == 0
                               ? "No completed cycles yet"
                               : "\(progress.perfectCount) of \(progress.completedCount)"))
@@ -667,17 +673,6 @@ struct StatsView: View {
                 // wrong figure in two cells to buy a sum nobody adds.
                 ConsistencyRow("Days per week") { _, col in String(format: "%.1f", col.daysPerWeek) },
                 ConsistencyRow("Days logged") { _, col in "\(col.daysLogged)" },
-                // A ROW, not a column. Measured: five data columns need
-                // 458.7pt against 393 and can't be made to fit, and every
-                // row label ("Days per week", "Days logged") would be
-                // false for a miles cell. As a row it costs no width, and
-                // miles partition by day-kind exactly as the counts do, so
-                // Lift + Walk = Active still holds. Rest is "—" rather
-                // than 0.0 — a day with nothing logged has no distance,
-                // which is different from having walked zero.
-                ConsistencyRow("Miles") { header, col in
-                    header == "Rest" ? "—" : String(format: "%.1f", col.miles)
-                },
                 ConsistencyRow("Daily Streak",
                                dateLine: stats.currentActiveStreakStartDate.map(streakSinceLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
@@ -705,6 +700,22 @@ struct StatsView: View {
                                                active: stats.maxStreak,
                                                lift: stats.maxBankedStreakLiftDays,
                                                walk: stats.maxBankedStreakWalkDays)
+                },
+                // A ROW, not a column. Measured: five data columns need
+                // 458.7pt against 393 and can't be made to fit, and every
+                // row label ("Days per week", "Days logged") would be
+                // false for a miles cell. As a row it costs no width, and
+                // miles partition by day-kind exactly as the counts do, so
+                // Lift + Walk = Active still holds. Rest is "—" rather
+                // than 0.0 — a day with nothing logged has no distance,
+                // which is different from having walked zero.
+                //
+                // Last, below the four streak rows, rather than up with
+                // the count rows: it's the only row not measured in days,
+                // and the four streak rows read as a block that a miles
+                // row in the middle of them interrupted.
+                ConsistencyRow("Miles") { header, col in
+                    header == "Rest" ? "—" : String(format: "%.1f", col.miles)
                 }]
     }
 
@@ -1251,14 +1262,18 @@ struct RollingWindowTable: View {
             // found that side-by-side squeezes a long value into wrapping
             // mid-number at AX5, and "176 (48.2%)" is exactly that shape.
             // Here the two halves get their own line anyway, so the cell
-            // reads as one phrase: "176 of 365 days · 48.2%".
+            // reads as one phrase: "48.2% · 176 of 365 days".
+            //
+            // Percent leads, matching the grid above — same reason, and
+            // the two layouts must not disagree about which figure is the
+            // headline.
             ForEach(windows) { window in
                 ForEach(Self.columns, id: \.self) { column in
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Last \(window.days) days — \(column)")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("\(window.count(for: column)) of \(window.days) days · \(pct(window.percent(for: column)))")
+                        Text("\(pct(window.percent(for: column))) · \(window.count(for: column)) of \(window.days) days")
                             .font(.system(.body, design: .monospaced)).bold()
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1297,11 +1312,19 @@ struct RollingWindowTable: View {
                             .lineLimit(1).fixedSize()
                             .gridColumnAlignment(.leading)
                         ForEach(Self.columns, id: \.self) { column in
+                            // Percent on top as the headline figure, day
+                            // count beneath it as the supporting one.
+                            // These are rolling AVERAGES — the rate is
+                            // what's comparable across windows of
+                            // different lengths, where the raw count
+                            // isn't: 176 over 365 days and 28 over 30
+                            // say nothing side by side until they're
+                            // 48.2% and 93.3%.
                             VStack(alignment: .center, spacing: 1) {
-                                Text("\(window.count(for: column))")
+                                Text(pct(window.percent(for: column)))
                                     .font(.system(.subheadline, design: .monospaced)).bold()
                                     .fixedSize()
-                                Text(pct(window.percent(for: column)))
+                                Text("\(window.count(for: column))")
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(.secondary)
                                     .fixedSize()
