@@ -1073,6 +1073,17 @@ final class WorkoutSession {
     /// (TheJymApp.ContentView) and right after an import completes, since an
     /// import can introduce gaps (days between logged workouts) that weren't
     /// there before.
+    ///
+    /// This is also why the .xlsx export deliberately carries NO row for a
+    /// log-less placeholder session, even though that's 309 of 659 sessions
+    /// in the real store. The export writes one row per ExerciseLog, so a
+    /// session with none produces nothing — and a restore plus one launch
+    /// puts every one of those days back (measured: 308 regenerated here,
+    /// the 1 remaining covered by the import's own gap-fill, which creates
+    /// a better-attributed Rest session for it). A sentinel row format
+    /// would be a second mechanism for data the app already recreates.
+    /// RealStoreRoundTripDiffTests.testBackfillRegeneratesTheLoglessRestDays
+    /// holds that true.
     @MainActor
     static func backfillRestDays(context: ModelContext) {
         let allSessions = (try? context.fetch(FetchDescriptor<WorkoutSession>())) ?? []

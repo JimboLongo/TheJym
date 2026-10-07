@@ -151,13 +151,20 @@ enum ImportEngine {
         /// ExerciseDef, which is right for a fresh log but wrong for one
         /// recorded before the exercise was flagged.
         var logIsBodyweight: Bool?
+        /// The session's PhaseDay ORDER, from the enriched export's
+        /// DayOrder column. nil from an older file, which falls back to
+        /// matching the Day column's name — and a name is ambiguous the
+        /// moment a split has two days called "Rest".
+        var dayOrder: Int?
 
         init(date: Date, exerciseName: String, kind: ImportedRowKind, phaseNumber: Int?,
              dayLabel: String?, equipmentName: String?, cycleNumber: Int? = nil, notes: String? = nil,
              durationSeconds: Int? = nil, isDeload: Bool = false, isBonusSession: Bool = false,
              addedWeights: [Double?] = [], bodyweightAtLogs: [Double?] = [],
              achievedRank: Int? = nil, missedTarget: Bool = false,
-             selectedWeightAdjustment: Double? = nil, logIsBodyweight: Bool? = nil) {
+             selectedWeightAdjustment: Double? = nil, logIsBodyweight: Bool? = nil,
+             dayOrder: Int? = nil) {
+            self.dayOrder = dayOrder
             self.achievedRank = achievedRank
             self.missedTarget = missedTarget
             self.selectedWeightAdjustment = selectedWeightAdjustment
@@ -487,6 +494,10 @@ enum ImportEngine {
         let weightAdjIdx = header.firstIndex(where: { $0.hasPrefix("weightadj") })
         let logBWIdx = header.firstIndex(where: { $0.hasPrefix("logbodyweight") })
         let unitIdx = header.firstIndex(where: { $0 == "unit" })
+        // Matched exactly, not by prefix — `dayIdx` above takes any header
+        // starting "day", and it must keep finding plain "Day".
+        let dayOrderIdx = header.firstIndex(where: { $0 == "dayorder" })
+        let distanceIdx = header.firstIndex(where: { $0 == "distance" })
 
         var out: [ImportedEntry] = []
         var reasons = SkipReasons()
@@ -533,6 +544,7 @@ enum ImportEngine {
             let matchedEquipment = (equipmentStr?.isEmpty == false) ? equipmentStr : nil
             let explicitCycleNumber = cycleStr.flatMap { parseFlexibleInt($0) }
             let matchedNotes = (notesStr?.isEmpty == false) ? notesStr : nil
+            let explicitDayOrder = dayOrderIdx.flatMap { parseFlexibleInt(cell($0)) }
 
             // A body-weight row instead of a real exercise. Two spellings
             // and two column positions, because the app's own export and
@@ -571,10 +583,23 @@ enum ImportEngine {
                 // was assumed "mi", which silently dropped a km walk from
                 // every miles figure on the Stats page.
                 if let unitIdx, case let u = cell(unitIdx), !u.isEmpty { unit = u }
+                // An explicit Distance column is authoritative INCLUDING
+                // when it's blank: blank means the activity recorded no
+                // distance, which the Weights fallback can't express —
+                // weight 0 is what the mirror SetLog stores for "none", so
+                // reading it back produced a 0-mile walk.
+                if distanceIdx != nil {
+                    distance = distanceIdx.flatMap { Double(cell($0)) }
+                }
+                // The explicit Cycle column was dropped here while the
+                // Day-column branch below honoured it, so every walk
+                // imported from the app's own export came back as cycle 0
+                // and filled no cycle slot.
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),
                                          phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
-                                         equipmentName: nil))
+                                         equipmentName: nil, cycleNumber: explicitCycleNumber,
+                                         dayOrder: explicitDayOrder))
                 continue
             }
 
@@ -597,7 +622,8 @@ enum ImportEngine {
                 out.append(ImportedEntry(date: date, exerciseName: name,
                                          kind: .restActivity(distance: distance, distanceUnit: unit),
                                          phaseNumber: phaseNumber, dayLabel: "Rest",
-                                         equipmentName: nil, cycleNumber: explicitCycleNumber))
+                                         equipmentName: nil, cycleNumber: explicitCycleNumber,
+                                         dayOrder: explicitDayOrder))
                 continue
             }
 
@@ -636,7 +662,8 @@ enum ImportEngine {
                                      achievedRank: rankIdx.flatMap { Int(cell($0)) },
                                      missedTarget: missedIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
                                      selectedWeightAdjustment: weightAdjIdx.flatMap { Double(cell($0)) },
-                                     logIsBodyweight: logBWIdx.map { cell($0).lowercased().hasPrefix("y") }))
+                                     logIsBodyweight: logBWIdx.map { cell($0).lowercased().hasPrefix("y") },
+                                     dayOrder: explicitDayOrder))
         }
         return (out, reasons)
     }
@@ -820,10 +847,14 @@ enum ImportEngine {
         do {
             var requests: [GroupKey] = []
             var explicitCycleByRequest: [GroupKey: Int] = [:]
+            /// The row's own DayOrder column, when it has one. Exact, where
+            /// the by-name disambiguation below is a heuristic.
+            var explicitDayOrderByRequest: [GroupKey: Int] = [:]
             var seenKeys = Set<GroupKey>()
             for row in exerciseRows + restRows {
                 guard let label = row.dayLabel else { continue }
                 let key = GroupKey(day: cal.startOfDay(for: row.date), phaseNumber: row.phaseNumber, dayLabel: label)
+                if let order = row.dayOrder { explicitDayOrderByRequest[key] = order }
                 guard !seenKeys.contains(key) else { continue }
                 seenKeys.insert(key)
                 requests.append(key)
@@ -909,7 +940,16 @@ enum ImportEngine {
                 if cycle > 0 { lastKnownCycle[phase.persistentModelID] = cycle }
 
                 let chosen: PhaseDay
-                if candidates.count > 1, cycle > 0 {
+                // An explicit DayOrder settles it outright — it's the day's
+                // real identity, where the name is ambiguous the moment a
+                // split has two days called "Rest". Restricted to the
+                // same-named candidates so a file whose Day column and
+                // DayOrder column disagree can't attribute a row to a day
+                // it never names.
+                if let order = explicitDayOrderByRequest[request],
+                   let exact = candidates.first(where: { $0.order == order }) {
+                    chosen = exact
+                } else if candidates.count > 1, cycle > 0 {
                     let used = usedByCycle[phase.persistentModelID]?[cycle] ?? []
                     chosen = candidates.first { !used.contains($0.persistentModelID) } ?? firstCandidate
                 } else {
@@ -1070,16 +1110,27 @@ enum ImportEngine {
         // shouldn't get swept in just because its label happens to match
         // the phase's Rest day too. Nil (so nothing qualifies) if no
         // exercise row here ends up attributed to forcedPhase at all.
-        let earliestAttributedExerciseDate: Date? = forcedPhase.flatMap { phase in
-            exerciseRows
-                .filter { row in
-                    guard let label = row.dayLabel, resolvePhase(phaseNumber: row.phaseNumber)?.persistentModelID == phase.persistentModelID
-                    else { return false }
-                    return phase.orderedDays.contains { $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame }
-                }
-                .map(\.date)
-                .min()
+        /// Per PHASE, not just for forcedPhase. The floor is the real rule —
+        /// a Rest day/activity must never be the first thing attributed to
+        /// a phase — and it applies however the row names its phase. It was
+        /// only ever computed for forcedPhase because that was the only
+        /// path that attributed rest rows at all; now that an explicit
+        /// Phase column attributes them too, the floor has to cover it.
+        var earliestAttributedExerciseDateByPhase: [PersistentIdentifier: Date] = [:]
+        for row in exerciseRows {
+            guard let label = row.dayLabel, let phase = resolvePhase(phaseNumber: row.phaseNumber),
+                  phase.orderedDays.contains(where: {
+                      $0.name.localizedCaseInsensitiveCompare(label) == .orderedSame
+                  })
+            else { continue }
+            let id = phase.persistentModelID
+            if let existing = earliestAttributedExerciseDateByPhase[id], existing <= row.date {
+                continue
+            }
+            earliestAttributedExerciseDateByPhase[id] = row.date
         }
+        let earliestAttributedExerciseDate: Date? = forcedPhase
+            .flatMap { earliestAttributedExerciseDateByPhase[$0.persistentModelID] }
 
         // Rest-day activities: each row becomes both a standalone
         // RestDayActivity record and a matching WorkoutSession/ExerciseLog/
@@ -1115,7 +1166,17 @@ enum ImportEngine {
                                          dayLabel: entry.dayLabel ?? "Rest Day", cycleNumber: cycle)
             let restRowQualifiesForForcedPhase = forcedPhase != nil
                 && earliestAttributedExerciseDate.map { entry.date >= $0 } == true
-            session.phase = restRowQualifiesForForcedPhase ? matchedRestPhase : nil
+            // A row carrying its OWN Phase column attributes too, subject to
+            // the SAME date floor: on/after that phase's earliest attributed
+            // exercise date, so a Rest day is never the first thing
+            // attributed to a phase. Ignoring the column entirely meant
+            // every walk exported by the app itself came back unattributed,
+            // taking its cycle slot with it.
+            let restRowQualifiesByOwnPhaseColumn = matchedRestPhase
+                .flatMap { earliestAttributedExerciseDateByPhase[$0.persistentModelID] }
+                .map { entry.date >= $0 } == true
+            session.phase = (restRowQualifiesByOwnPhaseColumn || restRowQualifiesForForcedPhase)
+                ? matchedRestPhase : nil
             context.insert(session)
             sessionsCreated += 1
             // The distance lives in the SetLog's `weight` (linked via
@@ -1613,6 +1674,7 @@ extension ImportEngine {
             /// unique name within a phase. -1 means an older file that
             /// didn't carry it, which falls back to name matching.
             var dayOrder = -1
+            var repTotalProgressesReps = false
         }
         var phases: [PhaseRow] = []
         var days: [DayRow] = []
@@ -1667,7 +1729,8 @@ extension ImportEngine {
                     goalKindRaw: int(row, 8), repTotalTarget: int(row, 9),
                     cycleOverride: int(row, 11),
                     restTimeSeconds: parseFlexibleInt(str(row, 10)),
-                    dayOrder: parseFlexibleInt(str(row, 12)) ?? -1))
+                    dayOrder: parseFlexibleInt(str(row, 12)) ?? -1,
+                    repTotalProgressesReps: yes(row, 13)))
             case "activerecovery":
                 if let d = parseDate(str(row, 1)) { p.recoveries.append((d, int(row, 2))) }
             case "trainingdaysperweek":
@@ -1753,8 +1816,36 @@ extension ImportEngine {
                                      isBodyweight: row.isBodyweight, goalType: goal,
                                      restTimeSeconds: row.restTimeSeconds,
                                      cycleOverride: row.cycleOverride)
+            pe.repTotalProgressesReps = row.repTotalProgressesReps
             pe.day = day
             context.insert(pe)
+        }
+
+        // Re-link per-cycle overrides to the base slots they replace.
+        //
+        // `overriddenSlotID` is a UUID, and a UUID cannot survive a restore
+        // — the new base slot gets a new one. But the UUID is only
+        // IDENTITY; what actually distinguishes an override from its base
+        // is the tuple (day, order, cycleOverride), and that is pure data:
+        // setCycleOverride copies the base slot's own `order` onto the
+        // override and only varies `cycleOverride`. So the base of any
+        // override is the row sharing its (day, order) with cycleOverride 0,
+        // and the link rebuilds exactly.
+        //
+        // Without this, plan(for:cycle:) finds no override for the cycle and
+        // silently trains the base plan instead — a wrong workout, not a
+        // cosmetic loss.
+        for day in p.days {
+            guard let phase = existingPhases.first(where: { $0.number == day.phaseNumber }),
+                  let phaseDay = phase.days.first(where: { $0.order == day.order })
+            else { continue }
+            let basesByOrder = Dictionary(
+                phaseDay.plannedExercises.filter { $0.cycleOverride == 0 }.map { ($0.order, $0) },
+                uniquingKeysWith: { a, _ in a })
+            for pe in phaseDay.plannedExercises where pe.cycleOverride != 0 {
+                guard pe.overriddenSlotID == nil, let base = basesByOrder[pe.order] else { continue }
+                pe.overriddenSlotID = base.slotID
+            }
         }
 
         let existingRecoveryDays = Set(((try? context.fetch(FetchDescriptor<ActiveRecovery>())) ?? [])
@@ -1808,6 +1899,8 @@ extension ImportEngine {
             if let v = bool("weightRemindersEnabled") { settings.weightRemindersEnabled = v }
             if let v = p.settings["weightReminderHour"].flatMap({ Int($0) }) { settings.weightReminderHour = v }
             if let v = bool("includeDefaultExercises") { settings.includeDefaultExercises = v }
+            if let v = bool("aiAssistantEnabled") { settings.aiAssistantEnabled = v }
+            if let v = bool("useGeminiForPhasePlanning") { settings.useGeminiForPhasePlanning = v }
         }
         try? context.save()
     }

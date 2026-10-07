@@ -65,7 +65,8 @@ enum ExportBuilder {
                                    .string("Duration"), .string("Deload"), .string("Bonus"),
                                    .string("AddedWeight"), .string("BodyweightAtLog"),
                                    .string("Rank"), .string("Missed"), .string("WeightAdj"),
-                                   .string("LogBodyweight"), .string("Unit")]]
+                                   .string("LogBodyweight"), .string("Unit"),
+                                   .string("DayOrder"), .string("Distance")]]
         var dated: [(date: Date, row: [XLSXCell])] = []
         for session in fetch(WorkoutSession.self, context) {
             let dateStr = Formatters.exportDate.string(from: session.date)
@@ -97,6 +98,23 @@ enum ExportBuilder {
                     // "mi" on import, which silently dropped a km walk
                     // from every miles figure.
                     .string(log.restDayActivity?.distanceUnit ?? ""),
+                    // The PhaseDay's ORDER, not just its name. A six-day
+                    // split has two days called "Rest", so the Day column
+                    // alone sent every rest session to the first of them —
+                    // the same name-collision that collapsed every split
+                    // 6 -> 5 in the program restore. Order is unique within
+                    // a phase; the name stays as the fallback for an older
+                    // file that doesn't carry this column.
+                    session.day.map { .number(Double($0.order)) } ?? .blank,
+                    // The activity's OWN distance, blank when it has none.
+                    // Previously inferred from the mirror SetLog's weight,
+                    // which the rest branch stores as `distance ?? 0` — so
+                    // "walked an unrecorded amount" came back as "walked
+                    // zero". Its own column because the two really are
+                    // different facts: Weights is the SetLog, this is the
+                    // RestDayActivity, and they only coincide when a
+                    // distance was recorded at all.
+                    log.restDayActivity?.distance.map { XLSXCell.number($0) } ?? .blank,
                 ]))
             }
         }
@@ -153,6 +171,11 @@ enum ExportBuilder {
                     // Column L — the owning day's order, because "Rest"
                     // is not a unique day name within a phase.
                     row.append(.number(Double(day.order)))
+                    // Column M. Every row in this store is currently false,
+                    // which is the DEFAULT — so it round-tripped by
+                    // coincidence, not because anything carried it, and the
+                    // first time one is turned on it would silently revert.
+                    row.append(.string(pe.repTotalProgressesReps ? "Yes" : "No"))
                     rows.append(row)
                 }
             }
@@ -197,6 +220,11 @@ enum ExportBuilder {
             setting("weightRemindersEnabled", .string(s.weightRemindersEnabled ? "Yes" : "No"))
             setting("weightReminderHour", .number(Double(s.weightReminderHour)))
             setting("includeDefaultExercises", .string(s.includeDefaultExercises ? "Yes" : "No"))
+            // These two matched after a round trip only because their
+            // current values happen to equal their defaults (true / false).
+            // geminiAPIKey stays out on purpose — a workbook gets shared.
+            setting("aiAssistantEnabled", .string(s.aiAssistantEnabled ? "Yes" : "No"))
+            setting("useGeminiForPhasePlanning", .string(s.useGeminiForPhasePlanning ? "Yes" : "No"))
         }
         return rows
     }

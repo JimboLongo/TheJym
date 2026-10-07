@@ -48,6 +48,11 @@ final class FullRoundTripDiffTests: XCTestCase {
         settings.customWeightIncreaseAmount = 2.5
         settings.availablePlateSizes = [45, 25, 10, 5, 2.5]
         settings.hasDumbbell125Attachment = true
+        // Both flipped AWAY from their defaults (true / false) on purpose —
+        // they round-tripped before only because the live values happened
+        // to match, so a fixture using the defaults proves nothing.
+        settings.aiAssistantEnabled = false
+        settings.useGeminiForPhasePlanning = true
         ctx.insert(settings)
 
         let bar = Bar(name: "Trap Bar", weight: 60, isDumbbell: false, loadableSides: 2)
@@ -77,7 +82,10 @@ final class FullRoundTripDiffTests: XCTestCase {
         phase.deloadCycle = 4
         phase.manualDeloadCycles = [6]
         ctx.insert(phase)
-        for (order, name) in ["Lower Day 1", "Upper Day 1", "Rest"].enumerated() {
+        // TWO days called "Rest" — the collision that sent every rest
+        // session to the first of them, and that collapsed every split
+        // 6 -> 5 in the program restore. Both must survive distinctly.
+        for (order, name) in ["Lower Day 1", "Upper Day 1", "Rest", "Rest"].enumerated() {
             let day = PhaseDay(order: order, name: name, isRest: name == "Rest")
             day.phase = phase
             ctx.insert(day)
@@ -86,10 +94,21 @@ final class FullRoundTripDiffTests: XCTestCase {
                                      targetReps: [5, 5, 5], suggestedWeights: [135, 140, 145],
                                      isBodyweight: false, goalType: .fixedSets,
                                      restTimeSeconds: 180)
+            pe.repTotalProgressesReps = true
             pe.day = day
             ctx.insert(pe)
         }
         let upper = phase.orderedDays.first { $0.name == "Upper Day 1" }!
+
+        // A per-cycle override. Its `overriddenSlotID` is a UUID, which
+        // can't survive a restore — but (day, order, cycleOverride) is pure
+        // data and identifies it exactly, so the link is rebuildable.
+        // Checked below by comparing plan(for:cycle:), not just fields: a
+        // link rebuilt to the wrong base slot would still read as equal.
+        let baseSlot = upper.plannedExercises.first { $0.cycleOverride == 0 }!
+        upper.setCycleOverride(for: baseSlot, cycle: 4, exerciseName: "Close-Grip Bench",
+                               targetReps: [6, 4, 4], goalType: .fixedSets,
+                               isBodyweight: false, restTimeSeconds: 240, context: ctx)
 
         let session = WorkoutSession(date: d(2026, 9, 1), day: upper, dayLabel: "Upper Day 1",
                                      cycleNumber: 3, isDeload: true, isBonusSession: true)
@@ -127,6 +146,26 @@ final class FullRoundTripDiffTests: XCTestCase {
         let walkSet = SetLog(index: 0, weight: 5.0, reps: 1)
         walkSet.exerciseLog = walkLog
         ctx.insert(walkSet)
+
+        // A walk with NO distance recorded, on the SECOND Rest day. Both
+        // halves used to break: the distance came back as 0 (the mirror
+        // SetLog stores `distance ?? 0`, and reading that back can't tell
+        // "none" from "zero"), and the session landed on Rest slot 2
+        // because the Day column carried only the name.
+        let restSlot2 = phase.orderedDays.last { $0.isRest }!
+        let noDistance = RestDayActivity(date: d(2026, 9, 5), name: "Walk", distance: nil)
+        ctx.insert(noDistance)
+        let session2 = WorkoutSession(date: d(2026, 9, 5), day: restSlot2, dayLabel: "Rest",
+                                      cycleNumber: 3)
+        session2.phase = phase
+        ctx.insert(session2)
+        let log2 = ExerciseLog(exerciseName: "Walk", targetReps: [], order: 0)
+        log2.session = session2
+        log2.restDayActivity = noDistance
+        ctx.insert(log2)
+        let set2 = SetLog(index: 0, weight: 0, reps: 1)
+        set2.exerciseLog = log2
+        ctx.insert(set2)
 
         ctx.insert(BodyWeightEntry(date: d(2026, 9, 3), weight: 181.5))
         ctx.insert(ActiveRecovery(date: d(2026, 9, 4), type: .mobility))
@@ -199,6 +238,64 @@ final class FullRoundTripDiffTests: XCTestCase {
         check("Phase.deloadCycle", "\(sPhase.deloadCycle)", "\(tPhase?.deloadCycle ?? -1)")
         check("Phase.manualDeloadCycles", "\(sPhase.manualDeloadCycles)", "\(tPhase?.manualDeloadCycles ?? [])")
         check("PhaseDay names", "\(sPhase.orderedDays.map(\.name))", "\(tPhase?.orderedDays.map(\.name) ?? [])")
+
+        // The per-cycle override, compared as the PLAN the app trains —
+        // the thing an override exists to change, and the only check that
+        // catches a link rebuilt onto the wrong base slot.
+        for day in sPhase.orderedDays {
+            guard let tDay = tPhase?.orderedDays.first(where: { $0.order == day.order }) else {
+                check("PhaseDay \(day.order)", day.name, "<absent>")
+                continue
+            }
+            for cycle in 1...sPhase.totalCycles {
+                check("plan(day \(day.order), cycle \(cycle))",
+                      sPhase.plan(for: day, cycle: cycle)
+                        .map { "\($0.exerciseName)\($0.targetReps)" }.joined(separator: "|"),
+                      tPhase!.plan(for: tDay, cycle: cycle)
+                        .map { "\($0.exerciseName)\($0.targetReps)" }.joined(separator: "|"))
+            }
+        }
+        // Keyed by (day, order, cycleOverride) and sorted — `plannedExercises`
+        // is an unordered relationship, so comparing it positionally
+        // compared two different orderings of the same rows.
+        func progressFlags(_ phase: Phase?) -> String {
+            (phase?.orderedDays ?? []).flatMap { day in
+                day.plannedExercises.map {
+                    (day.order, $0.order, $0.cycleOverride, $0.repTotalProgressesReps)
+                }
+            }
+            .sorted { ($0.0, $0.1, $0.2) < ($1.0, $1.1, $1.2) }
+            .map { "\($0.0)/\($0.1)/\($0.2)=\($0.3)" }
+            .joined(separator: " ")
+        }
+        check("PlannedExercise.repTotalProgressesReps",
+              progressFlags(sPhase), progressFlags(tPhase))
+
+        // The no-distance walk on the SECOND Rest slot.
+        let sNoDist = (try! source.fetch(FetchDescriptor<RestDayActivity>()))
+            .first { $0.distance == nil }
+        let tNoDist = (try! target.fetch(FetchDescriptor<RestDayActivity>()))
+            .first { cal.isDate($0.date, inSameDayAs: self.d(2026, 9, 5)) }
+        check("RestDayActivity.distance (none recorded)",
+              "\(sNoDist?.distance == nil)", "\(tNoDist?.distance == nil)")
+        let sRest2 = (try! source.fetch(FetchDescriptor<WorkoutSession>()))
+            .first { cal.isDate($0.date, inSameDayAs: self.d(2026, 9, 5)) }
+        let tRest2 = (try! target.fetch(FetchDescriptor<WorkoutSession>()))
+            .first { cal.isDate($0.date, inSameDayAs: self.d(2026, 9, 5)) }
+        check("rest session's PhaseDay order",
+              "\(sRest2?.day?.order ?? -1)", "\(tRest2?.day?.order ?? -1)")
+        check("rest session's phase",
+              "\(sRest2?.phase?.number ?? -1)", "\(tRest2?.phase?.number ?? -1)")
+        check("rest session's cycleNumber",
+              "\(sRest2?.cycleNumber ?? -1)", "\(tRest2?.cycleNumber ?? -1)")
+
+        // The two fields that matched only because they equal their defaults.
+        let sAI = (try! source.fetch(FetchDescriptor<AppSettings>())).first!
+        let tAI = (try! target.fetch(FetchDescriptor<AppSettings>())).first
+        check("AppSettings.aiAssistantEnabled",
+              "\(sAI.aiAssistantEnabled)", "\(tAI?.aiAssistantEnabled ?? true)")
+        check("AppSettings.useGeminiForPhasePlanning",
+              "\(sAI.useGeminiForPhasePlanning)", "\(tAI?.useGeminiForPhasePlanning ?? false)")
         let sPE = sPhase.orderedDays.flatMap(\.plannedExercises).first!
         let tPE = tPhase?.orderedDays.flatMap(\.plannedExercises).first
         check("PlannedExercise.targetReps", "\(sPE.targetReps)", "\(tPE?.targetReps ?? [])")
@@ -237,8 +334,12 @@ final class FullRoundTripDiffTests: XCTestCase {
         check("SetLog.reps", "\(sLog.sortedSets[0].reps)", "\(tLog?.sortedSets.first?.reps ?? -1)")
 
         // --- RestDayActivity (kilometres!)
-        let sAct = (try! source.fetch(FetchDescriptor<RestDayActivity>())).first!
-        let tAct = (try! target.fetch(FetchDescriptor<RestDayActivity>())).first
+        // Picked BY DATE. There are two activities now, and `.first` on an
+        // unordered fetch picked a different one on each side.
+        let sAct = (try! source.fetch(FetchDescriptor<RestDayActivity>()))
+            .first { cal.isDate($0.date, inSameDayAs: self.d(2026, 9, 2)) }!
+        let tAct = (try! target.fetch(FetchDescriptor<RestDayActivity>()))
+            .first { cal.isDate($0.date, inSameDayAs: self.d(2026, 9, 2)) }
         check("RestDayActivity.distance", "\(sAct.distance ?? -1)", "\(tAct?.distance ?? -1)")
         check("RestDayActivity.distanceUnit", sAct.distanceUnit, tAct?.distanceUnit ?? "")
         check("RestDayActivity.name", sAct.name, tAct?.name ?? "")
@@ -279,5 +380,11 @@ final class FullRoundTripDiffTests: XCTestCase {
         print("\n==== ROUND-TRIP DIFF: \(diffs.count) field(s) do NOT survive ====")
         for diff in diffs { print("  \(diff)") }
         print("====\n")
+
+        // Asserted, not just printed. Every field here is now carried, so a
+        // new stored property that nothing exports fails this the moment
+        // it's added to the fixture — which is the point of setting them
+        // all to non-default values.
+        XCTAssertEqual(diffs, [], "fields lost in the round trip")
     }
 }

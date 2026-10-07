@@ -101,8 +101,16 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
                     "isRest": "\(d.isRest)",
                     "plannedCount": "\(d.plannedExercises.count)",
                 ]
-                for pe in d.plannedExercises.sorted(by: { $0.order < $1.order }) {
-                    out["phase \(phase.number) day \(d.order) pe \(pe.order)"] = [
+                // Keyed by (day, order, cycleOverride). Order alone collides:
+                // a per-cycle override copies its base slot's `order` and
+                // varies only `cycleOverride`, so keying on order let the
+                // two collapse into one entry and reported five differences
+                // that were really the dump keeping different halves of the
+                // pair on each side.
+                for pe in d.plannedExercises.sorted(by: {
+                    ($0.order, $0.cycleOverride) < ($1.order, $1.cycleOverride)
+                }) {
+                    out["phase \(phase.number) day \(d.order) pe \(pe.order) cyc \(pe.cycleOverride)"] = [
                         "exerciseName": pe.exerciseName,
                         "targetReps": "\(pe.targetReps)",
                         "suggestedWeights": pe.suggestedWeights.map(num).joined(separator: "/"),
@@ -131,6 +139,14 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         return "\(day(s.date))|\(s.dayLabel)|\(names)"
     }
 
+    /// `order` is deliberately NOT compared.
+    ///
+    /// The real store's own values aren't canonical — one session has logs
+    /// ordered 1,2,3,4,5,6,6: no zero, and a duplicate. The export writes
+    /// them in that order and the import renumbers densely from 0, so the
+    /// integers shift while the SEQUENCE and every log's content are
+    /// intact. Comparing the integers would report 11 differences that
+    /// describe the source data's untidiness, not a loss.
     private func dumpSessions(_ ctx: ModelContext) -> Dump {
         var out: Dump = [:]
         for s in (try! ctx.fetch(FetchDescriptor<WorkoutSession>())) {
@@ -148,7 +164,6 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             for log in s.exerciseLogs.sorted(by: { $0.order < $1.order }) {
                 let lk = "\(key)|log \(log.exerciseName)"
                 out[lk] = [
-                    "order": "\(log.order)",
                     "targetReps": "\(log.targetReps)",
                     "isBodyweight": "\(log.isBodyweight)",
                     "achievedRank": log.achievedRank.map(String.init) ?? "",
@@ -259,11 +274,118 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         }
     }
 
-    func testRealStoreRoundTripDiff() async throws {
+    /// A store copy, opened from a temp duplicate so the original is never
+    /// touched — opening with SwiftData can migrate the file in place, and
+    /// the original is the user's only copy of that moment.
+    private func openStoreCopy(_ path: String) throws -> ModelContext {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        for suffix in ["", "-wal", "-shm"] {
+            let src = URL(fileURLWithPath: path + suffix)
+            guard FileManager.default.fileExists(atPath: src.path) else { continue }
+            try FileManager.default.copyItem(
+                at: src, to: tmp.appendingPathComponent("default.store" + suffix))
+        }
+        let container = try ModelContainer(
+            for: schema,
+            configurations: ModelConfiguration(url: tmp.appendingPathComponent("default.store")))
+        return ModelContext(container)
+    }
+
+    private func storePath() throws -> String {
         let path = ProcessInfo.processInfo.environment["THEJYM_STORE"] ?? Self.defaultStorePath
         guard FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("No store at \(path) — set THEJYM_STORE to run this.")
         }
+        return path
+    }
+
+    /// The 309 rows the export drops are all log-less, `day == nil`,
+    /// `dayLabel == "Rest Day"` — the exact shape `backfillRestDays` creates
+    /// for any date between the first session and today that has no session
+    /// of its own. If one launch after a restore puts them all back, the
+    /// right fix is NOTHING: an exporter for data the app regenerates is
+    /// 315 rows of file and a second thing to keep correct.
+    ///
+    /// This measures that rather than assuming it, and will fail if the
+    /// regenerated population ever stops matching.
+    func testBackfillRegeneratesTheLoglessRestDays() async throws {
+        let source = try openStoreCopy(try storePath())
+        let cal = Calendar.current
+
+        let sourcePlaceholders = (try source.fetch(FetchDescriptor<WorkoutSession>()))
+            .filter(\.isBackfilledRestPlaceholder)
+        let sourceDays = Set(sourcePlaceholders.map { cal.startOfDay(for: $0.date) })
+
+        let target = try await restoreIntoEmptyStore(from: source)
+
+        let beforeBackfill = (try target.fetch(FetchDescriptor<WorkoutSession>()))
+            .filter(\.isBackfilledRestPlaceholder).count
+        WorkoutSession.backfillRestDays(context: target)
+        let after = (try target.fetch(FetchDescriptor<WorkoutSession>()))
+            .filter(\.isBackfilledRestPlaceholder)
+        let afterDays = Set(after.map { cal.startOfDay(for: $0.date) })
+
+        let regenerated = sourceDays.intersection(afterDays)
+
+        // What actually matters is that no DAY is left with a hole in
+        // History, not which mechanism filled it. The import's own gap-fill
+        // reaches the days inside a phase's attributed range first and
+        // creates a real Rest-PhaseDay session there, which is strictly
+        // better than a `day == nil` placeholder — so those days are covered
+        // without ever becoming placeholders again.
+        let allTargetDays = Set((try target.fetch(FetchDescriptor<WorkoutSession>()))
+            .map { cal.startOfDay(for: $0.date) })
+        let uncovered = sourceDays.subtracting(allTargetDays).sorted()
+        let coveredByGapFill = sourceDays.subtracting(afterDays).intersection(allTargetDays)
+
+        print("""
+
+        ==== BACKFILL REGENERATION ====
+        source log-less "Rest Day" placeholders: \(sourcePlaceholders.count) \
+        on \(sourceDays.count) distinct days
+        after import, before backfill:           \(beforeBackfill)
+        after one backfillRestDays:              \(after.count) \
+        on \(afterDays.count) distinct days
+        regenerated as placeholders:             \(regenerated.count)
+        covered instead by the import gap-fill:  \(coveredByGapFill.count) \
+        \(coveredByGapFill.sorted().prefix(5).map { Formatters.exportDate.string(from: $0) })
+        STILL UNCOVERED (\(uncovered.count)): \
+        \(uncovered.prefix(10).map { Formatters.exportDate.string(from: $0) })
+        ==== END ====
+
+        """)
+
+        XCTAssertTrue(uncovered.isEmpty,
+                      "a restore + one launch no longer puts a session back on every day the "
+                      + "export drops — the History sheet needs a sentinel row after all")
+    }
+
+    /// Export `source` with the app's own builder and import the result the
+    /// way the Recovery Import screen does: program, then library, then
+    /// history.
+    private func restoreIntoEmptyStore(from source: ModelContext) async throws -> ModelContext {
+        let data = ExportBuilder.workbook(from: source)
+        let restNames = Set((try source.fetch(FetchDescriptor<RestDayActivity>()))
+            .map { $0.name.lowercased() })
+        let container = try ModelContainer(
+            for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let target = ModelContext(container)
+        target.insert(AppSettings())
+        try target.save()
+        guard let wb = ImportEngine.parseWorkbook(xlsxData: data, restActivityNames: restNames) else {
+            throw XCTSkip("the app's own export did not parse")
+        }
+        ImportEngine.restoreProgram(wb.program, context: target)
+        ImportEngine.restoreLibraryAndEquipment(wb, context: target)
+        _ = await ImportEngine.importIntoStore(wb.historyRows, context: target)
+        try target.save()
+        return target
+    }
+
+    func testRealStoreRoundTripDiff() async throws {
+        let path = try storePath()
 
         // Copy before opening: SwiftData may migrate the file in place and
         // the original is the user's only copy of that moment.
@@ -313,6 +435,33 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         ImportEngine.restoreLibraryAndEquipment(wb, context: target)
         _ = await ImportEngine.importIntoStore(wb.historyRows, context: target)
         try target.save()
+
+        // Field equality isn't enough for a per-cycle override: the dump
+        // compares `overriddenSlotID` as presence only (the UUID itself
+        // can't survive), so a link rebuilt to the WRONG base slot would
+        // still read as equal. This compares the plan the app actually
+        // trains, day by day and cycle by cycle, which is the thing an
+        // override exists to change.
+        var planReport = Report()
+        func dumpPlans(_ ctx: ModelContext) -> Dump {
+            var out: Dump = [:]
+            for phase in (try! ctx.fetch(FetchDescriptor<Phase>())) {
+                for d in phase.orderedDays {
+                    for cycle in 1...max(phase.totalCycles, 1) {
+                        out["phase \(phase.number) day \(d.order) cycle \(cycle)"] = [
+                            "plan": phase.plan(for: d, cycle: cycle)
+                                .map { "\($0.exerciseName)\($0.targetReps)" }
+                                .joined(separator: " | "),
+                        ]
+                    }
+                }
+            }
+            return out
+        }
+        diff("Plan", dumpPlans(source), dumpPlans(target), into: &planReport)
+        XCTAssertTrue(planReport.fieldMismatches.isEmpty,
+                      "the trained plan differs after a round trip: "
+                      + "\(planReport.fieldMismatches)")
 
         var report = Report()
         diff("ExerciseDef", dumpDefs(source), dumpDefs(target), into: &report)
