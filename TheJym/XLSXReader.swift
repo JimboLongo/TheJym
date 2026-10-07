@@ -117,6 +117,21 @@ enum XLSXReader {
         if out.isEmpty, let first = rows(of: sheetParts[0]) { out[""] = first }
         return out.isEmpty ? nil : out
     }
+
+    /// One part's raw XML bytes, unzipped. For tests that assert on the
+    /// writer's actual markup (numeric vs. inline-string cells, which cell
+    /// references a row occupies) — they used to grep the archive bytes
+    /// directly, which only worked while entries were written uncompressed.
+    /// Going through the reader also makes every such test exercise the
+    /// deflate/inflate pair.
+    static func rawPart(named name: String, in data: Data) -> Data? {
+        MiniZip(data: data)?.data(for: name)
+    }
+
+    /// Every part name in the archive, in central-directory order.
+    static func partNames(in data: Data) -> [String] {
+        MiniZip(data: data)?.fileNames ?? []
+    }
 }
 
 // MARK: - Workbook sheet names (xl/workbook.xml)
