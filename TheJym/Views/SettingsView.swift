@@ -175,7 +175,7 @@ struct SettingsView: View {
                             .pickerStyle(.menu)
                         }
                     } footer: {
-                        Text("Weight is only ever logged to the nearest Monday — a notification on Monday reminding you to log it, if you haven't yet that week.")
+                        Text("A notification on Monday reminding you to weigh in, if you haven't yet that week. Weight is logged to the day you take it — Monday is just when the nudge lands.")
                     }
                 }
 

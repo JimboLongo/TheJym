@@ -478,4 +478,59 @@ final class BackupEngineRunTests: XCTestCase {
         XCTAssertGreaterThan(listing.totalBytes, 0)
         XCTAssertEqual(listing.newest.map { cal.component(.day, from: $0.date) }, 6)
     }
+
+    /// A backup's WRITE TIME must carry a real clock time, not the
+    /// midnight implied by its filename.
+    ///
+    /// Shipped wrong once: the status row displayed the filename's day, so
+    /// a backup written at 4:11 PM read "12:00 AM". Not cosmetic — the
+    /// green/amber/red staleness colouring reads the same value, so every
+    /// backup looked up to 24 hours older than it was and a genuinely
+    /// stale one could show green for an extra day.
+    func testListingReportsRealWriteTimesNotMidnight() throws {
+        let ctx = makeStore()
+        let status = BackupStatus()
+        ctx.insert(status)
+        // `now` is the filename's day, deliberately at midnight — exactly
+        // the shape that hid the bug.
+        let day = cal.date(from: DateComponents(year: 2026, month: 10, day: 7))!
+        BackupEngine.run(context: ctx, status: status, now: day)
+
+        let listing = try XCTUnwrap(BackupEngine.listing())
+        let newest = try XCTUnwrap(listing.newest)
+
+        XCTAssertEqual(cal.startOfDay(for: newest.date), day,
+                       "the filename day is still what retention groups on")
+        XCTAssertNotEqual(newest.writtenAt, cal.startOfDay(for: newest.writtenAt),
+                          "writtenAt must carry a real time of day, not midnight")
+        XCTAssertLessThan(abs(newest.writtenAt.timeIntervalSinceNow), 60,
+                          "writtenAt is when the file was actually written — now")
+    }
+
+    /// `newest` must pick by WRITE TIME, not by the day in the filename.
+    ///
+    /// Needs two files whose two orderings DISAGREE, or the test passes
+    /// against either implementation — the first version of it used one
+    /// file and did exactly that, proving nothing. Here the Oct 6 file is
+    /// written second, so filename-order says Oct 7 and write-order says
+    /// Oct 6.
+    func testNewestIsChosenByWriteTimeNotFilenameDay() throws {
+        let ctx = makeStore()
+        let status = BackupStatus()
+        ctx.insert(status)
+
+        BackupEngine.run(context: ctx, status: status,
+                         now: cal.date(from: DateComponents(year: 2026, month: 10, day: 7))!)
+        // Backdate the Oct 7 file so the Oct 6 one is genuinely newer.
+        let seven = dir.appendingPathComponent("TheJym-2026-10-07.xlsx")
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date.now.addingTimeInterval(-3600)], ofItemAtPath: seven.path)
+        BackupEngine.run(context: ctx, status: status,
+                         now: cal.date(from: DateComponents(year: 2026, month: 10, day: 6))!)
+
+        let newest = try XCTUnwrap(BackupEngine.listing()?.newest)
+        XCTAssertEqual(newest.name, "TheJym-2026-10-06.xlsx",
+                       "the most recently WRITTEN file is the newest backup, "
+                       + "even though Oct 7 sorts later by name")
+    }
 }

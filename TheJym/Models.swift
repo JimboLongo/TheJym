@@ -60,9 +60,11 @@ final class AppSettings {
     /// moment something is), so it never fires once the streak's covered.
     var streakRemindersEnabled: Bool = false
     var streakReminderHour: Int = 20   // 24-hour clock, local time
-    /// A local notification on Mondays (weight is only ever logged to the
-    /// nearest Monday — see BodyWeightView/TodayView) reminding you to log
-    /// it — cancelled if you already have that week's entry.
+    /// A local notification on Mondays reminding you to weigh in —
+    /// cancelled if you already have an entry anywhere in that
+    /// Monday-to-Sunday week. Monday is only when the nudge LANDS; weight
+    /// itself is logged to the day it's taken (7220a8d), so this must not
+    /// be read as a constraint on the entry's date.
     var weightRemindersEnabled: Bool = false
     var weightReminderHour: Int = 9   // 24-hour clock, local time
     /// Custom auto weight-increase rule — when enabled, replaces the AI

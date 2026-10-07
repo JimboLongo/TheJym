@@ -218,12 +218,24 @@ enum BackupEngine {
         var corrupt: [BackupFile] = []
         var latest: BackupFile?
         var totalBytes: Int { (dailies + monthlies + corrupt).reduce(0) { $0 + $1.byteCount } }
-        var newest: BackupFile? { (dailies + monthlies).max { $0.date < $1.date } }
+        /// By WRITE TIME, not by the day in the filename — this is what
+        /// the "Last backup" row and its staleness colour read.
+        var newest: BackupFile? { (dailies + monthlies).max { $0.writtenAt < $1.writtenAt } }
     }
 
     struct BackupFile: Identifiable, Hashable {
         var name: String
+        /// The DAY this backup is for, parsed from the filename. Used for
+        /// retention only — grouping into dailies vs monthlies and
+        /// ordering them — where day granularity is exactly right.
         var date: Date
+        /// When the file was actually WRITTEN. Separate from `date`
+        /// because a filename only carries a day: displaying `date` showed
+        /// every backup as midnight, and since the staleness colouring
+        /// reads the same value, a backup written at 4pm looked up to 24
+        /// hours older than it was — which would let a genuinely stale one
+        /// show green for an extra day.
+        var writtenAt: Date
         var byteCount: Int
         var id: String { name }
     }
@@ -241,18 +253,22 @@ enum BackupEngine {
             for url in urls {
                 let name = url.lastPathComponent
                 let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                let written = modified(url)
                 if name == latestFileName {
-                    out.latest = BackupFile(name: name, date: modified(url), byteCount: size)
+                    out.latest = BackupFile(name: name, date: written,
+                                            writtenAt: written, byteCount: size)
                 } else if name.hasSuffix(".corrupt") {
-                    out.corrupt.append(BackupFile(name: name, date: modified(url), byteCount: size))
+                    out.corrupt.append(BackupFile(name: name, date: written,
+                                                  writtenAt: written, byteCount: size))
                 } else if let day = parsedDate(from: name) {
-                    let file = BackupFile(name: name, date: day, byteCount: size)
+                    let file = BackupFile(name: name, date: day,
+                                          writtenAt: written, byteCount: size)
                     if isMonthly(day) { out.monthlies.append(file) } else { out.dailies.append(file) }
                 }
             }
             out.dailies.sort { $0.date > $1.date }
             out.monthlies.sort { $0.date > $1.date }
-            out.corrupt.sort { $0.date > $1.date }
+            out.corrupt.sort { $0.writtenAt > $1.writtenAt }
             return out
         }
     }

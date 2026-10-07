@@ -2,8 +2,9 @@
 //  BodyWeightView.swift
 //  TheJym
 //
-//  Log body weight — weekly, dated to the nearest Monday, not any arbitrary
-//  day — see the trend as a chart, and browse/delete past entries.
+//  Log body weight — dated to the day it's taken (7220a8d; it used to snap
+//  to the week's Monday) — see the trend as a chart, and browse/delete past
+//  entries.
 //
 
 import SwiftUI

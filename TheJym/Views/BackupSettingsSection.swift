@@ -95,9 +95,14 @@ struct BackupSettingsSection: View {
                 // Read from the FOLDER, with the stored date only as a
                 // fallback — if the newest file on disk disagrees with
                 // what the app thinks, the file wins.
+                //
+                // writtenAt, not date: `date` is the DAY from the filename,
+                // so showing it rendered every backup as midnight and —
+                // worse — fed the staleness colour a timestamp up to 24
+                // hours early.
                 if let newest = listing?.newest {
-                    Text(Self.stamp.string(from: newest.date))
-                        .foregroundStyle(ageColor(newest.date))
+                    Text(Self.stamp.string(from: newest.writtenAt))
+                        .foregroundStyle(ageColor(newest.writtenAt))
                 } else {
                     Text("Never").foregroundStyle(.red)
                 }
@@ -252,6 +257,6 @@ struct BackupLocationNote: View {
 
     private func refresh() {
         folderName = BackupFolder.displayName
-        newest = BackupEngine.listing()?.newest?.date
+        newest = BackupEngine.listing()?.newest?.writtenAt
     }
 }
