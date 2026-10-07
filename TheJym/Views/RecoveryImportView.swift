@@ -97,9 +97,12 @@ struct RecoveryImportView: View {
     private var dateSection: some View {
         Section("Date Range") {
             DatePicker("On or after", selection: $floorDate, displayedComponents: .date)
+                .onChange(of: floorDate) { _, _ in reparse() }
             Toggle("Limit the end date", isOn: $useCeiling)
+                .onChange(of: useCeiling) { _, _ in reparse() }
             if useCeiling {
                 DatePicker("On or before", selection: $ceilingDate, displayedComponents: .date)
+                    .onChange(of: ceilingDate) { _, _ in reparse() }
             }
         }
     }
@@ -175,6 +178,12 @@ struct RecoveryImportView: View {
             }
             // Itemised, never a bare total — a silent skip count is
             // what let 24 dropped weigh-ins look like a detail.
+            LabeledContent("Rows in file", value: "\(wb.sourceRowCount)")
+                .font(.caption).foregroundStyle(.secondary)
+            if !wb.isFullyAccounted {
+                Text("⚠︎ \(wb.sourceRowCount - filtered.count - wb.skipped.total) rows unaccounted for — do not import.")
+                    .font(.caption).foregroundStyle(.red)
+            }
             if wb.skipped.total > 0 {
                 LabeledContent("Rows skipped", value: "\(wb.skipped.total)")
                     .foregroundStyle(.orange)
@@ -199,8 +208,9 @@ struct RecoveryImportView: View {
 
     // MARK: - Work
 
+    /// Already range-filtered during parsing, so this is just the rows.
     private func filteredRows(_ wb: ImportEngine.Workbook) -> [ImportEngine.ImportedEntry] {
-        ImportEngine.rows(wb.historyRows, from: floorDate, through: useCeiling ? ceilingDate : nil)
+        wb.historyRows
     }
 
     private func load(_ outcome: Result<[URL], Error>) {
@@ -213,16 +223,21 @@ struct RecoveryImportView: View {
         // "Walk" pre-ticked, since it's the name this app writes — but it
         // is still only a default, and still shown for confirmation.
         activityNames = ["walk"]
-        reparse()
-        if let wb = workbook, let last = wb.historyRows.map(\.date).max() {
+        // Unfiltered first, purely to learn the file's own last date for
+        // the ceiling default.
+        if let full = ImportEngine.parseWorkbook(xlsxData: data, restActivityNames: activityNames),
+           let last = full.historyRows.map(\.date).max() {
             ceilingDate = last
         }
+        reparse()
         parseFailed = (workbook == nil)
     }
 
     private func reparse() {
         guard let fileData else { return }
-        workbook = ImportEngine.parseWorkbook(xlsxData: fileData, restActivityNames: activityNames)
+        workbook = ImportEngine.parseWorkbook(xlsxData: fileData, restActivityNames: activityNames,
+                                              from: floorDate,
+                                              through: useCeiling ? ceilingDate : nil)
     }
 
     private func runImport(_ wb: ImportEngine.Workbook) async {

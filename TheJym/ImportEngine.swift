@@ -177,15 +177,22 @@ enum ImportEngine {
         /// An exercise row whose Weights/Reps don't line up — no weights,
         /// or a different count of each.
         var unusableSets = 0
+        /// Parsed fine, but dated outside the requested range. Counted
+        /// rather than silently dropped: these are the rows a date floor
+        /// is deliberately excluding, and leaving them out of the
+        /// accounting made 20 pre-floor weigh-ins look like data loss.
+        var outOfRange = 0
         var total: Int {
-            shortRow + missingName + unparseableDate + unreadableBodyWeight + unusableSets
+            shortRow + missingName + unparseableDate + unreadableBodyWeight
+                + unusableSets + outOfRange
         }
         /// Human-readable, non-zero reasons only.
         var breakdown: [(String, Int)] {
             [("Row too short", shortRow), ("No exercise name", missingName),
              ("Unreadable date", unparseableDate),
              ("Unreadable body weight", unreadableBodyWeight),
-             ("Weights/reps don't match", unusableSets)].filter { $0.1 > 0 }
+             ("Weights/reps don't match", unusableSets),
+             ("Outside the date range", outOfRange)].filter { $0.1 > 0 }
         }
     }
 
@@ -421,7 +428,9 @@ enum ImportEngine {
     /// Shared row-processing logic once a CSV/xlsx source has been reduced to
     /// a plain header row + data rows of string fields.
     private static func parseFields(header rawHeader: [String], rows: [[String]],
-                                    restActivityNames: Set<String> = []) -> (rows: [ImportedEntry], skipped: SkipReasons) {
+                                    restActivityNames: Set<String> = [],
+                                    from: Date? = nil, through: Date? = nil,
+                                    cal: Calendar = .current) -> (rows: [ImportedEntry], skipped: SkipReasons) {
         let header = rawHeader.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
         guard let dateIdx = header.firstIndex(where: { $0.hasPrefix("date") }),
               let exerciseIdx = header.firstIndex(where: { $0.hasPrefix("exercise") }),
@@ -463,6 +472,13 @@ enum ImportEngine {
 
             guard !name.isEmpty else { reasons.missingName += 1; continue }
             guard let date = parseDate(dateStr) else { reasons.unparseableDate += 1; continue }
+            // Range-filtered HERE, not by the caller afterwards, so the
+            // skip tally and the imported tally describe the same
+            // population. Filtering later made a whole-file skip count sit
+            // next to an in-range import count, and the two didn't foot.
+            let dayOf = cal.startOfDay(for: date)
+            if let from, dayOf < cal.startOfDay(for: from) { reasons.outOfRange += 1; continue }
+            if let through, dayOf > cal.startOfDay(for: through) { reasons.outOfRange += 1; continue }
 
             let phaseStr = phaseIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
             let dayStr = dayIdx.flatMap { fields[safe: $0] }?.trimmingCharacters(in: .whitespaces)
@@ -1197,6 +1213,11 @@ extension ImportEngine {
         /// Distinct exercise names in History, for the rest-activity
         /// ticklist. Nothing is treated as a walk until the user says so.
         var candidateNames: [String] = []
+        /// Every non-blank data row the History sheet held. The invariant
+        /// is `historyRows.count + skipped.total == sourceRowCount` — no
+        /// row may be neither imported nor named as skipped.
+        var sourceRowCount = 0
+        var isFullyAccounted: Bool { historyRows.count + skipped.total == sourceRowCount }
     }
 
     struct LibraryEntry {
@@ -1236,7 +1257,8 @@ extension ImportEngine {
     /// Reads History / Exercises / Equipment by sheet NAME, falling back to
     /// the first sheet for a foreign file that has no sheet called
     /// "History" (which is how every pre-existing import behaved).
-    static func parseWorkbook(xlsxData: Data, restActivityNames: Set<String> = []) -> Workbook? {
+    static func parseWorkbook(xlsxData: Data, restActivityNames: Set<String> = [],
+                              from: Date? = nil, through: Date? = nil) -> Workbook? {
         guard let sheets = XLSXReader.readSheetsByName(data: xlsxData) else { return nil }
 
         func sheet(_ wanted: String) -> [[String]]? {
@@ -1250,9 +1272,11 @@ extension ImportEngine {
                 !row.allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
             }
             let parsed = parseFields(header: header, rows: Array(dataRows),
-                                     restActivityNames: restActivityNames)
+                                     restActivityNames: restActivityNames,
+                                     from: from, through: through)
             wb.historyRows = parsed.rows
             wb.skipped = parsed.skipped
+            wb.sourceRowCount = dataRows.count
 
             // Candidate names for the ticklist: distinct exercise names
             // that aren't weigh-ins. Taken from a NAME-ONLY re-read rather

@@ -180,4 +180,100 @@ final class WorkbookRoundTripTests: XCTestCase {
         XCTAssertEqual(walks, 1, "a ticked walk must stay a walk")
         XCTAssertEqual(lifts, 1)
     }
+
+    // MARK: - The accounting invariant
+    //
+    // Every source row must land in EXACTLY ONE bucket: imported, or
+    // skipped with a named reason. Nothing may be silently discarded.
+    //
+    // This is the assertion that makes the class of bug impossible rather
+    // than merely fixed. Two have now shipped from the same pattern: a row
+    // dropped by a length guard before the body-weight branch, and 20
+    // pre-floor weigh-ins that were range-filtered AFTER the skip tally so
+    // they appeared in neither column.
+
+    private func assertFullyAccounted(_ wb: ImportEngine.Workbook, _ label: String,
+                                      file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(wb.historyRows.count + wb.skipped.total, wb.sourceRowCount,
+                       "\(label): \(wb.sourceRowCount) source rows, \(wb.historyRows.count) imported, "
+                       + "\(wb.skipped.total) skipped \(wb.skipped.breakdown) — every row must be in exactly one bucket",
+                       file: file, line: line)
+    }
+
+    private func workbook(_ rows: [[XLSXCell]], activities: Set<String> = [],
+                          from: Date? = nil, through: Date? = nil) -> ImportEngine.Workbook? {
+        let header: [XLSXCell] = [.string("Date"), .string("Exercise"), .string("Sets"),
+                                  .string("Weights"), .string("Reps")]
+        let input: [(name: String, rows: [[XLSXCell]])] = [("History", [header] + rows)]
+        return ImportEngine.parseWorkbook(xlsxData: XLSXWriter.makeWorkbook(sheets: input),
+                                          restActivityNames: activities, from: from, through: through)
+    }
+
+    func testEveryRowIsAccountedForOnAMixedSheet() {
+        let rows: [[XLSXCell]] = [
+            [.string("2026-09-15"), .string("Body Weight"), .blank, .number(181.4), .blank],
+            [.string("2026-09-15"), .string("Walk"), .string("1x1"), .number(3.1), .number(1)],
+            [.string("2026-09-16"), .string("Bench Press"), .string("5/5"), .string("135/135"), .string("5/5")],
+            [.string("2026-09-16"), .string(""), .blank, .blank, .blank],
+            [.string("nonsense"), .string("Bench Press"), .string("5"), .string("135"), .string("5")],
+            [.string("2026-09-17"), .string("Bench Press"), .string("5"), .blank, .blank],
+            [.string("2026-09-18"), .string("Body Weight"), .blank, .string("junk"), .blank],
+        ]
+        guard let wb = workbook(rows, activities: ["walk"]) else { return XCTFail("no workbook") }
+        XCTAssertEqual(wb.sourceRowCount, 7)
+        assertFullyAccounted(wb, "mixed sheet")
+        XCTAssertEqual(wb.historyRows.count, 3)
+        XCTAssertEqual(wb.skipped.total, 4)
+    }
+
+    /// The exact shape that produced the phantom 20: rows outside the
+    /// range must be COUNTED, not dropped before the tally.
+    func testOutOfRangeRowsAreCountedNotVanished() {
+        let rows: [[XLSXCell]] = (1...10).map { d in
+            [.string(String(format: "2026-09-%02d", d)), .string("Body Weight"), .blank, .number(180), .blank]
+        }
+        let floor = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 8))!
+        guard let wb = workbook(rows, from: floor) else { return XCTFail("no workbook") }
+
+        XCTAssertEqual(wb.sourceRowCount, 10)
+        XCTAssertEqual(wb.historyRows.count, 3, "Sept 8, 9, 10")
+        XCTAssertEqual(wb.skipped.outOfRange, 7, "Sept 1-7 are excluded BY THE RANGE and must be counted as such")
+        assertFullyAccounted(wb, "floor applied")
+        XCTAssertTrue(wb.skipped.breakdown.contains { $0.0 == "Outside the date range" })
+    }
+
+    func testCeilingRowsAreCountedToo() {
+        let rows: [[XLSXCell]] = (1...10).map { d in
+            [.string(String(format: "2026-09-%02d", d)), .string("Bench Press"),
+             .string("5"), .string("135"), .string("5")]
+        }
+        let ceiling = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 3))!
+        guard let wb = workbook(rows, through: ceiling) else { return XCTFail("no workbook") }
+        XCTAssertEqual(wb.historyRows.count, 3)
+        XCTAssertEqual(wb.skipped.outOfRange, 7)
+        assertFullyAccounted(wb, "ceiling applied")
+    }
+
+    /// Holds for arbitrary junk too — the invariant isn't fixture-shaped.
+    func testAccountingHoldsForArbitraryRows() {
+        let noise: [[XLSXCell]] = [
+            [.string("2026-09-15"), .string("Deadlift"), .string("3"), .string("315"), .string("3")],
+            [.blank],
+            [.string(""), .string(""), .string(""), .string(""), .string("")],
+            [.string("2026-09-15"), .string("Walk"), .blank, .number(2.0), .blank],
+            [.string("2026-13-45"), .string("Bench"), .string("5"), .string("1"), .string("5")],
+            [.string("2026-09-15")],
+            [.string("2026-09-15"), .string("Body Weight"), .blank, .number(179.9), .blank],
+            [.string("2026-09-15"), .string("Row"), .string("5"), .string("95/95"), .string("5")],
+        ]
+        for activities in [Set<String>(), ["walk"]] {
+            for floor in [nil, Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 15))] {
+                guard let wb = workbook(noise, activities: activities, from: floor) else {
+                    return XCTFail("no workbook")
+                }
+                assertFullyAccounted(wb, "noise activities=\(activities) floor=\(String(describing: floor))")
+                XCTAssertTrue(wb.isFullyAccounted)
+            }
+        }
+    }
 }
