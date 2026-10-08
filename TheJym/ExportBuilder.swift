@@ -66,7 +66,8 @@ enum ExportBuilder {
                                    .string("AddedWeight"), .string("BodyweightAtLog"),
                                    .string("Rank"), .string("Missed"), .string("WeightAdj"),
                                    .string("LogBodyweight"), .string("Unit"),
-                                   .string("DayOrder"), .string("Distance")]]
+                                   .string("DayOrder"), .string("Distance"),
+                                   .string("DurationEstimated")]]
         var dated: [(date: Date, row: [XLSXCell])] = []
         for session in fetch(WorkoutSession.self, context) {
             let dateStr = Formatters.exportDate.string(from: session.date)
@@ -115,6 +116,11 @@ enum ExportBuilder {
                     // RestDayActivity, and they only coincide when a
                     // distance was recorded at all.
                     log.restDayActivity?.distance.map { XLSXCell.number($0) } ?? .blank,
+                    // Travels with the duration it qualifies. A restore
+                    // that kept the number and dropped the "this was
+                    // remembered, not measured" mark would launder every
+                    // estimate into a measurement.
+                    session.durationIsEstimated ? .string("Yes") : .blank,
                 ]))
             }
         }

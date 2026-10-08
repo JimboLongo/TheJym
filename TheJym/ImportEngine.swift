@@ -137,6 +137,11 @@ enum ImportEngine {
         /// can reconstruct. nil from an older file, which is why every one
         /// is optional rather than defaulted.
         var durationSeconds: Int?
+        /// Whether that duration was hand-entered rather than measured.
+        /// Absent from an older file, which reads as false — a duration
+        /// with no claim attached is treated as measured, matching how
+        /// every duration before this field existed was produced.
+        var durationIsEstimated = false
         var isDeload = false
         var isBonusSession = false
         /// Per-set, index-aligned with the row's weights. Empty from an
@@ -159,7 +164,8 @@ enum ImportEngine {
 
         init(date: Date, exerciseName: String, kind: ImportedRowKind, phaseNumber: Int?,
              dayLabel: String?, equipmentName: String?, cycleNumber: Int? = nil, notes: String? = nil,
-             durationSeconds: Int? = nil, isDeload: Bool = false, isBonusSession: Bool = false,
+             durationSeconds: Int? = nil, durationIsEstimated: Bool = false,
+             isDeload: Bool = false, isBonusSession: Bool = false,
              addedWeights: [Double?] = [], bodyweightAtLogs: [Double?] = [],
              achievedRank: Int? = nil, missedTarget: Bool = false,
              selectedWeightAdjustment: Double? = nil, logIsBodyweight: Bool? = nil,
@@ -170,6 +176,7 @@ enum ImportEngine {
             self.selectedWeightAdjustment = selectedWeightAdjustment
             self.logIsBodyweight = logIsBodyweight
             self.durationSeconds = durationSeconds
+            self.durationIsEstimated = durationIsEstimated
             self.isDeload = isDeload
             self.isBonusSession = isBonusSession
             self.addedWeights = addedWeights
@@ -498,6 +505,7 @@ enum ImportEngine {
         // starting "day", and it must keep finding plain "Day".
         let dayOrderIdx = header.firstIndex(where: { $0 == "dayorder" })
         let distanceIdx = header.firstIndex(where: { $0 == "distance" })
+        let durEstIdx = header.firstIndex(where: { $0 == "durationestimated" })
 
         var out: [ImportedEntry] = []
         var reasons = SkipReasons()
@@ -655,6 +663,7 @@ enum ImportEngine {
                                      phaseNumber: phaseNumber, dayLabel: matchedDayLabel,
                                      equipmentName: matchedEquipment, cycleNumber: explicitCycleNumber, notes: matchedNotes,
                                      durationSeconds: durationIdx.flatMap { Int(cell($0)) },
+                                     durationIsEstimated: durEstIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
                                      isDeload: deloadIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
                                      isBonusSession: bonusIdx.map { cell($0).lowercased().hasPrefix("y") } ?? false,
                                      addedWeights: optionalDoubles(addedIdx),
@@ -1030,6 +1039,9 @@ enum ImportEngine {
             // first row that carries one, since every row of a session
             // writes the same value.
             if let d = dayRows.compactMap(\.durationSeconds).first { session.durationSeconds = d }
+            // Taken from the row that supplied the duration, not from any
+            // row in the day — the two must describe the same value.
+            session.durationIsEstimated = dayRows.first { $0.durationSeconds != nil }?.durationIsEstimated ?? false
             if dayRows.contains(where: \.isDeload) { session.isDeload = true }
             if dayRows.contains(where: \.isBonusSession) { session.isBonusSession = true }
             context.insert(session)

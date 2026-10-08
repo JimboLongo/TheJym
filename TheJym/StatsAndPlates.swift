@@ -197,6 +197,19 @@ struct TrainingStats {
     /// entirely, not counted as 0. StatsView states this scope explicitly
     /// rather than let the number look complete when it isn't.
     var allTimeHoursTrained: Double
+    /// How many sessions carry a duration at all, and how many of those
+    /// were typed in rather than measured.
+    ///
+    /// Two counts instead of threading `durationIsEstimated` through
+    /// `dayDurationQualifyingSessions` and `DayDurationResult`. Excluding
+    /// estimates from the averages would empty the Workout Duration table
+    /// that hand-entering them exists to fill, and with nearly every
+    /// duration hand-entered a per-row marker marks everything and so
+    /// distinguishes nothing. One honest sentence per averaging section
+    /// — "18 of 19 hand-entered" — says more and leaves the spread
+    /// functions exactly as they were.
+    var durationSessionCount: Int
+    var estimatedDurationCount: Int
 
     /// Every finished, no-longer-active phase's frozen final numbers,
     /// newest first. A phase that's complete has no sessions to derive an
@@ -968,6 +981,12 @@ enum StatsEngine {
         // placeholder) session with no exerciseLogs shouldn't happen once
         // it has a duration anyway.
         let allTimeHoursTrained = Double(allSessions.filter { !$0.isDeload }.compactMap(\.durationSeconds).reduce(0, +)) / 3600
+        // Scoped the same way as the sum above — non-deload sessions with
+        // a duration — so the footnote describes exactly the population
+        // the hours figure was computed from, not a wider one.
+        let durationBearing = allSessions.filter { !$0.isDeload && $0.durationSeconds != nil }
+        let durationSessionCount = durationBearing.count
+        let estimatedDurationCount = durationBearing.filter(\.durationIsEstimated).count
 
         // Completed, no-longer-active phases get their own frozen summary,
         // anchored to that phase's own end date (its last session) instead
@@ -1169,6 +1188,8 @@ enum StatsEngine {
                              allTimeMiles: allTimeMiles,
                              allTimeActiveDayCount: allTimeActiveDayCount,
                              allTimeHoursTrained: allTimeHoursTrained,
+                             durationSessionCount: durationSessionCount,
+                             estimatedDurationCount: estimatedDurationCount,
                              completedPhaseSummaries: completedPhaseSummaries,
                              bigLiftGroups: bigLiftGroups,
                              dayDurationGroups: dayDurationGroups,

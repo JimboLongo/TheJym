@@ -747,8 +747,19 @@ struct StatsView: View {
             // existed has no recorded duration and is excluded from this
             // sum, not counted as 0, so the total understates true
             // lifetime training time until enough history accumulates.
-            Text("Hours trained only counts sessions logged after duration tracking began.")
+            Text("Hours trained only counts sessions logged after duration tracking began.\(estimatedNote(stats))")
         }
+    }
+
+    /// " 18 of 19 of those durations were entered by hand." — appended
+    /// wherever durations are summed or averaged, so a figure built
+    /// mostly from recollection can't read as if it were measured.
+    /// Empty when nothing is estimated, so a store with only stopwatch
+    /// readings carries no extra words.
+    private func estimatedNote(_ stats: TrainingStats) -> String {
+        guard stats.estimatedDurationCount > 0 else { return "" }
+        return " \(stats.estimatedDurationCount) of \(stats.durationSessionCount) "
+            + "of those durations were entered by hand, not measured."
     }
 
     /// One group per flagged exercise, each its own All-Time row plus one
@@ -808,7 +819,7 @@ struct StatsView: View {
         } header: {
             Text("Workout Duration")
         } footer: {
-            Text("Swipe for deload times.")
+            Text("Swipe for deload times.\(estimatedNote(stats))")
         }
     }
 

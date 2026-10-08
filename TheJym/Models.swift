@@ -1050,6 +1050,24 @@ final class WorkoutSession {
     /// from a real 0, so History/Stats can omit it rather than show a false
     /// number.
     var durationSeconds: Int?
+    /// True when `durationSeconds` was typed in by hand rather than
+    /// measured by the stopwatch.
+    ///
+    /// A remembered 72 minutes and a measured 72 minutes are indistinguishable
+    /// once stored, and the fabricated-durations repair (ccb022e, reverted
+    /// in 5b9f160) is the precedent for why that matters: a plausible number
+    /// the app invented was impossible to tell from a real one afterwards.
+    /// A hand-entered value is categorically different — it's the user's own
+    /// recollection, not the app's invention — but it still shouldn't be
+    /// able to pass itself off as a measurement.
+    ///
+    /// Deliberately NOT consulted by anything that averages durations.
+    /// With 18 of 19 of this store's durations hand-entered, excluding them
+    /// would empty the Workout Duration table the backfill exists to fill,
+    /// and a per-row marker on almost every row says nothing. The counts
+    /// behind `TrainingStats.estimatedDurationCount` carry it instead, as
+    /// one footnote per section where durations are averaged.
+    var durationIsEstimated: Bool = false
 
     @Relationship(deleteRule: .cascade, inverse: \ExerciseLog.session)
     var exerciseLogs: [ExerciseLog] = []

@@ -233,7 +233,13 @@ struct HistoryView: View {
                     // was never started — omitted entirely rather than
                     // implying a real recorded zero.
                     if let durationSeconds = session.durationSeconds {
-                        Text(Formatters.duration(Double(durationSeconds)))
+                        // "~" marks a hand-entered duration. A remembered
+                        // 72 and a measured 72 are indistinguishable once
+                        // stored, and this row is where they sit side by
+                        // side.
+                        Text(session.durationIsEstimated
+                             ? "~\(Formatters.duration(Double(durationSeconds)))"
+                             : Formatters.duration(Double(durationSeconds)))
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
@@ -545,6 +551,14 @@ struct SessionDetailView: View {
 
     @State private var dayReattachmentNote: String?
     @State private var showingAddExercise = false
+    /// Wheel state, kept separate from the stored value so that OPENING
+    /// the editor can't rewrite it. The one genuine stopwatch reading in
+    /// this store is 4,328s; whole-minute wheels would round it to 4,320
+    /// the moment they bound directly to the model. The commit only
+    /// happens on an actual wheel change — see `commitDuration`.
+    @State private var showingDurationEditor = false
+    @State private var draftHours = 1
+    @State private var draftMinutes = 12
 
     private var sortedLogs: [ExerciseLog] {
         session.exerciseLogs.sorted { $0.order < $1.order }
@@ -602,6 +616,7 @@ struct SessionDetailView: View {
                             .frame(width: 60)
                     }
                 }
+                durationEditor
             } footer: {
                 if let dayReattachmentNote {
                     Text(dayReattachmentNote).foregroundStyle(.orange)
@@ -706,6 +721,104 @@ struct SessionDetailView: View {
     /// so cycle-slot tracking keeps working under the new Phase. If no day
     /// of that name exists there, `day` is cleared rather than left
     /// pointing at a day from a different Phase, and a note explains why.
+    // MARK: - Duration
+
+    /// Seeded at 72 minutes, the midpoint of this store's real range
+    /// (60–80), not zero — the common case is then one tap and done.
+    private static let seedHours = 1
+    private static let seedMinutes = 12
+    /// Caps the hours wheel. A 14-hour workout from a fat-fingered entry
+    /// is unreachable because there's nothing to type into, which beats
+    /// validating after the fact. 5 rather than 3 so a doubled-up session
+    /// or a stopwatch left running is still enterable — a cap that
+    /// rejects a real value is worse than one that permits an odd one.
+    private static let maxHours = 5
+
+    @ViewBuilder
+    private var durationEditor: some View {
+        if let seconds = session.durationSeconds {
+            HStack {
+                Text("Duration")
+                Spacer()
+                // Shows the STORED value until a wheel actually moves, so
+                // a measured 72:08 still reads 72:08 after you open this.
+                Text(Formatters.duration(Double(seconds)))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                if session.durationIsEstimated {
+                    Text("est.").font(.caption2)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { openEditor(seconds: seconds) }
+            if showingDurationEditor { durationWheels }
+            Button("Remove Duration", role: .destructive) {
+                // Back to nil, never 0 — the two are different statements
+                // and the History row relies on it (a nil duration omits
+                // the line rather than showing "0:00").
+                session.durationSeconds = nil
+                session.durationIsEstimated = false
+                showingDurationEditor = false
+                try? context.save()
+            }
+        } else if showingDurationEditor {
+            durationWheels
+        } else {
+            Button("Add Duration") { openEditor(seconds: nil) }
+        }
+    }
+
+    private var durationWheels: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 0) {
+                Picker("Hours", selection: $draftHours) {
+                    ForEach(0...Self.maxHours, id: \.self) { Text("\($0) h").tag($0) }
+                }
+                .pickerStyle(.wheel).frame(maxWidth: .infinity)
+                Picker("Minutes", selection: $draftMinutes) {
+                    ForEach(0..<60, id: \.self) { Text("\($0) min").tag($0) }
+                }
+                .pickerStyle(.wheel).frame(maxWidth: .infinity)
+            }
+            .frame(height: 120)
+            // Zero isn't savable: "no duration" is nil, and Remove
+            // Duration is how you get there. A stored 0 would claim a
+            // measured zero-length workout.
+            Button("Save Duration") { commitDuration() }
+                .disabled(draftHours == 0 && draftMinutes == 0)
+                .frame(maxWidth: .infinity)
+        }
+        .onChange(of: draftHours) { _, _ in }
+        .onChange(of: draftMinutes) { _, _ in }
+    }
+
+    private func openEditor(seconds: Int?) {
+        if let seconds {
+            draftHours = min(Self.maxHours, seconds / 3600)
+            draftMinutes = (seconds % 3600) / 60
+        } else {
+            draftHours = Self.seedHours
+            draftMinutes = Self.seedMinutes
+        }
+        showingDurationEditor = true
+    }
+
+    /// Writes the wheels' value. Only ever called from Save, so merely
+    /// opening the editor leaves a measured duration untouched.
+    private func commitDuration() {
+        let total = draftHours * 3600 + draftMinutes * 60
+        guard total > 0 else { return }
+        session.durationSeconds = total
+        // Hand-entered by definition — this is the only path that sets it
+        // outside finishWorkout()'s stopwatch capture.
+        session.durationIsEstimated = true
+        showingDurationEditor = false
+        try? context.save()
+    }
+
     /// Cycle # is left as-is either way — edit it separately if it also
     /// needs correcting for the new Phase.
     private func changePhase(to newPhase: Phase?) {
