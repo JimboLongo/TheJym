@@ -374,8 +374,10 @@ struct NextPhasePlannerView: View {
                         }
                         Section {
                             Button("Continue to Edit & Start Phase \(previousPhase.number + 1)") {
-                                previousPhase.isActive = false
-                                try? context.save()
+                                // The outgoing phase is deactivated on SAVE,
+                                // not here — see PhaseBuilderView
+                                // .activatesOnSave. Backing out of the
+                                // builder must leave it active.
                                 showSetup = true
                             }
                             .font(.headline)
@@ -389,7 +391,8 @@ struct NextPhasePlannerView: View {
             }
             .task { await buildPlan() }
             .sheet(isPresented: $showSetup, onDismiss: { dismiss() }) {
-                PhaseBuilderView(previousPhase: previousPhase, seededPlan: plan) { newPhase in
+                PhaseBuilderView(previousPhase: previousPhase, seededPlan: plan,
+                                 activatesOnSave: true) { newPhase in
                     onPhaseCreated?(newPhase)
                 }
             }

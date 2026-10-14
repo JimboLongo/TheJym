@@ -31,6 +31,22 @@ struct PhaseBuilderView: View {
     /// Called with the newly created Phase right before this view dismisses
     /// — lets a caller that seeded from an import retroactively attribute
     /// historical rows to it.
+    /// True when this builder was opened to REPLACE a finished phase —
+    /// "Build Phase N+1 Manually" and the AI planner's "Continue to Edit &
+    /// Start".
+    ///
+    /// Those two used to set `isActive = false` on the old phase at the
+    /// moment the button was tapped, so that `shouldActivate` below would
+    /// see no active phase. Backing out of the builder then left NO phase
+    /// active at all — which is how Phase 2 ended up inactive with no
+    /// Phase 3 to replace it, hiding Adherence, Perfect Cycles, Miles this
+    /// phase and Rest days banked from Stats, and leaving the rest bank
+    /// with nothing to top it up. The intent now travels as a flag and is
+    /// acted on only once a phase actually exists.
+    ///
+    /// Declared BEFORE onPhaseCreated so the memberwise init keeps the
+    /// closure last and call sites can still use trailing-closure syntax.
+    var activatesOnSave: Bool = false
     var onPhaseCreated: ((Phase) -> Void)? = nil
 
     @State private var cycles = 8
@@ -440,13 +456,21 @@ struct PhaseBuilderView: View {
         // another is still running (Phases tab's "+") just saves it as a
         // standby instead, matching this screen's "Save" button — it
         // doesn't presume you want to switch to it yet.
-        let shouldActivate = !phases.contains(where: \.isActive)
+        // `activatesOnSave` is the explicit "this replaces a finished
+        // phase" intent; the second clause still covers the very first
+        // phase ever. Building ahead of time from the Phases tab's "+"
+        // while another phase runs saves a standby, as before.
+        let shouldActivate = activatesOnSave || !phases.contains(where: \.isActive)
 
         let deload = (settingsList.first?.deloadWeeksEnabled == true)
             ? ProgressionEngine.deloadCycle(totalCycles: cycles) : 0
 
         let phase = Phase(number: nextNumber, totalCycles: cycles, isActive: shouldActivate, deloadCycle: deload)
         context.insert(phase)
+        // Deactivating the OUTGOING phase happens here — after a phase has
+        // genuinely been created — rather than when the button was tapped.
+        // activate(among:) is the one place that rule lives.
+        if shouldActivate { phase.activate(among: phases) }
 
         var knownDefs = Dictionary(uniqueKeysWithValues: exerciseDefs.map { ($0.name, $0) })
         for (dayOrder, dayDraft) in dayDrafts.enumerated() {

@@ -50,6 +50,9 @@ struct TodayView: View {
     @State private var showingPhaseSetup = false
     /// See the sheet comments: set by the builder's callback, consumed
     /// once the sheet has fully closed.
+    /// True while the builder is open to replace a finished phase, so the
+    /// new one takes over on save. Reset on dismiss either way.
+    @State private var buildingReplacementPhase = false
     @State private var phasePendingOpen: Phase?
     @State private var openedPhase: Phase?
     @State private var showingNextPhasePlanner = false
@@ -231,8 +234,12 @@ struct TodayView: View {
             // callback immediately before its own dismiss(), and starting
             // a navigation from inside that instant is a known SwiftUI
             // race that silently drops the push.
-            .sheet(isPresented: $showingPhaseSetup, onDismiss: { openPendingPhase() }) {
-                PhaseBuilderView(previousPhase: nil) { phasePendingOpen = $0 }
+            .sheet(isPresented: $showingPhaseSetup, onDismiss: {
+                buildingReplacementPhase = false
+                openPendingPhase()
+            }) {
+                PhaseBuilderView(previousPhase: nil,
+                                 activatesOnSave: buildingReplacementPhase) { phasePendingOpen = $0 }
             }
             .sheet(isPresented: $showingNextPhasePlanner, onDismiss: { openPendingPhase() }) {
                 if let phase = activePhase {
@@ -815,7 +822,10 @@ struct TodayView: View {
                         .buttonStyle(.borderedProminent)
                 }
                 Button("Build Phase \(phase.number + 1) Manually") {
-                    phase.isActive = false
+                    // No deactivation here — see PhaseBuilderView
+                    // .activatesOnSave. Backing out must leave this phase
+                    // active.
+                    buildingReplacementPhase = true
                     showingPhaseSetup = true
                 }
             }
