@@ -251,6 +251,8 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
                 // Computed, not stored — but if any input fails to survive,
                 // this is the figure the user would actually notice.
                 "calories": num(tier.calories),
+                "createdAt": day(tier.createdAt),
+                "modifiedAt": day(tier.modifiedAt),
             ]
         }
         return out
@@ -567,10 +569,15 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             // Distinct in every field, so a value landing in the wrong
             // column shows up rather than matching by luck.
             let existing = Set((try source.fetch(FetchDescriptor<MacroTier>())).map(\.name))
+            // Four distinct dates across the two seeds, so created and
+            // modified swapping places shows up rather than matching.
+            let d = { (days: Int) in Calendar.current.date(byAdding: .day, value: -days, to: .now)! }
             for seed in [MacroTier(name: "DiffSeed A", order: 90, proteinGrams: 201, carbsGrams: 152,
-                                   fatGrams: 53, sugarGrams: 24, fiberGrams: 35),
+                                   fatGrams: 53, sugarGrams: 24, fiberGrams: 35,
+                                   createdAt: d(90), modifiedAt: d(12)),
                          MacroTier(name: "DiffSeed B", order: 91, proteinGrams: 182, carbsGrams: 303,
-                                   fatGrams: 84, sugarGrams: 61, fiberGrams: 26)]
+                                   fatGrams: 84, sugarGrams: 61, fiberGrams: 26,
+                                   createdAt: d(40), modifiedAt: d(3))]
             where !existing.contains(seed.name) {
                 source.insert(seed)
             }

@@ -216,7 +216,9 @@ enum ExportBuilder {
                          .number(Double(tier.order)),
                          .number(tier.proteinGrams), .number(tier.carbsGrams),
                          .number(tier.fatGrams), .number(tier.sugarGrams),
-                         .number(tier.fiberGrams)])
+                         .number(tier.fiberGrams),
+                         .string(Formatters.exportDate.string(from: tier.createdAt)),
+                         .string(Formatters.exportDate.string(from: tier.modifiedAt))])
         }
 
         if let s = fetch(AppSettings.self, context).first {

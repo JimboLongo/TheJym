@@ -249,6 +249,136 @@ final class MacroTierTests: XCTestCase {
         XCTAssertEqual(all[0].proteinGrams, 180)
     }
 
+    // MARK: - Dates
+
+    func testNewTierIsCreatedAndModifiedNow() {
+        let tier = MacroTier(name: "Cut")
+        XCTAssertEqual(tier.createdAt.timeIntervalSinceNow, 0, accuracy: 5)
+        XCTAssertEqual(tier.modifiedAt.timeIntervalSinceNow, 0, accuracy: 5)
+    }
+
+    /// An untouched tier reads as one short line — no "edited" to add.
+    func testVintageLabelOmitsEditedWhenNeverRevised() {
+        let day = Date(timeIntervalSince1970: 1_760_000_000)
+        let tier = MacroTier(name: "Cut", createdAt: day, modifiedAt: day)
+        XCTAssertTrue(tier.vintageLabel.hasPrefix("Created "), tier.vintageLabel)
+        XCTAssertFalse(tier.vintageLabel.contains("edited"), tier.vintageLabel)
+    }
+
+    func testVintageLabelShowsBothOnceRevised() {
+        let made = Date(timeIntervalSince1970: 1_760_000_000)
+        let tier = MacroTier(name: "Cut", createdAt: made,
+                             modifiedAt: made.addingTimeInterval(40 * 86_400))
+        XCTAssertTrue(tier.vintageLabel.contains("Created "), tier.vintageLabel)
+        XCTAssertTrue(tier.vintageLabel.contains("edited "), tier.vintageLabel)
+    }
+
+    /// Edits made the same day aren't a different vintage — the label would
+    /// otherwise say "Created Oct 14 · edited Oct 14".
+    func testSameDayEditDoesNotAddAnEditedDate() {
+        let morning = Date(timeIntervalSince1970: 1_760_000_000)
+        let tier = MacroTier(name: "Cut", createdAt: morning,
+                             modifiedAt: morning.addingTimeInterval(3 * 3600))
+        XCTAssertFalse(tier.vintageLabel.contains("edited"), tier.vintageLabel)
+    }
+
+    // MARK: - What counts as a revision
+
+    func testDiffersDetectsAChangedValue() {
+        let tier = bulk()
+        var same = Dictionary(uniqueKeysWithValues:
+            MacroCategory.allCases.map { ($0, tier.grams($0)) })
+        XCTAssertFalse(tier.differs(name: "Bulk", grams: same),
+                       "re-saving without a change is not a revision")
+        same[.fat] = 81
+        XCTAssertTrue(tier.differs(name: "Bulk", grams: same))
+    }
+
+    func testDiffersDetectsARename() {
+        let tier = bulk()
+        let same = Dictionary(uniqueKeysWithValues:
+            MacroCategory.allCases.map { ($0, tier.grams($0)) })
+        XCTAssertTrue(tier.differs(name: "Bulk 2.0", grams: same))
+    }
+
+    // MARK: - Dates round-trip
+
+    func testBothDatesSurviveExportAndImport() async throws {
+        let ctx = makeContext()
+        ctx.insert(AppSettings())
+        let made = Date(timeIntervalSince1970: 1_750_000_000)
+        let edited = Date(timeIntervalSince1970: 1_760_000_000)
+        let tier = bulk()
+        tier.createdAt = made
+        tier.modifiedAt = edited
+        ctx.insert(tier)
+        try ctx.save()
+
+        let data = ExportBuilder.workbook(from: ctx)
+        let target = makeContext()
+        target.insert(AppSettings())
+        try target.save()
+        let wb = try XCTUnwrap(ImportEngine.parseWorkbook(xlsxData: data))
+        ImportEngine.restoreProgram(wb.program, context: target)
+        try target.save()
+
+        let restored = try XCTUnwrap(try target.fetch(FetchDescriptor<MacroTier>()).first)
+        let cal = Calendar.current
+        XCTAssertTrue(cal.isDate(restored.createdAt, inSameDayAs: made))
+        XCTAssertTrue(cal.isDate(restored.modifiedAt, inSameDayAs: edited))
+        XCTAssertFalse(cal.isDate(restored.createdAt, inSameDayAs: restored.modifiedAt),
+                       "the two dates must not collapse into one")
+    }
+
+    /// Restoring must not stamp "now" — otherwise every recovery would make
+    /// the whole library look freshly revised, and a backup's whole job is
+    /// to bring back what was true.
+    func testRestoreDoesNotStampTodayOverTheFilesDates() async throws {
+        let ctx = makeContext()
+        ctx.insert(AppSettings())
+        let made = Date(timeIntervalSince1970: 1_700_000_000)
+        let tier = bulk()
+        tier.createdAt = made
+        tier.modifiedAt = made
+        ctx.insert(tier)
+        try ctx.save()
+        let data = ExportBuilder.workbook(from: ctx)
+
+        // A fresh store, as after a reinstall.
+        let target = makeContext()
+        target.insert(AppSettings())
+        try target.save()
+        let wb = try XCTUnwrap(ImportEngine.parseWorkbook(xlsxData: data))
+        ImportEngine.restoreProgram(wb.program, context: target)
+        try target.save()
+
+        let restored = try XCTUnwrap(try target.fetch(FetchDescriptor<MacroTier>()).first)
+        XCTAssertTrue(Calendar.current.isDate(restored.createdAt, inSameDayAs: made))
+        XCTAssertGreaterThan(abs(restored.createdAt.timeIntervalSinceNow), 86_400,
+                             "a restored tier must not read as created today")
+    }
+
+    /// An older export has no date columns. Restoring it must leave an
+    /// existing tier's dates alone rather than blanking them.
+    func testOlderFileWithoutDateColumnsLeavesDatesAlone() async throws {
+        let ctx = makeContext()
+        ctx.insert(AppSettings())
+        let made = Date(timeIntervalSince1970: 1_700_000_000)
+        let tier = bulk()
+        tier.createdAt = made
+        tier.modifiedAt = made
+        ctx.insert(tier)
+        try ctx.save()
+
+        var program = ImportEngine.Program()
+        program.macroTiers = [("Bulk", 0, 180, 300, 80, 60, 35, nil, nil)]
+        ImportEngine.restoreProgram(program, context: ctx)
+        try ctx.save()
+
+        let restored = try XCTUnwrap(try ctx.fetch(FetchDescriptor<MacroTier>()).first)
+        XCTAssertTrue(Calendar.current.isDate(restored.createdAt, inSameDayAs: made))
+    }
+
     /// An older file has no MacroTier rows; restoring it must not wipe the
     /// tiers already in the store.
     func testOlderFileWithoutTierRowsLeavesExistingTiersAlone() async throws {

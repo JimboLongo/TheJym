@@ -1709,9 +1709,29 @@ final class MacroTier {
     var sugarGrams: Double = 0
     var fiberGrams: Double = 0
 
+    /// When this tier was first made — same shape as ExerciseDef.dateAdded.
+    /// Stable for the life of the tier; revising the numbers never moves it.
+    var createdAt: Date = Date.now
+    /// When its NUMBERS last changed.
+    ///
+    /// Carried alongside createdAt rather than instead of it because the
+    /// two answer genuinely different questions and neither subsumes the
+    /// other: created says which era of thinking a tier came from ("the Cut
+    /// I built in October"), modified says whether its numbers are current.
+    /// A tier created in October and revised yesterday, and one created in
+    /// October and never touched, are indistinguishable by created alone.
+    ///
+    /// Moved ONLY by a change to the macro values or the name — not by
+    /// reordering, which is display state rather than the tier's content.
+    /// Import does not stamp it either: a restored backup must say when the
+    /// tier was really last edited, not when it was restored, or every
+    /// recovery would make the whole library look freshly revised.
+    var modifiedAt: Date = Date.now
+
     init(name: String = "", order: Int = 0,
          proteinGrams: Double = 0, carbsGrams: Double = 0, fatGrams: Double = 0,
-         sugarGrams: Double = 0, fiberGrams: Double = 0) {
+         sugarGrams: Double = 0, fiberGrams: Double = 0,
+         createdAt: Date = Date.now, modifiedAt: Date = Date.now) {
         self.name = name
         self.order = order
         self.proteinGrams = proteinGrams
@@ -1719,6 +1739,31 @@ final class MacroTier {
         self.fatGrams = fatGrams
         self.sugarGrams = sugarGrams
         self.fiberGrams = fiberGrams
+        self.createdAt = createdAt
+        self.modifiedAt = modifiedAt
+    }
+
+    /// What the tier picker shows under the name.
+    ///
+    /// Leads with created, because that's the association being reached for
+    /// when choosing one. The edited date is appended only when it differs
+    /// by a day or more, so an untouched tier stays a single short line and
+    /// a revised one says so without being asked.
+    var vintageLabel: String {
+        let created = Formatters.date.string(from: createdAt)
+        let cal = Calendar.current
+        guard !cal.isDate(createdAt, inSameDayAs: modifiedAt), modifiedAt > createdAt else {
+            return "Created \(created)"
+        }
+        return "Created \(created) · edited \(Formatters.date.string(from: modifiedAt))"
+    }
+
+    /// True when `values` differ from what's stored — the test for whether
+    /// an edit should move `modifiedAt`. Re-saving a sheet without changing
+    /// anything must not count as a revision.
+    func differs(name newName: String, grams newGrams: [MacroCategory: Double]) -> Bool {
+        if newName != name { return true }
+        return MacroCategory.allCases.contains { grams($0) != (newGrams[$0] ?? 0) }
     }
 
     func grams(_ category: MacroCategory) -> Double {

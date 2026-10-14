@@ -77,6 +77,9 @@ struct MacroTiersView: View {
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Text(tier.vintageLabel)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
             if let warning = tier.coherenceWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2).foregroundStyle(.orange)
@@ -218,13 +221,24 @@ struct MacroTierEditSheet: View {
     }
 
     private func save() {
-        let target = tier ?? {
-            let new = MacroTier(name: trimmedName, order: nextOrder)
-            context.insert(new)
-            return new
-        }()
+        let newGrams = Dictionary(uniqueKeysWithValues:
+            MacroCategory.allCases.map { ($0, value($0)) })
+        guard let target = tier else {
+            let created = MacroTier(name: trimmedName, order: nextOrder)
+            for c in MacroCategory.allCases { created.setGrams(newGrams[c] ?? 0, for: c) }
+            context.insert(created)
+            try? context.save()
+            dismiss()
+            return
+        }
+        // modifiedAt moves only on a real change — re-opening a tier and
+        // tapping Save without touching anything is not a revision, and
+        // stamping it would make "edited" meaningless.
+        if target.differs(name: trimmedName, grams: newGrams) {
+            target.modifiedAt = .now
+        }
         target.name = trimmedName
-        for c in MacroCategory.allCases { target.setGrams(value(c), for: c) }
+        for c in MacroCategory.allCases { target.setGrams(newGrams[c] ?? 0, for: c) }
         try? context.save()
         dismiss()
     }

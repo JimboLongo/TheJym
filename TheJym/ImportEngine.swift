@@ -1698,7 +1698,8 @@ extension ImportEngine {
         var timerPresets: [(template: String, name: String, seconds: Double,
                             repeatCount: Int, order: Int, isRest: Bool)] = []
         var macroTiers: [(name: String, order: Int, protein: Double, carbs: Double,
-                          fat: Double, sugar: Double, fiber: Double)] = []
+                          fat: Double, sugar: Double, fiber: Double,
+                          createdAt: Date?, modifiedAt: Date?)] = []
 
         var isEmpty: Bool {
             phases.isEmpty && days.isEmpty && planned.isEmpty
@@ -1760,7 +1761,8 @@ extension ImportEngine {
                 func num(_ i: Int) -> Double { Double(str(row, i)) ?? 0 }
                 let name = str(row, 1)
                 guard !name.isEmpty else { continue }
-                p.macroTiers.append((name, int(row, 2), num(3), num(4), num(5), num(6), num(7)))
+                p.macroTiers.append((name, int(row, 2), num(3), num(4), num(5), num(6), num(7),
+                                     parseDate(str(row, 8)), parseDate(str(row, 9))))
             case "setting":
                 p.settings[str(row, 1)] = str(row, 2)
             default:
@@ -1925,6 +1927,14 @@ extension ImportEngine {
             tier.fatGrams = row.fat
             tier.sugarGrams = row.sugar
             tier.fiberGrams = row.fiber
+            // Taken from the FILE, never stamped with "now". A restored
+            // backup has to say when each tier was really made and last
+            // edited; regenerating these would make every recovery look
+            // like the whole library had just been revised. Absent from an
+            // older file, in which case whatever the tier already has (or
+            // the model default) stands.
+            if let created = row.createdAt { tier.createdAt = created }
+            if let modified = row.modifiedAt { tier.modifiedAt = modified }
         }
 
         if let settings = (try? context.fetch(FetchDescriptor<AppSettings>()))?.first {
