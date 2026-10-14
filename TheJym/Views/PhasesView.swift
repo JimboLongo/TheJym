@@ -338,10 +338,15 @@ struct PhaseDetailView: View {
             Text("Not logged yet — change what this one cycle trains, or edit every cycle's plan instead.")
         }
         .sheet(item: $pickingReplacementFor) { target in
-            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars,
+                                 asksForRestTime: true) { def, reps, goalType, rest in
+                // The chosen value wins; the slot being replaced is the
+                // fallback, preserving the pre-existing behaviour for a
+                // skipped rest step.
                 target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
                                             targetReps: reps, goalType: goalType, isBodyweight: def.isBodyweight,
-                                            restTimeSeconds: target.effective.restTimeSeconds, context: context)
+                                            restTimeSeconds: rest ?? target.effective.restTimeSeconds,
+                                            context: context)
                 try? context.save()
             }
         }

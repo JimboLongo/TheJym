@@ -81,6 +81,9 @@ struct PhaseBuilderView: View {
         var goalType: GoalType = .fixedSets
         var repTotalTargetText: String = ""   // repTotal only, e.g. "40"
         var repTotalProgressesReps: Bool = false
+        /// nil = no rest time, exactly as every slot added before the add
+        /// flow asked for one. Applied to the PlannedExercise at save.
+        var restTimeSeconds: Int?
     }
 
     struct DayDraft: Identifiable {
@@ -461,7 +464,9 @@ struct PhaseBuilderView: View {
                     let reps = d.repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
                     guard !reps.isEmpty else { continue }
                     let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: reps,
-                                             suggestedWeights: weights, isBodyweight: isBW, goalType: .fixedSets)
+                                             suggestedWeights: weights, isBodyweight: isBW,
+                                             goalType: .fixedSets,
+                                             restTimeSeconds: d.restTimeSeconds)
                     pe.day = day
                     context.insert(pe)
                     ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps,
@@ -472,7 +477,8 @@ struct PhaseBuilderView: View {
                     let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: [],
                                              suggestedWeights: weights, isBodyweight: isBW,
                                              goalType: .repTotal(target: target),
-                                             repTotalProgressesReps: d.repTotalProgressesReps)
+                                             repTotalProgressesReps: d.repTotalProgressesReps,
+                                             restTimeSeconds: d.restTimeSeconds)
                     pe.day = day
                     context.insert(pe)
                     ExerciseDef.ensureAnyVariantExists(name: d.name, knownDefs: &knownDefs, context: context)
@@ -549,14 +555,17 @@ struct DayEditorView: View {
         }
         .navigationTitle(day.name)
         .sheet(isPresented: $showingAddExercise) {
-            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
-                addToDay(def, reps: reps, goalType: goalType)
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars,
+                                 asksForRestTime: true) { def, reps, goalType, rest in
+                addToDay(def, reps: reps, goalType: goalType, restTimeSeconds: rest)
             }
         }
     }
 
-    private func addToDay(_ def: ExerciseDef, reps: [Int], goalType: GoalType) {
+    private func addToDay(_ def: ExerciseDef, reps: [Int], goalType: GoalType,
+                          restTimeSeconds: Int?) {
         var draft = PhaseBuilderView.DraftExercise(name: def.name, repsText: "", weightsText: "")
+        draft.restTimeSeconds = restTimeSeconds
         switch goalType {
         case .fixedSets:
             draft.repsText = reps.map(String.init).joined(separator: "/")
@@ -576,16 +585,60 @@ struct AddExerciseToDayView: View {
     @Environment(\.dismiss) private var dismiss
     let exerciseDefs: [ExerciseDef]
     let bars: [Bar]
+    /// Whether to ask for a rest time after the set is chosen. Off by
+    /// default because one caller (HistoryView) adds an ExerciseLog to a
+    /// logged session, which has no rest time to set — the field lives on
+    /// PlannedExercise.
+    var asksForRestTime: Bool = false
     /// `GoalType` reflects the choice made in the Add Set sheet — reps only
     /// carries values for `.fixedSets` (empty for `.repTotal`, whose target
-    /// is already inside the GoalType itself).
-    var onPick: (ExerciseDef, [Int], GoalType) -> Void
+    /// is already inside the GoalType itself). The rest time is nil both
+    /// when this view doesn't ask and when the user skipped it.
+    var onPick: (ExerciseDef, [Int], GoalType, Int?) -> Void
 
     @State private var showingNewExerciseSheet = false
     @State private var addSetTarget: ExerciseDef?
     @State private var manageTarget: ExerciseDef?
     @State private var searchText = ""
     @State private var selectedDef: ExerciseDef?
+    /// The set that's been chosen and is waiting on a rest time. Holding it
+    /// here rather than dismissing straight away is what keeps this one
+    /// continuous flow instead of a modal closing and another opening
+    /// behind it.
+    @State private var pendingRestPick: PendingPick?
+    /// Carried across a run of adds so a deliberate choice doesn't have to
+    /// be re-made for every brand-new exercise — step 2 of the cascade.
+    @State private var lastEnteredRest: Int?
+
+    /// Every PlannedExercise, for the rest-time default. Read-only: the
+    /// cascade reads sibling slots and never writes to them.
+    @Query private var allPlannedExercises: [PlannedExercise]
+
+    private struct PendingPick: Identifiable {
+        let id = UUID()
+        let def: ExerciseDef
+        let reps: [Int]
+        let goalType: GoalType
+    }
+
+    /// Either finishes immediately or stages the rest-time step. Cancelling
+    /// that sheet leaves `pendingRestPick` nil and the exercise unadded,
+    /// which is the same as backing out of the set dialog.
+    private func choose(_ def: ExerciseDef, _ reps: [Int], _ goalType: GoalType) {
+        selectedDef = nil
+        guard asksForRestTime else {
+            onPick(def, reps, goalType, nil)
+            dismiss()
+            return
+        }
+        pendingRestPick = PendingPick(def: def, reps: reps, goalType: goalType)
+    }
+
+    private func finish(_ pick: PendingPick, restTimeSeconds: Int?) {
+        pendingRestPick = nil
+        onPick(pick.def, pick.reps, pick.goalType, restTimeSeconds)
+        dismiss()
+    }
 
     private var filteredDefs: [ExerciseDef] {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
@@ -622,8 +675,10 @@ struct AddExerciseToDayView: View {
             }
             .sheet(isPresented: $showingNewExerciseSheet) {
                 ExerciseEditView(def: nil, bars: bars) { newDef in
-                    onPick(newDef, newDef.repSchemes.first ?? [8, 8, 8], .fixedSets)
-                    dismiss()
+                    // Through choose(), not straight to onPick: a brand-new
+                    // exercise is exactly the case with no prior rest time
+                    // to inherit, so it's the one that most needs asking.
+                    choose(newDef, newDef.repSchemes.first ?? [8, 8, 8], .fixedSets)
                 }
             }
             .confirmationDialog(selectedDef?.name ?? "", isPresented: Binding(
@@ -632,8 +687,7 @@ struct AddExerciseToDayView: View {
                 if let def = selectedDef {
                     ForEach(def.repSchemes, id: \.self) { reps in
                         Button(def.setLabel(for: reps)) {
-                            onPick(def, reps, .fixedSets)
-                            dismiss()
+                            choose(def, reps, .fixedSets)
                         }
                     }
                     Button("Add New Set…") {
@@ -648,6 +702,20 @@ struct AddExerciseToDayView: View {
                 }
             }
             .sheet(item: $manageTarget) { ManageSetsView(def: $0) }
+            .sheet(item: $pendingRestPick) { pick in
+                RestTimePickerSheet(
+                    exerciseName: pick.def.name,
+                    initialSeconds: RestTimeDefault.suggested(for: pick.def.name,
+                                                              in: allPlannedExercises,
+                                                              sessionLast: lastEnteredRest)
+                ) { seconds in
+                    // Clear (nil) is a real answer — "no rest time", which
+                    // is what every exercise added before this step existed
+                    // got. Only a value worth repeating is remembered.
+                    if let seconds { lastEnteredRest = seconds }
+                    finish(pick, restTimeSeconds: seconds)
+                }
+            }
             .sheet(isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
                 if let def = addSetTarget {
                     AddSetSheet(exerciseName: def.name) { goalType, reps, ceiling, weightIncreaseAmount in
@@ -658,9 +726,8 @@ struct AddExerciseToDayView: View {
                             }
                             try? context.save()
                         }
-                        onPick(def, reps, goalType)
                         addSetTarget = nil
-                        dismiss()
+                        choose(def, reps, goalType)
                     }
                 }
             }
@@ -1051,6 +1118,8 @@ struct UpperTargetPickerSheet: View {
 struct DraftExerciseRow: View {
     @Binding var item: PhaseBuilderView.DraftExercise
 
+    @State private var showingRestPicker = false
+
     private var isRepTotal: Bool {
         if case .repTotal = item.goalType { return true }
         return false
@@ -1082,8 +1151,33 @@ struct DraftExerciseRow: View {
                     .font(.system(.caption, design: .monospaced))
                     .keyboardType(.numbersAndPunctuation)
             }
+
+            // Shown and editable here, not only set in the add flow. The
+            // draft is the only place this value is visible before the
+            // phase is saved, so leaving it off the row would make it a
+            // write-only field — set once, then invisible until after the
+            // PlannedExercise exists.
+            Button {
+                showingRestPicker = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "timer").font(.caption2)
+                    Text(item.restTimeSeconds.map { "Rest \(Formatters.duration(Double($0)))" }
+                         ?? "No rest time")
+                    Image(systemName: "chevron.right").font(.caption2)
+                }
+                .font(.caption)
+                .foregroundStyle(item.restTimeSeconds == nil ? .secondary : .primary)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 2)
+        .sheet(isPresented: $showingRestPicker) {
+            RestTimePickerSheet(exerciseName: item.name,
+                                initialSeconds: item.restTimeSeconds) { newValue in
+                item.restTimeSeconds = newValue
+            }
+        }
     }
 }
 

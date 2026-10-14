@@ -663,7 +663,9 @@ struct SessionDetailView: View {
         }
         .navigationTitle(Formatters.date.string(from: session.date))
         .sheet(isPresented: $showingAddExercise) {
-            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
+            // asksForRestTime stays off: this adds an ExerciseLog to a
+            // logged session, and restTimeSeconds lives on PlannedExercise.
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType, _ in
                 addExercise(def, reps: reps, goalType: goalType)
             }
         }

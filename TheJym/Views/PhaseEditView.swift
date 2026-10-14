@@ -180,8 +180,9 @@ struct PhaseDayEditView: View {
         }
         .navigationTitle(day.name)
         .sheet(isPresented: $showingAddExercise) {
-            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
-                addExercise(def, reps: reps, goalType: goalType)
+            AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars,
+                                 asksForRestTime: true) { def, reps, goalType, rest in
+                addExercise(def, reps: reps, goalType: goalType, restTimeSeconds: rest)
             }
         }
     }
@@ -197,16 +198,19 @@ struct PhaseDayEditView: View {
         for (i, pe) in ordered.enumerated() { pe.order = i }
     }
 
-    private func addExercise(_ def: ExerciseDef, reps: [Int], goalType: GoalType) {
+    private func addExercise(_ def: ExerciseDef, reps: [Int], goalType: GoalType,
+                             restTimeSeconds: Int?) {
         let pe: PlannedExercise
         switch goalType {
         case .fixedSets:
             pe = PlannedExercise(order: day.basePlannedExercises.count, exerciseName: def.name,
-                                 targetReps: reps, isBodyweight: def.isBodyweight)
+                                 targetReps: reps, isBodyweight: def.isBodyweight,
+                                 restTimeSeconds: restTimeSeconds)
         case .repTotal(let target):
             pe = PlannedExercise(order: day.basePlannedExercises.count, exerciseName: def.name,
                                  targetReps: [], isBodyweight: def.isBodyweight,
-                                 goalType: .repTotal(target: target))
+                                 goalType: .repTotal(target: target),
+                                 restTimeSeconds: restTimeSeconds)
         }
         pe.day = day
         context.insert(pe)

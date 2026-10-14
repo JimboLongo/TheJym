@@ -74,8 +74,10 @@ struct QuickWorkoutBuilderView: View {
                 }
             }
             .sheet(isPresented: $showingAddExercise) {
-                AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars) { def, reps, goalType in
+                AddExerciseToDayView(exerciseDefs: exerciseDefs, bars: bars,
+                                     asksForRestTime: true) { def, reps, goalType, rest in
                     var draft = PhaseBuilderView.DraftExercise(name: def.name, repsText: "", weightsText: "")
+                    draft.restTimeSeconds = rest
                     switch goalType {
                     case .fixedSets:
                         draft.repsText = reps.map(String.init).joined(separator: "/")
@@ -108,7 +110,9 @@ struct QuickWorkoutBuilderView: View {
                 let reps = d.repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
                 guard !reps.isEmpty else { continue }
                 let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: reps,
-                                         suggestedWeights: weights, isBodyweight: isBW, goalType: .fixedSets)
+                                         suggestedWeights: weights, isBodyweight: isBW,
+                                         goalType: .fixedSets,
+                                         restTimeSeconds: d.restTimeSeconds)
                 pe.day = day
                 context.insert(pe)
                 ExerciseDef.ensureVariantExists(name: d.name, targetReps: reps, knownDefs: &knownDefs, context: context)
@@ -118,7 +122,8 @@ struct QuickWorkoutBuilderView: View {
                 let pe = PlannedExercise(order: i, exerciseName: d.name, targetReps: [],
                                          suggestedWeights: weights, isBodyweight: isBW,
                                          goalType: .repTotal(target: target),
-                                         repTotalProgressesReps: d.repTotalProgressesReps)
+                                         repTotalProgressesReps: d.repTotalProgressesReps,
+                                         restTimeSeconds: d.restTimeSeconds)
                 pe.day = day
                 context.insert(pe)
                 ExerciseDef.ensureAnyVariantExists(name: d.name, knownDefs: &knownDefs, context: context)
