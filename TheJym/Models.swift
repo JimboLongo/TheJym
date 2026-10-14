@@ -230,6 +230,49 @@ final class ExerciseDef {
         repSchemeCeilings.removeAll { $0.reps == reps }
     }
 
+    /// Changes a saved set's reps, carrying its ceiling across with it.
+    ///
+    /// The counterpart `removeRepScheme` has always needed and `setCeiling`
+    /// never provided: a ceiling is keyed on the reps array itself
+    /// (`ceiling(for:)` matches `$0.reps == reps`), so editing a scheme
+    /// without moving its ceiling leaves the ceiling matching nothing in
+    /// `repSchemes` — and that orphan is not merely invisible, it stays
+    /// ACTIVE. Every PlannedExercise keeps its own copy of the old reps, and
+    /// WorkoutLogView.ceiling(for:) resolves by `pe.targetReps`, so the
+    /// stranded ceiling goes on replacing the AI weight suggestion while no
+    /// screen shows it and `removeRepScheme` can never reach it again.
+    ///
+    /// Replaced IN PLACE by index, not removed-and-appended: a brand-new
+    /// exercise is seeded from `repSchemes.first` (AddExerciseToDayView), so
+    /// reordering here would silently change which set a new slot defaults
+    /// to.
+    ///
+    /// `newCeiling` is what the ceiling becomes, and nil CLEARS it. The
+    /// caller decides because only it knows whether the set count changed:
+    /// an upper target has to have one entry per set (the invariant
+    /// UpperTargetPickerSheet.canSet enforces), so a 3-set ceiling cannot
+    /// simply ride along onto a 4-set scheme.
+    ///
+    /// A no-op if `from` isn't saved, or if `to` is empty or already saved
+    /// under a different entry — renaming one scheme onto another would
+    /// merge two into one and silently drop a ceiling.
+    @discardableResult
+    func updateRepScheme(from old: [Int], to new: [Int],
+                         newCeiling: RepSchemeCeiling?) -> Bool {
+        guard let index = repSchemes.firstIndex(of: old), !new.isEmpty else { return false }
+        if new != old, repSchemes.contains(new) { return false }
+        repSchemes[index] = new
+        // Both the old entry and any stale entry under the new key go, so a
+        // repeated edit can't accumulate ceilings.
+        repSchemeCeilings.removeAll { $0.reps == old || $0.reps == new }
+        if let newCeiling {
+            repSchemeCeilings.append(RepSchemeCeiling(reps: new,
+                                                      upperTargetReps: newCeiling.upperTargetReps,
+                                                      weightIncreaseAmount: newCeiling.weightIncreaseAmount))
+        }
+        return true
+    }
+
     /// The fixed weight-bump rule for exactly this reps array, if configured
     /// — nil both when nothing's ever been set for it AND when `reps`
     /// doesn't correspond to any saved repScheme at all (e.g. a

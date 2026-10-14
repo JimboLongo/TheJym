@@ -363,7 +363,21 @@ struct ExerciseSetHistoryView: View {
     let reps: [Int]
     let allLogs: [ExerciseLog]
 
+    /// Every PlannedExercise in the store, for the delete impact check.
+    /// Deleting a saved set is global (repSchemes lives on ExerciseDef), so
+    /// the confirmation has to be able to name what points at it.
+    @Query private var allPlannedExercises: [PlannedExercise]
+
     @State private var showingCeilingPicker = false
+    @State private var pendingDelete: String?
+
+    /// What deleting this set would touch — drives whether the trash button
+    /// confirms at all. Shared with the pickers' own long-press delete so
+    /// the two can't apply different rules two taps apart.
+    private var deleteImpact: RepSchemeImpact {
+        RepSchemeImpact.compute(def: def, reps: reps,
+                                plannedExercises: allPlannedExercises, logs: allLogs)
+    }
 
     /// Global per exercise-and-rep-scheme (every phase/cycle using this
     /// exact scheme shares it) — see ExerciseDef.ceiling's own doc.
@@ -434,14 +448,39 @@ struct ExerciseSetHistoryView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(role: .destructive) {
-                    def.removeRepScheme(reps)
-                    try? context.save()
-                    dismiss()
+                    // Confirms only when something actually points at this
+                    // set. It used to delete outright with no prompt at all,
+                    // which made it the lenient half of a pair — a confirmed
+                    // delete in the set pickers and an unconfirmed one two
+                    // taps away is worse than either rule applied on its own.
+                    if let message = deleteImpact.deleteConfirmation {
+                        pendingDelete = message
+                    } else {
+                        performDelete()
+                    }
                 } label: {
                     Image(systemName: "trash")
                 }
             }
         }
+        .confirmationDialog("Delete \(reps.map(String.init).joined(separator: "/"))?",
+                            isPresented: Binding(get: { pendingDelete != nil },
+                                                 set: { if !$0 { pendingDelete = nil } }),
+                            titleVisibility: .visible) {
+            Button("Delete Set", role: .destructive) { performDelete() }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: {
+            if let pendingDelete { Text(pendingDelete) }
+        }
+    }
+
+    private func performDelete() {
+        // removeRepScheme drops the ceiling with the scheme — the precedent
+        // updateRepScheme now follows too.
+        def.removeRepScheme(reps)
+        try? context.save()
+        pendingDelete = nil
+        dismiss()
     }
 }
 
