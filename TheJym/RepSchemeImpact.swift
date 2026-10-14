@@ -123,6 +123,19 @@ struct RepSchemeImpact {
         return ([scopeLine] + lines).joined(separator: "\n\n")
     }
 
+    /// Scope on its own, for an act that changes the ceiling WITHOUT
+    /// touching the scheme — nothing is orphaned and no history moves, so
+    /// the usage and log lines would be noise. What still needs saying is
+    /// that the change is global, because the screen offering it
+    /// (PhaseEditView's per-slot row) implies it isn't.
+    var ceilingScopeWarning: String {
+        var text = scopeLine
+        if plannedUsages.count > 1 {
+            text += "\n\nAlso used by: " + plannedUsages.joined(separator: ", ") + "."
+        }
+        return text
+    }
+
     /// nil when no confirmation is warranted.
     var deleteConfirmation: String? {
         var lines = usageLines

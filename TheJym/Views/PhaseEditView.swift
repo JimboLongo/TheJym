@@ -225,6 +225,17 @@ struct PlannedExerciseRow: View {
     @State private var showingSetPicker = false
     @State private var showingManageSets = false
     @State private var showingAddSet = false
+    /// For the ceiling-change scope warning: how many other slots share
+    /// this exercise and set. Read-only.
+    @Query private var allPlannedExercises: [PlannedExercise]
+
+    @State private var showingCeilingPicker = false
+    @State private var pendingCeilingChange: (reps: [Int], amount: Double)?
+    @State private var ceilingWarning: String?
+
+    /// Resolved through PlannedExercise.ceiling(in:) — the one
+    /// implementation, shared with WorkoutLogView's log-time lookup.
+    private var ceiling: RepSchemeCeiling? { pe.ceiling(in: exerciseDefs) }
     @State private var showingRestTimePicker = false
 
     private var def: ExerciseDef? {
@@ -239,6 +250,40 @@ struct PlannedExerciseRow: View {
     /// See PlannedExercise.hasLibraryMatch's own doc — nil def means the
     /// exercise itself was renamed/removed in Exercises; a non-nil def
     /// whose sets don't include this one means just the set was.
+    /// A ceiling is global per (exerciseName, repScheme), so changing it
+    /// from this row changes it for every phase using that set — and this
+    /// screen looks entirely per-slot. RepSchemeImpact's scope sentence is
+    /// reused rather than restated so the warning here and the one in
+    /// Manage Sets can't say different things about the same act.
+    ///
+    /// Clearing a ceiling needs no warning: it removes a rule rather than
+    /// changing what a set trains to, and the row it came from shows the
+    /// result immediately.
+    private func requestCeilingChange(_ newReps: [Int]?, _ newAmount: Double?) {
+        guard let newReps, let newAmount else {
+            def?.clearCeiling(for: pe.targetReps)
+            try? context.save()
+            return
+        }
+        pendingCeilingChange = (newReps, newAmount)
+        guard let def else { return applyPendingCeiling() }
+        let impact = RepSchemeImpact.compute(def: def, reps: pe.targetReps,
+                                             plannedExercises: allPlannedExercises,
+                                             logs: [])
+        // Only the other slots make this worth interrupting for; this one is
+        // the row being edited and is not news.
+        guard impact.plannedUsages.count > 1 else { return applyPendingCeiling() }
+        ceilingWarning = impact.ceilingScopeWarning
+    }
+
+    private func applyPendingCeiling() {
+        defer { pendingCeilingChange = nil; ceilingWarning = nil }
+        guard let change = pendingCeilingChange, let def else { return }
+        def.setCeiling(for: pe.targetReps, upperTargetReps: change.reps,
+                       weightIncreaseAmount: change.amount)
+        try? context.save()
+    }
+
     private var libraryMismatchMessage: String? {
         if def == nil { return "No exercise named \"\(pe.exerciseName)\" in Exercises anymore." }
         guard !pe.hasLibraryMatch(in: exerciseDefs) else { return nil }
@@ -250,10 +295,79 @@ struct PlannedExerciseRow: View {
     private var planSummary: String {
         switch pe.goalType {
         case .fixedSets:
-            return pe.targetReps.isEmpty ? "Choose a set…" : pe.targetReps.map(String.init).joined(separator: "/")
+            guard !pe.targetReps.isEmpty else { return "Choose a set…" }
+            // setLabel renders the range ("5/5/5 – 8/8/8") from the same
+            // formatter the set pickers use, so this row and the button you
+            // picked the set on can't disagree. Falls back to the plain
+            // join when the exercise isn't in the library at all, which the
+            // mismatch warning below already calls out.
+            return def?.setLabel(for: pe.targetReps)
+                ?? pe.targetReps.map(String.init).joined(separator: "/")
         case .repTotal(let target):
             return "\(target) total reps"
         }
+    }
+
+    /// Tap to switch between this exercise's saved sets/rep-totals, or add
+    /// a new one — handled exactly like a normal set, just based on a
+    /// running total instead of a fixed scheme.
+    private var setButton: some View {
+        Button {
+            showingSetPicker = true
+        } label: {
+            HStack {
+                Text(planSummary)
+                    .font(.system(.subheadline, design: .monospaced))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Compact tappable field, not a full-width stepper — this row sits
+    /// inside a ForEach with .onDelete/.onMove, and anything with a large
+    /// gesture target fights drag-to-reorder.
+    private var restButton: some View {
+        Button {
+            showingRestTimePicker = true
+        } label: {
+            chip { HStack(spacing: 4) {
+                Image(systemName: "timer")
+                Text(pe.restTimeSeconds.map { Formatters.duration(Double($0)) } ?? "–")
+            } }
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
+    /// The weight bump, on its own chip because the range plus the bump
+    /// cannot fit the set button at any phone width — see the measurements
+    /// in `body`. Only rendered when a ceiling exists.
+    private var ceilingButton: some View {
+        Button {
+            showingCeilingPicker = true
+        } label: {
+            chip { HStack(spacing: 4) {
+                Image(systemName: "arrow.up.to.line")
+                Text(ceiling.map { "+\(Formatters.trim($0.weightIncreaseAmount))" } ?? "–")
+            } }
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
+    private func chip<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .font(.system(.subheadline, design: .monospaced))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
     }
 
     var body: some View {
@@ -261,45 +375,35 @@ struct PlannedExerciseRow: View {
             TextField("Exercise name", text: $pe.exerciseName)
                 .font(.headline)
 
-            HStack(spacing: 8) {
-                // Tap to switch between this exercise's saved sets/rep-totals,
-                // or add a new one — handled exactly like a normal set, just
-                // based on a running total instead of a fixed scheme.
-                Button {
-                    showingSetPicker = true
-                } label: {
-                    HStack {
-                        Text(planSummary)
-                            .font(.system(.subheadline, design: .monospaced))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 6)
-                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-
-                // Compact tappable field, not a full-width stepper — this
-                // row sits inside a ForEach with .onDelete/.onMove, and
-                // anything with a large gesture target fights drag-to-
-                // reorder.
-                Button {
-                    showingRestTimePicker = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "timer")
-                        Text(pe.restTimeSeconds.map { Formatters.duration(Double($0)) } ?? "–")
-                    }
-                    .font(.system(.subheadline, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 8).padding(.vertical, 6)
-                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-                .fixedSize()
+            // WHY THE CHIPS WRAP ONTO THEIR OWN LINE once a ceiling exists,
+            // rather than all three sitting in one row. Measured at
+            // .subheadline monospaced, with the rest chip .fixedSize() so
+            // the set button gets what's left:
+            //
+            //   available to the set button   320pt screen -> 206pt
+            //                                 375pt        -> 261pt
+            //                                 393pt        -> 279pt
+            //
+            //   "5/5/5/3/3/3"                  130pt   (today, fits anywhere)
+            //   "5/5/5/3/3/3 – 8/8/8/8/8/8"    260pt   (fits 375+, not 320)
+            //   "5/5/5/3/3/3 … +5"             288pt   (fits NOWHERE)
+            //   "10/10/10/10 – 12/12/12/12 +2.5"
+            //                                  306pt   (fits nowhere)
+            //
+            // Those are real rows from this store — a six-set Safety Squats
+            // and a four-set calf raise — so one line carrying everything
+            // overflows the widest phone before any Dynamic Type increase.
+            // Truncating was rejected because it would clip the ceiling,
+            // which is the thing the row was changed to show.
+            //
+            // The extra line appears ONLY on a row that has a ceiling, so a
+            // store with none configured renders exactly as before. Don't
+            // reflow this back to a single HStack without re-measuring.
+            if ceiling == nil {
+                HStack(spacing: 8) { setButton; restButton }
+            } else {
+                setButton
+                HStack(spacing: 8) { restButton; ceilingButton; Spacer(minLength: 0) }
             }
 
             if isRepTotal {
@@ -361,6 +465,25 @@ struct PlannedExerciseRow: View {
         }
         .sheet(isPresented: $showingManageSets) {
             if let def { ManageSetsView(def: def) }
+        }
+        .sheet(isPresented: $showingCeilingPicker) {
+            // The same sheet Manage Sets uses — one ceiling editor, not a
+            // second that could drift from it.
+            UpperTargetPickerSheet(exerciseName: pe.exerciseName,
+                                   setCount: pe.targetReps.count,
+                                   initialUpperTargetReps: ceiling?.upperTargetReps,
+                                   initialWeightIncreaseAmount: ceiling?.weightIncreaseAmount) { newReps, newAmount in
+                requestCeilingChange(newReps, newAmount)
+            }
+        }
+        .confirmationDialog("Change the rep ceiling?",
+                            isPresented: Binding(get: { ceilingWarning != nil },
+                                                 set: { if !$0 { ceilingWarning = nil; pendingCeilingChange = nil } }),
+                            titleVisibility: .visible) {
+            Button("Change Ceiling") { applyPendingCeiling() }
+            Button("Cancel", role: .cancel) { ceilingWarning = nil; pendingCeilingChange = nil }
+        } message: {
+            if let ceilingWarning { Text(ceilingWarning) }
         }
         .sheet(isPresented: $showingRestTimePicker) {
             RestTimePickerSheet(exerciseName: pe.exerciseName, initialSeconds: pe.restTimeSeconds) { newValue in

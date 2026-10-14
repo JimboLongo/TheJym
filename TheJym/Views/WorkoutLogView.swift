@@ -855,7 +855,7 @@ struct WorkoutLogView: View {
     /// edit can produce a slot whose reps don't match any saved scheme;
     /// ExerciseDef.ceiling(for:) already handles that by simple lookup miss).
     private func ceiling(for pe: PlannedExercise) -> RepSchemeCeiling? {
-        exerciseDefs.first { $0.name == pe.exerciseName }?.ceiling(for: pe.targetReps)
+        pe.ceiling(in: exerciseDefs)
     }
 
     private func buildDrafts() {

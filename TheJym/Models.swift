@@ -1029,6 +1029,25 @@ final class PlannedExercise {
         }
     }
 
+    /// This slot's rep ceiling, resolved from the library the same way
+    /// `hasLibraryMatch(in:)` resolves its match: by exercise name, then by
+    /// this slot's own targetReps.
+    ///
+    /// The ONE implementation of that resolution — WorkoutLogView did it
+    /// inline at log time and both plan screens needed it too, which is
+    /// three copies of a two-step lookup whose second step
+    /// (`ceiling(for:)`) matches on an array that an edit can change out
+    /// from under it.
+    ///
+    /// nil for `.repTotal`, which has no rep scheme to hang a ceiling on,
+    /// and nil whenever `targetReps` matches no saved scheme — an import or
+    /// a manual edit can produce exactly that, and `ExerciseDef.ceiling(for:)`
+    /// already handles it as a plain lookup miss.
+    func ceiling(in defs: [ExerciseDef]) -> RepSchemeCeiling? {
+        guard case .fixedSets = goalType else { return nil }
+        return defs.first { $0.name == exerciseName }?.ceiling(for: targetReps)
+    }
+
     /// Stable key for "same plan" comparisons: name + target rep scheme (or,
     /// for repTotal, name + the total target — e.g. "Farmer's Carry|40 total").
     var planKey: String {

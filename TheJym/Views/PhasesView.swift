@@ -268,7 +268,8 @@ struct PhaseDetailView: View {
                                         let log = cycleSession?.exerciseLogs.first { $0.exerciseName == effectiveSlot.exerciseName }
                                         let isOverridden = effectiveSlot.persistentModelID != baseSlot.persistentModelID
                                         CyclePlannedExerciseRow(plannedExercise: effectiveSlot, isOverridden: isOverridden,
-                                                               hasLibraryMismatch: !effectiveSlot.hasLibraryMatch(in: exerciseDefs), log: log) {
+                                                               hasLibraryMismatch: !effectiveSlot.hasLibraryMatch(in: exerciseDefs),
+                                                               ceiling: effectiveSlot.ceiling(in: exerciseDefs), log: log) {
                                             if let log, !log.sets.isEmpty {
                                                 editingSession = cycleSession
                                             } else {
@@ -440,8 +441,30 @@ private struct CyclePlannedExerciseRow: View {
     let plannedExercise: PlannedExercise
     let isOverridden: Bool
     let hasLibraryMismatch: Bool
+    /// Resolved by the caller, exactly as `hasLibraryMismatch` is — this
+    /// row has no exerciseDefs of its own and shouldn't grow a @Query to
+    /// get one.
+    let ceiling: RepSchemeCeiling?
     let log: ExerciseLog?
     let onTap: () -> Void
+
+    /// One line carries everything here, unlike PhaseEditView's chips.
+    /// This is .caption against the full row width rather than a button
+    /// competing with a fixed-size sibling, which buys the room: measured
+    /// at 393pt (budget 361pt), the longest real combinations are
+    /// "5/5/5/3/3/3 – 8/8/8/8/8/8 +5 · Rest 3:00" at 297pt and
+    /// "10/10/10/10 – 12/12/12/12 +2.5 · Rest 1:30" at 312pt. The same
+    /// strings need 288pt and 306pt against PhaseEditView's 279pt budget,
+    /// which is why that screen wraps and this one doesn't.
+    private var summaryLine: String {
+        var text = plannedExercise.setsSummaryText
+        if let ceiling {
+            text += " – " + ceiling.upperTargetReps.map(String.init).joined(separator: "/")
+            text += " +\(Formatters.trim(ceiling.weightIncreaseAmount))"
+        }
+        let rest = plannedExercise.restTimeSeconds.map { Formatters.duration(Double($0)) } ?? "–"
+        return "\(text) · Rest \(rest)"
+    }
 
     var body: some View {
         Button(action: onTap) {
@@ -460,7 +483,7 @@ private struct CyclePlannedExerciseRow: View {
                                 .foregroundStyle(.orange)
                         }
                     }
-                    Text("\(plannedExercise.setsSummaryText) · Rest \(plannedExercise.restTimeSeconds.map { Formatters.duration(Double($0)) } ?? "–")")
+                    Text(summaryLine)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                     if hasLibraryMismatch {
