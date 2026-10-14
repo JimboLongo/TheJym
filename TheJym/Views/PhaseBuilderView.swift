@@ -583,6 +583,7 @@ struct AddExerciseToDayView: View {
 
     @State private var showingNewExerciseSheet = false
     @State private var addSetTarget: ExerciseDef?
+    @State private var manageTarget: ExerciseDef?
     @State private var searchText = ""
     @State private var selectedDef: ExerciseDef?
 
@@ -639,9 +640,14 @@ struct AddExerciseToDayView: View {
                         addSetTarget = def
                         selectedDef = nil
                     }
+                    Button("Manage Sets…") {
+                        manageTarget = def
+                        selectedDef = nil
+                    }
                     Button("Cancel", role: .cancel) { selectedDef = nil }
                 }
             }
+            .sheet(item: $manageTarget) { ManageSetsView(def: $0) }
             .sheet(isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
                 if let def = addSetTarget {
                     AddSetSheet(exerciseName: def.name) { goalType, reps, ceiling, weightIncreaseAmount in
@@ -684,14 +690,53 @@ struct AddSetSheet: View {
     /// nil/nil for `.repTotal`) — never a half-filled ceiling.
     var onAdd: (GoalType, [Int], [Int]?, Double?) -> Void
 
-    @State private var isRepTotal = false
-    @State private var repsText = ""
-    @State private var targetText = ""
-    @State private var ceilingRepsText = ""
-    /// Brand-new sheet, no existing ceiling to round to — defaults straight
-    /// to the middle choice, matching UpperTargetPickerSheet's own
-    /// brand-new-sheet default.
-    @State private var weightIncreaseAmount: Double = 5
+    /// Editing an existing set rather than adding one. Only the wording and
+    /// the goal picker change — the parse, the per-set ceiling rule and the
+    /// payload are identical, which is the point of reusing this sheet
+    /// instead of writing a second editor that could drift from it.
+    private let isEditing: Bool
+
+    @State private var isRepTotal: Bool
+    @State private var repsText: String
+    @State private var targetText: String
+    @State private var ceilingRepsText: String
+    /// Rounded to the nearest offered choice when seeded from an existing
+    /// ceiling, exactly as UpperTargetPickerSheet does; a brand-new sheet
+    /// starts at the middle choice.
+    @State private var weightIncreaseAmount: Double
+
+    /// Adding — every pre-existing call site uses this and is unchanged.
+    init(exerciseName: String, onAdd: @escaping (GoalType, [Int], [Int]?, Double?) -> Void) {
+        self.exerciseName = exerciseName
+        self.onAdd = onAdd
+        self.isEditing = false
+        _isRepTotal = State(initialValue: false)
+        _repsText = State(initialValue: "")
+        _targetText = State(initialValue: "")
+        _ceilingRepsText = State(initialValue: "")
+        _weightIncreaseAmount = State(initialValue: 5)
+    }
+
+    /// Editing an existing fixed-set scheme, seeded with its current reps
+    /// and ceiling. The goal picker is hidden: turning a saved set into a
+    /// rep total isn't an edit of the same thing, and silently converting
+    /// one would strand its ceiling and its history.
+    init(exerciseName: String, editingReps: [Int], ceiling: RepSchemeCeiling?,
+         onSave: @escaping (GoalType, [Int], [Int]?, Double?) -> Void) {
+        self.exerciseName = exerciseName
+        self.onAdd = onSave
+        self.isEditing = true
+        _isRepTotal = State(initialValue: false)
+        _repsText = State(initialValue: editingReps.map(String.init).joined(separator: "/"))
+        _targetText = State(initialValue: "")
+        _ceilingRepsText = State(initialValue:
+            ceiling.map { $0.upperTargetReps.map(String.init).joined(separator: "/") } ?? "")
+        _weightIncreaseAmount = State(initialValue: ceiling.map { existing in
+            UpperTargetPickerSheet.weightIncreaseChoices.min {
+                abs($0 - existing.weightIncreaseAmount) < abs($1 - existing.weightIncreaseAmount)
+            } ?? 5
+        } ?? 5)
+    }
 
     private var reps: [Int] {
         repsText.split(separator: "/").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -716,11 +761,13 @@ struct AddSetSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Goal", selection: $isRepTotal) {
-                        Text("Fixed Sets").tag(false)
-                        Text("Rep Total").tag(true)
+                    if !isEditing {
+                        Picker("Goal", selection: $isRepTotal) {
+                            Text("Fixed Sets").tag(false)
+                            Text("Rep Total").tag(true)
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
 
                     if isRepTotal {
                         TextField("Target reps e.g. 40", text: $targetText)
@@ -751,7 +798,7 @@ struct AddSetSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("Add a Set to \(exerciseName)")
+                    Text(isEditing ? "Edit a Set on \(exerciseName)" : "Add a Set to \(exerciseName)")
                         .font(.headline)
                         .multilineTextAlignment(.center)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
@@ -759,7 +806,7 @@ struct AddSetSheet: View {
                 }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
+                    Button(isEditing ? "Save" : "Add") {
                         if isRepTotal {
                             guard let target, target > 0 else { return }
                             onAdd(.repTotal(target: target), [], nil, nil)

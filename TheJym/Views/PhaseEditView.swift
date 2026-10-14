@@ -219,6 +219,7 @@ struct PlannedExerciseRow: View {
     let exerciseDefs: [ExerciseDef]
 
     @State private var showingSetPicker = false
+    @State private var showingManageSets = false
     @State private var showingAddSet = false
     @State private var showingRestTimePicker = false
 
@@ -325,6 +326,7 @@ struct PlannedExerciseRow: View {
                 }
             }
             Button("Add New Set…") { showingAddSet = true }
+            if def != nil { Button("Manage Sets…") { showingManageSets = true } }
             Button("Cancel", role: .cancel) { }
         }
         .sheet(isPresented: $showingAddSet) {
@@ -352,6 +354,9 @@ struct PlannedExerciseRow: View {
                 try? context.save()
                 showingAddSet = false
             }
+        }
+        .sheet(isPresented: $showingManageSets) {
+            if let def { ManageSetsView(def: def) }
         }
         .sheet(isPresented: $showingRestTimePicker) {
             RestTimePickerSheet(exerciseName: pe.exerciseName, initialSeconds: pe.restTimeSeconds) { newValue in

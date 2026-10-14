@@ -148,6 +148,7 @@ struct PhaseDetailView: View {
     @State private var pickingReplacementFor: OverrideTarget?
     /// Picking a different set for this slot's cycle, same exercise.
     @State private var pickingSetFor: OverrideTarget?
+    @State private var managingSetsFor: ExerciseDef?
     /// Adding a brand new set (for `pickingSetFor`'s exercise) not already
     /// saved on it.
     @State private var addingNewSetFor: OverrideTarget?
@@ -386,8 +387,20 @@ struct PhaseDetailView: View {
                 addingNewSetFor = pickingSetFor
                 pickingSetFor = nil
             }
+            // Editing a saved set from here changes the GLOBAL library, not
+            // just this one-cycle override — RepSchemeImpact's confirmations
+            // lead with that, because this is the screen whose narrow scope
+            // most invites the wrong assumption.
+            if let target = pickingSetFor,
+               let def = exerciseDefs.first(where: { $0.name == target.effective.exerciseName }) {
+                Button("Manage Sets…") {
+                    managingSetsFor = def
+                    pickingSetFor = nil
+                }
+            }
             Button("Cancel", role: .cancel) { pickingSetFor = nil }
         }
+        .sheet(item: $managingSetsFor) { ManageSetsView(def: $0) }
         .sheet(item: $addingNewSetFor) { target in
             AddSetSheet(exerciseName: target.effective.exerciseName) { goalType, reps, ceiling, weightIncreaseAmount in
                 let def = exerciseDefs.first { $0.name == target.effective.exerciseName }
