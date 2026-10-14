@@ -328,6 +328,10 @@ struct NextPhasePlannerView: View {
     @Query private var settingsList: [AppSettings]
 
     let previousPhase: Phase
+    /// Forwarded from PhaseBuilderView so the presenter can land on the new
+    /// phase's cycles — this view dismisses itself the moment the builder
+    /// closes, so it can't do that navigation itself.
+    var onPhaseCreated: ((Phase) -> Void)? = nil
 
     @State private var plan: [String: [ProgressionEngine.PlannedSlot]] = [:]
     @State private var loading = true
@@ -385,7 +389,9 @@ struct NextPhasePlannerView: View {
             }
             .task { await buildPlan() }
             .sheet(isPresented: $showSetup, onDismiss: { dismiss() }) {
-                PhaseBuilderView(previousPhase: previousPhase, seededPlan: plan)
+                PhaseBuilderView(previousPhase: previousPhase, seededPlan: plan) { newPhase in
+                    onPhaseCreated?(newPhase)
+                }
             }
         }
     }

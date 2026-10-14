@@ -19,6 +19,15 @@ struct PhasesView: View {
     /// Non-nil while the day-attribution review is open for that phase.
     @State private var attributing: Phase?
     @State private var phasePendingDelete: Phase?
+    /// Set by PhaseBuilderView's onPhaseCreated and consumed in the sheet's
+    /// onDismiss — never acted on directly. PhaseBuilderView calls that
+    /// callback immediately before its own dismiss(), and starting a
+    /// navigation from inside that instant, while the sheet is still
+    /// mid-dismissal, is a known SwiftUI race that silently drops the
+    /// push (same reason HistoryView defers its post-import alert).
+    @State private var phasePendingOpen: Phase?
+    /// The phase whose cycles are open, when pushed programmatically.
+    @State private var openedPhase: Phase?
 
     var body: some View {
         NavigationStack {
@@ -72,9 +81,22 @@ struct PhasesView: View {
                     Button { showingAdd = true } label: { Image(systemName: "plus") }
                 }
             }
-            .sheet(isPresented: $showingAdd) {
-                PhaseBuilderView(previousPhase: nil)
+            // Saving a new phase lands straight on its cycles — that's
+            // where the per-cycle work happens (tagging, set and target
+            // overrides), and a freshly built phase is exactly when you
+            // want to do it. Cancelling leaves phasePendingOpen nil, so
+            // backing out still returns here.
+            .sheet(isPresented: $showingAdd, onDismiss: {
+                if let phase = phasePendingOpen {
+                    openedPhase = phase
+                    phasePendingOpen = nil
+                }
+            }) {
+                PhaseBuilderView(previousPhase: nil) { newPhase in
+                    phasePendingOpen = newPhase
+                }
             }
+            .navigationDestination(item: $openedPhase) { PhaseDetailView(phase: $0) }
             .confirmationDialog(
                 "Delete Phase \(phasePendingDelete?.number ?? 0)?",
                 isPresented: Binding(get: { phasePendingDelete != nil }, set: { if !$0 { phasePendingDelete = nil } }),

@@ -48,6 +48,10 @@ struct TodayView: View {
     @Query(sort: \ExerciseDef.name) private var exerciseDefsForPreview: [ExerciseDef]
 
     @State private var showingPhaseSetup = false
+    /// See the sheet comments: set by the builder's callback, consumed
+    /// once the sheet has fully closed.
+    @State private var phasePendingOpen: Phase?
+    @State private var openedPhase: Phase?
     @State private var showingNextPhasePlanner = false
     @State private var statsPhase: Phase?
     @State private var quickJumpTarget: DayJumpTarget?
@@ -95,6 +99,12 @@ struct TodayView: View {
     /// time it's actually picked up; one that's already been trained (e.g.
     /// switched away from and back) keeps its real start so pace math
     /// against its own history stays correct.
+    private func openPendingPhase() {
+        guard let phase = phasePendingOpen else { return }
+        phasePendingOpen = nil
+        openedPhase = phase
+    }
+
     private func activatePhase(_ phase: Phase) {
         phase.activate(among: phases)
         try? context.save()
@@ -207,18 +217,26 @@ struct TodayView: View {
                 quickWorkoutsSection
             }
             .onAppear { draftRefreshTick += 1 }
+            .navigationDestination(item: $openedPhase) { PhaseDetailView(phase: $0) }
             .navigationTitle("Train")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     OverflowMenuButton(overflowTab: $overflowTab)
                 }
             }
-            .sheet(isPresented: $showingPhaseSetup) {
-                PhaseBuilderView(previousPhase: nil)
+            // Both phase-building paths land on the new phase's cycles,
+            // same as the Phases tab — the action is what decides where
+            // you go, not which screen you launched it from. Stashed and
+            // consumed in onDismiss because PhaseBuilderView fires its
+            // callback immediately before its own dismiss(), and starting
+            // a navigation from inside that instant is a known SwiftUI
+            // race that silently drops the push.
+            .sheet(isPresented: $showingPhaseSetup, onDismiss: { openPendingPhase() }) {
+                PhaseBuilderView(previousPhase: nil) { phasePendingOpen = $0 }
             }
-            .sheet(isPresented: $showingNextPhasePlanner) {
+            .sheet(isPresented: $showingNextPhasePlanner, onDismiss: { openPendingPhase() }) {
                 if let phase = activePhase {
-                    NextPhasePlannerView(previousPhase: phase)
+                    NextPhasePlannerView(previousPhase: phase) { phasePendingOpen = $0 }
                 }
             }
             .sheet(isPresented: $showingNewQuickWorkout) {
