@@ -543,18 +543,37 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             "PlannedExercise": (try source.fetch(FetchDescriptor<PlannedExercise>())).count,
         ]
 
-        // The real store has no tiers yet (the feature just landed), so seed
-        // a couple into the COPY before exporting. Without them the
-        // MacroTier dump would compare two empty sets and report "0 fields
-        // differ" while proving nothing — the exact shape this file exists
-        // to catch. Written to the temp copy only; the original is never
-        // touched. Delete this block once the real store has tiers of its
-        // own.
-        if (try source.fetch(FetchDescriptor<MacroTier>())).isEmpty {
-            source.insert(MacroTier(name: "Cut", order: 0, proteinGrams: 200, carbsGrams: 150,
-                                    fatGrams: 55, sugarGrams: 25, fiberGrams: 30))
-            source.insert(MacroTier(name: "Bulk", order: 1, proteinGrams: 180, carbsGrams: 300,
-                                    fatGrams: 80, sugarGrams: 60, fiberGrams: 35))
+        // WHY THIS SEED EXISTS, AND WHEN IT MAY GO.
+        //
+        // A diff of two EMPTY sets reports perfect fidelity over nothing.
+        // The first run of this test after MacroTier landed did exactly
+        // that: the real store had no tiers, the dump compared [] against
+        // [], and the whole suite reported "0 fields differ" while
+        // exercising not one line of the new export. The number was true
+        // and meaningless — the same green-but-proving-nothing shape as
+        // the filename-date test that passed against broken code and the
+        // two real-store tests that sat skipping behind a passing suite.
+        //
+        // So: NOT "delete this once the store has a tier". One tier isn't
+        // coverage either — it can't catch a field swapped with its
+        // neighbour, an ordering bug, or a name-matching failure on
+        // import. This may go only when the real store carries several
+        // tiers with DIFFERENT values in every field, which is what makes
+        // a passing diff evidence rather than a tautology. Until then it
+        // seeds deliberately dissimilar numbers.
+        //
+        // Written to the temp copy only; the original is never touched.
+        if (try source.fetch(FetchDescriptor<MacroTier>())).count < 2 {
+            // Distinct in every field, so a value landing in the wrong
+            // column shows up rather than matching by luck.
+            let existing = Set((try source.fetch(FetchDescriptor<MacroTier>())).map(\.name))
+            for seed in [MacroTier(name: "DiffSeed A", order: 90, proteinGrams: 201, carbsGrams: 152,
+                                   fatGrams: 53, sugarGrams: 24, fiberGrams: 35),
+                         MacroTier(name: "DiffSeed B", order: 91, proteinGrams: 182, carbsGrams: 303,
+                                   fatGrams: 84, sugarGrams: 61, fiberGrams: 26)]
+            where !existing.contains(seed.name) {
+                source.insert(seed)
+            }
             try source.save()
         }
 
