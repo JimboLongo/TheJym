@@ -364,7 +364,7 @@ struct PhaseDetailView: View {
             if let target = pickingSetFor,
                let def = exerciseDefs.first(where: { $0.name == target.effective.exerciseName }) {
                 ForEach(def.repSchemes, id: \.self) { reps in
-                    Button(reps.map(String.init).joined(separator: "/")) {
+                    Button(def.setLabel(for: reps)) {
                         target.day.setCycleOverride(for: target.baseSlot, cycle: target.cycle, exerciseName: def.name,
                                                     targetReps: reps, goalType: .fixedSets, isBodyweight: def.isBodyweight,
                                                     restTimeSeconds: target.effective.restTimeSeconds, context: context)

@@ -240,6 +240,34 @@ final class ExerciseDef {
         repSchemeCeilings.first { $0.reps == reps }
     }
 
+    /// This saved set as it reads on a selection button: "6/6/6" normally,
+    /// "6/6/6 – 8/8/8" when the scheme has a rep ceiling.
+    ///
+    /// Four screens render these buttons — the Exercises tab's set-history
+    /// picker, AddExerciseToDayView (shared by Phase Builder and Quick
+    /// Workout Builder), PhaseEditView's target-reps picker, and PhasesView's
+    /// per-cycle override. The range is the same true statement on all four
+    /// because a ceiling is global per (exerciseName, repScheme), never per
+    /// phase or cycle — see WorkoutLogView.ceiling(for:), which resolves it
+    /// at log time from those two alone. So picking 6/6/6 on any of those
+    /// screens, override included, gets the same 8/8/8.
+    ///
+    /// A method rather than a free formatter because it performs the lookup
+    /// itself: a shared function taking a pre-resolved ceiling could be
+    /// handed a different def's, which is exactly the drift four
+    /// independent copies would eventually produce.
+    ///
+    /// A ceiling whose length doesn't match the scheme's is rendered as-is
+    /// rather than suppressed. The ceiling editor enforces equal set counts,
+    /// but the import path parsing "5/5/5>8/8/8@5" does not, and hiding a
+    /// malformed one would hide the problem instead of showing it. Only an
+    /// empty ceiling is suppressed, since it would render a dangling dash.
+    func setLabel(for reps: [Int]) -> String {
+        let base = reps.map(String.init).joined(separator: "/")
+        guard let upper = ceiling(for: reps)?.upperTargetReps, !upper.isEmpty else { return base }
+        return "\(base) \u{2013} \(upper.map(String.init).joined(separator: "/"))"
+    }
+
     /// Sets (or replaces) the ceiling for `reps`. Does NOT verify `reps` is
     /// an actual saved repScheme — the one call site (the rep-ceiling editor
     /// reached from ExerciseSetHistoryView) only ever calls this for a

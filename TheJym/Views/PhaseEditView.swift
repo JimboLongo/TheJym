@@ -312,7 +312,7 @@ struct PlannedExerciseRow: View {
         .confirmationDialog(pe.exerciseName, isPresented: $showingSetPicker, titleVisibility: .visible) {
             if let def {
                 ForEach(def.repSchemes, id: \.self) { reps in
-                    Button(reps.map(String.init).joined(separator: "/")) {
+                    Button(def.setLabel(for: reps)) {
                         pe.targetReps = reps
                         pe.goalType = .fixedSets
                     }

@@ -630,7 +630,7 @@ struct AddExerciseToDayView: View {
                 set: { if !$0 { selectedDef = nil } }), titleVisibility: .visible) {
                 if let def = selectedDef {
                     ForEach(def.repSchemes, id: \.self) { reps in
-                        Button(reps.map(String.init).joined(separator: "/")) {
+                        Button(def.setLabel(for: reps)) {
                             onPick(def, reps, .fixedSets)
                             dismiss()
                         }
