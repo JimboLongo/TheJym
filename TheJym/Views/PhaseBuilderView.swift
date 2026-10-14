@@ -605,7 +605,15 @@ struct AddExerciseToDayView: View {
     /// here rather than dismissing straight away is what keeps this one
     /// continuous flow instead of a modal closing and another opening
     /// behind it.
-    @State private var pendingRestPick: PendingPick?
+    ///
+    /// Presentation is a separate flag so the pick SURVIVES the sheet
+    /// closing — .sheet(item:) nils its binding on dismiss, which would
+    /// throw away the very thing the dismissal handler needs.
+    @State private var restPick: PendingPick?
+    @State private var showingRestSheet = false
+    /// Guards against adding twice: Set and Clear finish directly, and the
+    /// dismissal handler then fires for the same pick.
+    @State private var didFinish = false
     /// Carried across a run of adds so a deliberate choice doesn't have to
     /// be re-made for every brand-new exercise — step 2 of the cascade.
     @State private var lastEnteredRest: Int?
@@ -631,11 +639,26 @@ struct AddExerciseToDayView: View {
             dismiss()
             return
         }
-        pendingRestPick = PendingPick(def: def, reps: reps, goalType: goalType)
+        restPick = PendingPick(def: def, reps: reps, goalType: goalType)
+        didFinish = false
+        showingRestSheet = true
     }
 
+    /// Tapping the set is the COMMIT; the rest step can only add
+    /// information to it, never undo it.
+    ///
+    /// So every way out of the rest sheet adds the exercise — Set with a
+    /// value, Clear and Cancel without one. Cancel can't mean "discard the
+    /// exercise" because this same sheet already means "leave the rest time
+    /// alone" in its two other callers (PhaseEditView, PhasesView), where
+    /// the exercise plainly survives; one label meaning two different things
+    /// depending on which screen opened it is the failure to avoid. It also
+    /// makes Clear and Cancel land in the same place, so the two being one
+    /// tap apart costs nothing. Backing out entirely is backing out of the
+    /// set dialog, which is where it has always been.
     private func finish(_ pick: PendingPick, restTimeSeconds: Int?) {
-        pendingRestPick = nil
+        guard !didFinish else { return }
+        didFinish = true
         onPick(pick.def, pick.reps, pick.goalType, restTimeSeconds)
         dismiss()
     }
@@ -702,18 +725,27 @@ struct AddExerciseToDayView: View {
                 }
             }
             .sheet(item: $manageTarget) { ManageSetsView(def: $0) }
-            .sheet(item: $pendingRestPick) { pick in
-                RestTimePickerSheet(
-                    exerciseName: pick.def.name,
-                    initialSeconds: RestTimeDefault.suggested(for: pick.def.name,
-                                                              in: allPlannedExercises,
-                                                              sessionLast: lastEnteredRest)
-                ) { seconds in
-                    // Clear (nil) is a real answer — "no rest time", which
-                    // is what every exercise added before this step existed
-                    // got. Only a value worth repeating is remembered.
-                    if let seconds { lastEnteredRest = seconds }
-                    finish(pick, restTimeSeconds: seconds)
+            .sheet(isPresented: $showingRestSheet, onDismiss: {
+                // Cancel dismisses without ever reporting a value, so this
+                // is where it lands — and it still adds the exercise. A
+                // no-op after Set or Clear, which already finished.
+                if let pick = restPick { finish(pick, restTimeSeconds: nil) }
+                restPick = nil
+            }) {
+                if let pick = restPick {
+                    RestTimePickerSheet(
+                        exerciseName: pick.def.name,
+                        initialSeconds: RestTimeDefault.suggested(for: pick.def.name,
+                                                                  in: allPlannedExercises,
+                                                                  sessionLast: lastEnteredRest)
+                    ) { seconds in
+                        // Clear (nil) is a real answer — "no rest time",
+                        // which is what every exercise added before this
+                        // step existed got. Only a value worth repeating
+                        // is remembered.
+                        if let seconds { lastEnteredRest = seconds }
+                        finish(pick, restTimeSeconds: seconds)
+                    }
                 }
             }
             .sheet(isPresented: Binding(get: { addSetTarget != nil }, set: { if !$0 { addSetTarget = nil } })) {
