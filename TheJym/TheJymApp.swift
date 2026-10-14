@@ -22,7 +22,8 @@ struct TheJymApp: App {
             // Local-only: deliberately not carried by ExportBuilder, so a
             // restored install can't inherit the old device's "last
             // backup" date. See BackupStatus.
-            BackupStatus.self
+            BackupStatus.self,
+            MacroTier.self
         ])
     }
 }
@@ -35,7 +36,7 @@ enum OverflowTab: Int, Identifiable {
     // Steps lives here rather than in the bottom bar: that bar is already
     // at five, and a sixth would hand UIKit's own "More" tab the overflow,
     // colliding with this menu.
-    case phases, equipment, timer, steps, settings
+    case phases, equipment, timer, steps, macros, settings
     var id: Int { rawValue }
 
     var title: String {
@@ -44,6 +45,7 @@ enum OverflowTab: Int, Identifiable {
         case .equipment: return "Equipment"
         case .timer: return "Timer"
         case .steps: return "Steps"
+        case .macros: return "Macro Tiers"
         case .settings: return "Settings"
         }
     }
@@ -54,6 +56,7 @@ enum OverflowTab: Int, Identifiable {
         case .equipment: return "circle.circle"
         case .timer: return "timer"
         case .steps: return "shoeprints.fill"
+        case .macros: return "chart.pie.fill"
         case .settings: return "gearshape.fill"
         }
     }
@@ -76,7 +79,7 @@ struct OverflowMenuButton: View {
 
     var body: some View {
         Menu {
-            ForEach([OverflowTab.phases, .equipment, .timer, .steps, .settings]) { tab in
+            ForEach([OverflowTab.phases, .equipment, .timer, .steps, .macros, .settings]) { tab in
                 Button(tab.title, systemImage: tab.icon) { overflowTab = tab }
             }
         } label: {
@@ -121,6 +124,7 @@ struct ContentView: View {
             case .equipment: EquipmentView()
             case .timer: TimerTemplatesListView()
             case .steps: NavigationStack { StepsView() }
+            case .macros: MacroTiersView()
             case .settings: SettingsView()
             }
         }

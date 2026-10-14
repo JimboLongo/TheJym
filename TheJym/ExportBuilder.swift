@@ -208,6 +208,17 @@ enum ExportBuilder {
                              .string(preset.isRest ? "Yes" : "No")])
             }
         }
+        // Tiers are a handful of rows, so a Program row type rather than a
+        // sheet of their own. The daily logs that reference them are
+        // History-shaped and get their own sheet when they arrive.
+        for tier in fetch(MacroTier.self, context).sorted(by: { $0.order < $1.order }) {
+            rows.append([.string("MacroTier"), .string(tier.name),
+                         .number(Double(tier.order)),
+                         .number(tier.proteinGrams), .number(tier.carbsGrams),
+                         .number(tier.fatGrams), .number(tier.sugarGrams),
+                         .number(tier.fiberGrams)])
+        }
+
         if let s = fetch(AppSettings.self, context).first {
             func setting(_ key: String, _ value: XLSXCell) {
                 rows.append([.string("Setting"), .string(key), value])

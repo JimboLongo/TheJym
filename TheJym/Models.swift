@@ -1618,6 +1618,179 @@ final class BodyWeightEntry {
     }
 }
 
+// MARK: - Macros
+
+/// The five tracked macro categories, and which way each one's target
+/// points.
+///
+/// DIRECTION IS A PROPERTY OF THE CATEGORY, not of a tier. Protein is
+/// never "at most" and fiber is never "at most" — beating either is the
+/// goal, not a miss. The case that looks like it wants to vary is carbs
+/// on a cut, but a cut badly undershooting carbs is also a problem: what
+/// changes between a cut and a bulk is the NUMBER, which is already
+/// per-tier, not the direction. Making it per-tier would add five columns
+/// to the tier editor, the export and the round-trip dump that would be
+/// set once and never varied.
+///
+/// Promoting this to a stored field later is a smaller change than
+/// unwinding five unused columns, which is the other reason to start here.
+enum MacroCategory: String, CaseIterable, Codable, Identifiable {
+    case protein, carbs, fat, sugar, fiber
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .protein: return "Protein"
+        case .carbs:   return "Carbs"
+        case .fat:     return "Fat"
+        case .sugar:   return "Sugar"
+        case .fiber:   return "Fiber"
+        }
+    }
+
+    /// Which way the target points — drives both the tier editor's symbol
+    /// and the variance readout, so "+15g" on protein and "+15g" on sugar
+    /// can't render the same way.
+    enum Direction: String, Codable {
+        case atLeast, about, atMost
+        var symbol: String {
+            switch self {
+            case .atLeast: return "\u{2265}"
+            case .about:   return "\u{2248}"
+            case .atMost:  return "\u{2264}"
+            }
+        }
+    }
+
+    var direction: Direction {
+        switch self {
+        case .protein, .fiber: return .atLeast
+        case .carbs, .fat:     return .about
+        case .sugar:           return .atMost
+        }
+    }
+
+    /// True when sugar/fiber — a SUBSET of carbs, counted inside the carb
+    /// number rather than added to it. See MacroTier.calories.
+    var isCarbSubset: Bool { self == .sugar || self == .fiber }
+}
+
+/// One named macro target — "Cut", "Maintain", "Bulk" — tagged to a cycle
+/// and compared against daily logs.
+///
+/// NAMED, not numbered. The name is what a tagged cycle and every day of
+/// macro history ends up stamped with, and "Tier 3" six months later is
+/// unreadable where "Cut" needs no decoding. Same reason
+/// WorkoutSession.dayLabel stores the name at log time rather than an
+/// index.
+///
+/// `order` exists because neither alternative works: alphabetical gives
+/// "Bulk, Cut, Maintain", and sorting by implied calories — which is
+/// semantically the right order — makes the list silently rearrange while
+/// you edit a tier's fat, and ties whenever two tiers share a total with
+/// different splits. Set once, dragged to taste. Same shape as
+/// TimerTemplate.
+@Model
+final class MacroTier {
+    /// Unique, enforced at save rather than with @Attribute(.unique):
+    /// the unique constraint is the one thing in this schema that would
+    /// block CloudKit later (see ExerciseDef.name, which already carries
+    /// that cost), and the export keys on this name.
+    var name: String = ""
+    /// Display order only. Never used to identify a tier.
+    var order: Int = 0
+
+    var proteinGrams: Double = 0
+    var carbsGrams: Double = 0
+    var fatGrams: Double = 0
+    /// Sugar and fiber are SUBSETS of carbs — already counted inside
+    /// carbsGrams, never added to it. See `calories`.
+    var sugarGrams: Double = 0
+    var fiberGrams: Double = 0
+
+    init(name: String = "", order: Int = 0,
+         proteinGrams: Double = 0, carbsGrams: Double = 0, fatGrams: Double = 0,
+         sugarGrams: Double = 0, fiberGrams: Double = 0) {
+        self.name = name
+        self.order = order
+        self.proteinGrams = proteinGrams
+        self.carbsGrams = carbsGrams
+        self.fatGrams = fatGrams
+        self.sugarGrams = sugarGrams
+        self.fiberGrams = fiberGrams
+    }
+
+    func grams(_ category: MacroCategory) -> Double {
+        switch category {
+        case .protein: return proteinGrams
+        case .carbs:   return carbsGrams
+        case .fat:     return fatGrams
+        case .sugar:   return sugarGrams
+        case .fiber:   return fiberGrams
+        }
+    }
+
+    func setGrams(_ value: Double, for category: MacroCategory) {
+        switch category {
+        case .protein: proteinGrams = value
+        case .carbs:   carbsGrams = value
+        case .fat:     fatGrams = value
+        case .sugar:   sugarGrams = value
+        case .fiber:   fiberGrams = value
+        }
+    }
+
+    /// 4 x protein + 4 x carbs + 9 x fat.
+    ///
+    /// SUGAR AND FIBER ARE NOT ADDED. They are subsets of carbs and are
+    /// already inside carbsGrams; adding them would inflate every calorie
+    /// figure the app shows.
+    ///
+    /// FIBER COUNTS AT 4, NOT 2 — DO NOT "FIX" THIS. Fiber is commonly
+    /// given 2 cal/g, which is more precise in the abstract. It is the
+    /// wrong choice here because these numbers are transcribed from
+    /// MyFitnessPal, which counts total carbs at 4. Using 2 would make
+    /// this app's calorie figure disagree with the source it was typed
+    /// from, every single day, by 2 x fiber — about 60 cal at 30g — and
+    /// leave two tools to reconcile forever. Agreement with where the
+    /// number came from beats theoretical precision.
+    ///
+    /// Computed, never stored, so it cannot drift from its own inputs.
+    var calories: Double {
+        4 * proteinGrams + 4 * carbsGrams + 9 * fatGrams
+    }
+
+    /// Sugar and fiber are parts of carbs, so together they cannot exceed
+    /// it. A tier that breaks this is incoherent — but it's surfaced as a
+    /// WARNING, not a block: label data rounds, and a prompt you hit on a
+    /// typo is one you learn to fight. Same treatment as
+    /// PlannedExercise.hasLibraryMatch's mismatch banner.
+    var subsetsExceedCarbs: Bool {
+        sugarGrams + fiberGrams > carbsGrams
+    }
+
+    /// nil when coherent.
+    var coherenceWarning: String? {
+        guard subsetsExceedCarbs else { return nil }
+        return "Sugar + fiber (\(Formatters.trim(sugarGrams + fiberGrams))g) is more than carbs "
+            + "(\(Formatters.trim(carbsGrams))g). They're part of carbs, not extra."
+    }
+
+    /// Case-insensitive, whitespace-trimmed, excluding `self`. Names are
+    /// the export's key, so two tiers called "Bulk" would collapse into
+    /// one on import.
+    static func nameIsTaken(_ candidate: String, excluding tier: MacroTier?,
+                            in tiers: [MacroTier]) -> Bool {
+        let key = candidate.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !key.isEmpty else { return false }
+        return tiers.contains {
+            $0.persistentModelID != tier?.persistentModelID
+                && $0.name.trimmingCharacters(in: .whitespaces).lowercased() == key
+        }
+    }
+}
+
 // MARK: - Timers
 
 /// A saved, reusable set of timers (e.g. "HIIT Sprints") — recalled from the

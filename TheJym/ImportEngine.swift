@@ -1697,11 +1697,14 @@ extension ImportEngine {
         var timerTemplates: [(name: String, order: Int, continuous: Bool)] = []
         var timerPresets: [(template: String, name: String, seconds: Double,
                             repeatCount: Int, order: Int, isRest: Bool)] = []
+        var macroTiers: [(name: String, order: Int, protein: Double, carbs: Double,
+                          fat: Double, sugar: Double, fiber: Double)] = []
 
         var isEmpty: Bool {
             phases.isEmpty && days.isEmpty && planned.isEmpty
                 && recoveries.isEmpty && tdpwChanges.isEmpty && settings.isEmpty
                 && timerTemplates.isEmpty && timerPresets.isEmpty
+                && macroTiers.isEmpty
         }
     }
 
@@ -1753,6 +1756,11 @@ extension ImportEngine {
                 p.timerPresets.append((str(row, 1), str(row, 2),
                                        Double(str(row, 3)) ?? 0, int(row, 4),
                                        int(row, 5), yes(row, 6)))
+            case "macrotier":
+                func num(_ i: Int) -> Double { Double(str(row, i)) ?? 0 }
+                let name = str(row, 1)
+                guard !name.isEmpty else { continue }
+                p.macroTiers.append((name, int(row, 2), num(3), num(4), num(5), num(6), num(7)))
             case "setting":
                 p.settings[str(row, 1)] = str(row, 2)
             default:
@@ -1893,6 +1901,30 @@ extension ImportEngine {
                                      repeatCount: row.repeatCount, order: row.order, isRest: row.isRest)
             preset.template = template
             context.insert(preset)
+        }
+
+        // Matched by NAME, case-insensitively, and UPDATED IN PLACE — the
+        // same rule restoreProgram already uses for phases (by number) and
+        // timer templates (by name). Re-importing a file must not duplicate
+        // a tier, and must not silently skip one whose numbers changed.
+        var existingTiers = (try? context.fetch(FetchDescriptor<MacroTier>())) ?? []
+        for row in p.macroTiers {
+            let key = row.name.trimmingCharacters(in: .whitespaces).lowercased()
+            let tier = existingTiers.first {
+                $0.name.trimmingCharacters(in: .whitespaces).lowercased() == key
+            } ?? {
+                let new = MacroTier(name: row.name)
+                context.insert(new)
+                existingTiers.append(new)
+                return new
+            }()
+            tier.name = row.name
+            tier.order = row.order
+            tier.proteinGrams = row.protein
+            tier.carbsGrams = row.carbs
+            tier.fatGrams = row.fat
+            tier.sugarGrams = row.sugar
+            tier.fiberGrams = row.fiber
         }
 
         if let settings = (try? context.fetch(FetchDescriptor<AppSettings>()))?.first {

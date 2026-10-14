@@ -68,7 +68,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         // Local-only and deliberately not exported, but it IS in the app's
         // container — so a copy of the real store has the table, and the
         // schema used to open that copy has to know about it.
-        BackupStatus.self,
+        BackupStatus.self, MacroTier.self,
     ])
 
     // MARK: - Canonical dumps
@@ -225,6 +225,32 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             out["\(day(a.date))|\(a.name)"] = [
                 "distance": a.distance.map(num) ?? "",
                 "distanceUnit": a.distanceUnit,
+            ]
+        }
+        return out
+    }
+
+    /// Added in the SAME commit as MacroTier, deliberately. These dumps are
+    /// hand-written per model, so a new @Model is simply not diffed until
+    /// one exists for it — and the suite would go on reporting "0 fields
+    /// differ" while ignoring every macro row, which is the
+    /// green-but-proving-nothing shape this file exists to prevent.
+    private func dumpMacroTiers(_ ctx: ModelContext) -> Dump {
+        var out: Dump = [:]
+        for tier in (try! ctx.fetch(FetchDescriptor<MacroTier>())) {
+            // Keyed by name: it's the tier's natural key and what the
+            // export writes, so a name that failed to round-trip shows up
+            // as a lost row rather than a changed field.
+            out["tier \(tier.name)"] = [
+                "order": "\(tier.order)",
+                "protein": num(tier.proteinGrams),
+                "carbs": num(tier.carbsGrams),
+                "fat": num(tier.fatGrams),
+                "sugar": num(tier.sugarGrams),
+                "fiber": num(tier.fiberGrams),
+                // Computed, not stored — but if any input fails to survive,
+                // this is the figure the user would actually notice.
+                "calories": num(tier.calories),
             ]
         }
         return out
@@ -517,6 +543,21 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             "PlannedExercise": (try source.fetch(FetchDescriptor<PlannedExercise>())).count,
         ]
 
+        // The real store has no tiers yet (the feature just landed), so seed
+        // a couple into the COPY before exporting. Without them the
+        // MacroTier dump would compare two empty sets and report "0 fields
+        // differ" while proving nothing — the exact shape this file exists
+        // to catch. Written to the temp copy only; the original is never
+        // touched. Delete this block once the real store has tiers of its
+        // own.
+        if (try source.fetch(FetchDescriptor<MacroTier>())).isEmpty {
+            source.insert(MacroTier(name: "Cut", order: 0, proteinGrams: 200, carbsGrams: 150,
+                                    fatGrams: 55, sugarGrams: 25, fiberGrams: 30))
+            source.insert(MacroTier(name: "Bulk", order: 1, proteinGrams: 180, carbsGrams: 300,
+                                    fatGrams: 80, sugarGrams: 60, fiberGrams: 35))
+            try source.save()
+        }
+
         // Export with the app's own builder, then import the way the
         // Recovery Import screen does: program, then library, then history.
         let data = ExportBuilder.workbook(from: source)
@@ -570,6 +611,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         diff("Phase", dumpPhases(source), dumpPhases(target), into: &report)
         diff("Session", dumpSessions(source), dumpSessions(target), into: &report)
         diff("RestDayActivity", dumpRestActivities(source), dumpRestActivities(target), into: &report)
+        diff("MacroTier", dumpMacroTiers(source), dumpMacroTiers(target), into: &report)
         diff("Misc", dumpMisc(source), dumpMisc(target), into: &report)
 
         // --- report
