@@ -12,11 +12,26 @@
 //  exercises and 119 rest activities of actual history, which is the only
 //  number that answers "can I restore from this file".
 //
-//  Skips cleanly when the store copy isn't present, so the suite stays
-//  green on any machine but this one. Point THEJYM_STORE at a store copy
-//  to re-run it. It never touches the original: the file is copied to a
-//  temp directory first, because opening a store with SwiftData can
-//  migrate it.
+//  FAILS LOUDLY when the store copy isn't present — it does not skip.
+//
+//  It used to XCTSkip, pointing at a session scratchpad directory that got
+//  cleaned up. The suite then reported "520 tests, 2 skipped" and read as
+//  green while the export's lossless guarantee — the entire basis of the
+//  automatic backup — was going unverified. That is the same shape as two
+//  earlier bugs in this project: a filename-date test that passed against
+//  the broken code, and a fixture asserting 40 where the device held 41.
+//  A dormant correctness test that looks green is worse than a failing one,
+//  so a missing store is now a failure with instructions attached.
+//
+//  The store therefore lives OUTSIDE any session-scoped temp directory
+//  (see defaultStorePath), so routine cleanup can't silently disarm it.
+//  Opting out deliberately (a machine with no device copy) means creating
+//  a .allow-missing-store marker file beside where the store would be —
+//  a file rather than an env var, because env vars don't reach a
+//  simulator-hosted test process from the command line.
+//
+//  It never touches the original: the file is copied to a temp directory
+//  first, because opening a store with SwiftData can migrate it.
 //
 
 import XCTest
@@ -26,15 +41,34 @@ import SwiftData
 @MainActor
 final class RealStoreRoundTripDiffTests: XCTestCase {
 
-    private static let defaultStorePath =
-        "/private/tmp/claude-501/-Users-jimmylong-Desktop-TheJym/"
-        + "bb409c73-535f-4744-b8cd-e21f1c342575/scratchpad/post4/default.store"
+    /// Durable on purpose: ~/Library/Application Support, not a session
+    /// scratchpad. The previous path was under /private/tmp/claude-501/<session
+    /// id>/, which disappeared when that session's directory was cleaned up
+    /// and left both tests skipping unnoticed.
+    /// The MAC's home directory, not the simulator's. Tests run in the
+    /// simulator, where HOME and NSHomeDirectory() both point inside the
+    /// app sandbox and homeDirectoryForCurrentUser doesn't exist at all;
+    /// SIMULATOR_HOST_HOME is the host's. Falls back for a device/macOS
+    /// run, where HOME already is the right one.
+    private static var storeDirectory: URL {
+        let env = ProcessInfo.processInfo.environment
+        let home = env["SIMULATOR_HOST_HOME"] ?? env["HOME"] ?? NSHomeDirectory()
+        return URL(fileURLWithPath: home)
+            .appendingPathComponent("Library/Application Support/TheJymTests", isDirectory: true)
+    }
+    private static var defaultStorePath: String {
+        storeDirectory.appendingPathComponent("default.store").path
+    }
 
     private let schema = Schema([
         AppSettings.self, Bar.self, ExerciseDef.self, Phase.self, PhaseDay.self,
         PlannedExercise.self, WorkoutSession.self, ExerciseLog.self, SetLog.self,
         BodyWeightEntry.self, RestDayActivity.self, ActiveRecovery.self,
         TrainingDaysPerWeekChange.self, TimerTemplate.self, TimerPreset.self,
+        // Local-only and deliberately not exported, but it IS in the app's
+        // container — so a copy of the real store has the table, and the
+        // schema used to open that copy has to know about it.
+        BackupStatus.self,
     ])
 
     // MARK: - Canonical dumps
@@ -293,12 +327,79 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         return ModelContext(container)
     }
 
-    private func storePath() throws -> String {
-        let path = ProcessInfo.processInfo.environment["THEJYM_STORE"] ?? Self.defaultStorePath
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw XCTSkip("No store at \(path) — set THEJYM_STORE to run this.")
+    /// Thrown rather than XCTFail'd so the test stops immediately AND the
+    /// whole message lands in the failure, instead of a one-line failure
+    /// followed by a crash in the code that assumed a store was there.
+    ///
+    /// CustomStringConvertible, not just LocalizedError: XCTest reports a
+    /// thrown error as `caught error: "\(error)"`, which uses `description`
+    /// and ignores `errorDescription` entirely. Conforming only to
+    /// LocalizedError printed `MissingRealStore(path: "…")` — a failure, but
+    /// a silent one, which is the exact shortcoming this change exists to
+    /// fix.
+    private struct MissingRealStore: LocalizedError, CustomStringConvertible {
+        let path: String
+        var description: String { errorDescription ?? "" }
+        var errorDescription: String? {
+            """
+
+            ════════════════════════════════════════════════════════════════
+            REAL-STORE ROUND-TRIP TESTS COULD NOT RUN.
+            The export's lossless guarantee is currently UNVERIFIED.
+            ════════════════════════════════════════════════════════════════
+
+            No store file at:
+              \(path)
+
+            These are not optional coverage. They are what proves TheJym's
+            .xlsx export round-trips the real store field-by-field without
+            loss — which is the entire basis of the automatic backup. A
+            fixture can only prove the fields the fixture happens to set.
+
+            To restore it, pull a fresh copy off the device:
+
+              mkdir -p "$HOME/Library/Application Support/TheJymTests"
+              xcrun devicectl device copy from \\
+                --device 00008150-001640561410C01C \\
+                --domain-type appDataContainer \\
+                --domain-identifier com.jimbo.TheJym \\
+                --source "Library/Application Support" \\
+                --destination "$HOME/Library/Application Support/TheJymTests"
+
+            To skip this deliberately on a machine with no device copy
+            (never to quiet it locally), create the opt-out marker:
+
+              touch "$HOME/Library/Application Support/TheJymTests/\(RealStoreRoundTripDiffTests.optOutFileName)"
+
+            THEJYM_STORE and THEJYM_ALLOW_MISSING_STORE also work, but ONLY
+            when set in Xcode's scheme editor under Test > Arguments >
+            Environment Variables — neither reaches the test process when
+            exported on the xcodebuild command line, which is why the file
+            marker exists.
+            ════════════════════════════════════════════════════════════════
+            """
         }
-        return path
+    }
+
+    /// A file, not only an env var, because env vars do NOT reach a
+    /// simulator-hosted test process from the xcodebuild command line —
+    /// verified: plain export, TEST_RUNNER_ and SIMCTL_CHILD_ prefixes all
+    /// failed to arrive. They work from Xcode's scheme editor only. An
+    /// escape hatch nobody can actually operate is worse than none.
+    static let optOutFileName = ".allow-missing-store"
+
+    private func storePath() throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        let path = env["THEJYM_STORE"] ?? Self.defaultStorePath
+        if FileManager.default.fileExists(atPath: path) { return path }
+
+        // The ONLY quiet paths, both of which have to be asked for.
+        let marker = Self.storeDirectory.appendingPathComponent(Self.optOutFileName)
+        if FileManager.default.fileExists(atPath: marker.path)
+            || env["THEJYM_ALLOW_MISSING_STORE"] != nil {
+            throw XCTSkip("Opt-out present — real-store verification deliberately skipped.")
+        }
+        throw MissingRealStore(path: path)
     }
 
     /// The 309 rows the export drops are all log-less, `day == nil`,
