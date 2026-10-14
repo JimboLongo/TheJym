@@ -31,10 +31,9 @@ struct BodyWeightView: View {
         NavigationStack {
             List {
                 Section {
-                    // Weight is tracked weekly, not daily — whatever day is
-                    // tapped snaps to that week's Monday, so only a Monday
-                    // is ever actually selectable.
-                                        // Weigh-ins are recorded to the day they're taken.
+                    // Weigh-ins are recorded to the day they're taken
+                    // (7220a8d; they used to snap to the week's Monday).
+                    //
                     // Normalised to midnight rather than stored raw: a
                     // date-only picker carries the bound value's time
                     // along, and BodyWeightEntry.resolved(asOf:) matches
