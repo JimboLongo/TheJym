@@ -1376,6 +1376,18 @@ extension ImportEngine {
         /// row may be neither imported nor named as skipped.
         var sourceRowCount = 0
         var isFullyAccounted: Bool { historyRows.count + skipped.total == sourceRowCount }
+        /// One per dated row of the Macros sheet. Empty for any export
+        /// older than this one, which is normal.
+        var macroRows: [MacroRow] = []
+    }
+
+    /// A Macros sheet row. The sheet's Weight column is deliberately NOT
+    /// represented — BodyWeightEntry is restored from the History sheet,
+    /// and reading it here too would have both sheets writing the same
+    /// weigh-in. See ExportBuilder.macroRows.
+    struct MacroRow {
+        var date: Date
+        var grams: [MacroCategory: Double]
     }
 
     struct LibraryEntry {
@@ -1429,6 +1441,9 @@ extension ImportEngine {
         }
 
         var wb = Workbook()
+        if let macros = sheet("Macros"), let header = macros.first {
+            wb.macroRows = parseMacroSheet(header: header, rows: Array(macros.dropFirst()))
+        }
         let history = sheet("History") ?? sheets.sorted { $0.key < $1.key }.first?.value
         if let history, let header = history.first {
             let dataRows = history.dropFirst().filter { row in
@@ -1708,6 +1723,54 @@ extension ImportEngine {
                 && timerTemplates.isEmpty && timerPresets.isEmpty
                 && macroTiers.isEmpty && cycleTiers.isEmpty
         }
+    }
+
+    /// Macros sheet -> one MacroRow per dated row. Columns are matched by
+    /// NAME, not position, so adding one later doesn't shift the rest.
+    /// Weight is skipped on purpose — see MacroRow.
+    static func parseMacroSheet(header: [String], rows: [[String]]) -> [MacroRow] {
+        let keys = header.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
+        guard let dateIdx = keys.firstIndex(of: "date") else { return [] }
+        var columns: [MacroCategory: Int] = [:]
+        for category in MacroCategory.allCases {
+            if let i = keys.firstIndex(of: category.rawValue) { columns[category] = i }
+        }
+        var out: [MacroRow] = []
+        for row in rows {
+            let raw = (row[safe: dateIdx] ?? "").trimmingCharacters(in: .whitespaces)
+            guard !raw.isEmpty, let date = parseDate(raw) else { continue }
+            var grams: [MacroCategory: Double] = [:]
+            for (category, i) in columns {
+                // A BLANK cell stays absent, never 0 — "not logged" has to
+                // survive the round trip or every restore would invent
+                // zero-fiber days.
+                let text = (row[safe: i] ?? "").trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty, let value = Double(text) { grams[category] = value }
+            }
+            guard !grams.isEmpty else { continue }
+            out.append(MacroRow(date: date, grams: grams))
+        }
+        return out
+    }
+
+    /// Writes macro logs back, one per calendar day, updating in place —
+    /// the same upsert rule every other restore here follows.
+    @MainActor
+    static func restoreMacroLogs(_ rows: [MacroRow], context: ModelContext) {
+        guard !rows.isEmpty else { return }
+        var existing = (try? context.fetch(FetchDescriptor<MacroLog>())) ?? []
+        for row in rows {
+            let log = MacroLog.log(on: row.date, in: existing) ?? {
+                let created = MacroLog(date: row.date)
+                context.insert(created)
+                existing.append(created)
+                return created
+            }()
+            for category in MacroCategory.allCases {
+                log.setGrams(row.grams[category], for: category)
+            }
+        }
+        try? context.save()
     }
 
     /// Row-type dispatch on column A. An unrecognised Type is SKIPPED

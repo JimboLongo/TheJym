@@ -1590,6 +1590,24 @@ final class BodyWeightEntry {
     /// already be sorted ascending by date (every call site queries with
     /// `@Query(sort: \BodyWeightEntry.date)`) — shared here rather than
     /// each caller resolving this the same way independently.
+    /// Insert-or-update for one calendar day — the ONE place a weigh-in is
+    /// written, so the Body table and anything else can't drift into two
+    /// different upsert rules. Lifted out of BodyWeightView.logWeight,
+    /// which now calls this.
+    @MainActor
+    @discardableResult
+    static func upsert(weight: Double, on date: Date, in entries: [BodyWeightEntry],
+                       context: ModelContext) -> BodyWeightEntry {
+        let day = Calendar.current.startOfDay(for: date)
+        if let existing = entry(on: day, in: entries) {
+            existing.weight = weight
+            return existing
+        }
+        let created = BodyWeightEntry(date: day, weight: weight)
+        context.insert(created)
+        return created
+    }
+
     static func resolved(asOf date: Date, in entries: [BodyWeightEntry]) -> Double? {
         entries.last { $0.date <= date }?.weight
     }
@@ -1900,6 +1918,119 @@ final class CycleMacroTag {
         guard let tier else { return }
         let tag = CycleMacroTag(cycleNumber: cycle, phase: phase, tier: tier)
         context.insert(tag)
+    }
+}
+
+/// One day's logged macro totals, transcribed from wherever they were
+/// counted (MyFitnessPal, here) rather than computed from food.
+///
+/// STORES A DATE, NEVER A CYCLE NUMBER. Cycles aren't stored entities and
+/// a day's cycle membership is derived at read time from the phase's own
+/// session spans — so re-attributing a session later re-buckets macro
+/// history automatically instead of leaving a stale number behind. Macros
+/// are also logged on days with no session at all, including the 500+ days
+/// in this store that predate any phase, so a log can't require one.
+@Model
+final class MacroLog {
+    var date: Date = Date.now
+
+    /// nil means NOT LOGGED, which is not the same as zero. A day with no
+    /// fiber entry is a day you didn't record fiber, not a day you ate
+    /// none — the same distinction WorkoutSession.durationSeconds and
+    /// RestDayActivity.distance already make, and for the same reason: an
+    /// average that folds in a false 0 is wrong in a way nobody notices.
+    var proteinGrams: Double?
+    var carbsGrams: Double?
+    var fatGrams: Double?
+    var sugarGrams: Double?
+    var fiberGrams: Double?
+
+    init(date: Date = .now, proteinGrams: Double? = nil, carbsGrams: Double? = nil,
+         fatGrams: Double? = nil, sugarGrams: Double? = nil, fiberGrams: Double? = nil) {
+        self.date = Calendar.current.startOfDay(for: date)
+        self.proteinGrams = proteinGrams
+        self.carbsGrams = carbsGrams
+        self.fatGrams = fatGrams
+        self.sugarGrams = sugarGrams
+        self.fiberGrams = fiberGrams
+    }
+
+    func grams(_ category: MacroCategory) -> Double? {
+        switch category {
+        case .protein: return proteinGrams
+        case .carbs:   return carbsGrams
+        case .fat:     return fatGrams
+        case .sugar:   return sugarGrams
+        case .fiber:   return fiberGrams
+        }
+    }
+
+    func setGrams(_ value: Double?, for category: MacroCategory) {
+        switch category {
+        case .protein: proteinGrams = value
+        case .carbs:   carbsGrams = value
+        case .fat:     fatGrams = value
+        case .sugar:   sugarGrams = value
+        case .fiber:   fiberGrams = value
+        }
+    }
+
+    /// True when nothing at all was recorded — the row exists but holds no
+    /// values, which is the state to delete rather than keep.
+    var isEmpty: Bool { MacroCategory.allCases.allSatisfy { grams($0) == nil } }
+
+    /// 4 x protein + 4 x carbs + 9 x fat, or nil if none of the three was
+    /// logged. Sugar and fiber are subsets of carbs and never add — see
+    /// MacroTier.calories, which this deliberately mirrors.
+    ///
+    /// A day with only some of the three computes from what's there rather
+    /// than refusing: a partial figure is still the best available answer,
+    /// and the per-category day counts are what stop it being mistaken for
+    /// a complete one.
+    var calories: Double? {
+        let parts = [(proteinGrams, 4.0), (carbsGrams, 4.0), (fatGrams, 9.0)]
+        guard parts.contains(where: { $0.0 != nil }) else { return nil }
+        return parts.reduce(0) { $0 + ($1.0 ?? 0) * $1.1 }
+    }
+
+    /// One day per calendar day — logging twice on a day updates it, the
+    /// same upsert rule BodyWeightEntry.upsert follows.
+    static func log(on date: Date, in logs: [MacroLog]) -> MacroLog? {
+        let day = Calendar.current.startOfDay(for: date)
+        return logs.first { Calendar.current.isDate($0.date, inSameDayAs: day) }
+    }
+}
+
+/// One category's average across a set of days, CARRYING ITS OWN
+/// DENOMINATOR.
+///
+/// The two travel together on purpose. Each category averages over the
+/// days that actually have a value for it, so protein over 20 days and
+/// fiber over 12 sit side by side on different bases — and displayed as
+/// bare numbers they look comparable when they aren't. Returning the mean
+/// without the count would make that mistake possible; this makes it
+/// impossible to show one without having the other to hand.
+struct MacroAverage {
+    let category: MacroCategory
+    /// nil when no day in the window logged this category.
+    let mean: Double?
+    /// How many days contributed. Never inferred from the window's length.
+    let dayCount: Int
+
+    static func compute(_ category: MacroCategory, over logs: [MacroLog]) -> MacroAverage {
+        let values = logs.compactMap { $0.grams(category) }
+        guard !values.isEmpty else {
+            return MacroAverage(category: category, mean: nil, dayCount: 0)
+        }
+        return MacroAverage(category: category,
+                            mean: values.reduce(0, +) / Double(values.count),
+                            dayCount: values.count)
+    }
+
+    /// Every category over the same set of days. The counts will differ —
+    /// that's the point.
+    static func all(over logs: [MacroLog]) -> [MacroAverage] {
+        MacroCategory.allCases.map { compute($0, over: logs) }
     }
 }
 

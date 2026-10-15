@@ -261,6 +261,7 @@ struct RecoveryImportView: View {
         // to fix it.
         ImportEngine.restoreProgram(wb.program, context: context)
         ImportEngine.restoreLibraryAndEquipment(wb, context: context)
+        ImportEngine.restoreMacroLogs(wb.macroRows, context: context)
         result = await ImportEngine.importIntoStore(filteredRows(wb), context: context)
     }
 }

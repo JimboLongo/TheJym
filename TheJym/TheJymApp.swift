@@ -23,7 +23,7 @@ struct TheJymApp: App {
             // restored install can't inherit the old device's "last
             // backup" date. See BackupStatus.
             BackupStatus.self,
-            MacroTier.self, CycleMacroTag.self
+            MacroTier.self, CycleMacroTag.self, MacroLog.self
         ])
     }
 }
@@ -114,8 +114,12 @@ struct ContentView: View {
             ExercisesView(overflowTab: $overflowTab)
                 .tabItem { Label("Exercises", systemImage: "figure.strengthtraining.traditional") }
                 .tag(MainTab.exercises)
-            BodyWeightView(overflowTab: $overflowTab)
-                .tabItem { Label("Weight", systemImage: "scalemass.fill") }
+            // Weight and macros share a tab because they're the same daily
+            // transcription habit, done in one sitting — see BodyLogView.
+            // BodyWeightView keeps the chart and the delete-by-swipe list
+            // and is reached from here.
+            BodyLogView(overflowTab: $overflowTab)
+                .tabItem { Label("Body", systemImage: "scalemass.fill") }
                 .tag(MainTab.weight)
         }
         .sheet(item: $overflowTab) { tab in

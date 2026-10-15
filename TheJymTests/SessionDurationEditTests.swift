@@ -28,7 +28,7 @@ final class SessionDurationEditTests: XCTestCase {
             PlannedExercise.self, WorkoutSession.self, ExerciseLog.self, SetLog.self,
             BodyWeightEntry.self, RestDayActivity.self, ActiveRecovery.self,
             TrainingDaysPerWeekChange.self, TimerTemplate.self, TimerPreset.self,
-            BackupStatus.self, MacroTier.self, CycleMacroTag.self,
+            BackupStatus.self, MacroTier.self, CycleMacroTag.self, MacroLog.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         return ModelContext(c)
     }

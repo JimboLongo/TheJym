@@ -68,7 +68,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         // Local-only and deliberately not exported, but it IS in the app's
         // container — so a copy of the real store has the table, and the
         // schema used to open that copy has to know about it.
-        BackupStatus.self, MacroTier.self, CycleMacroTag.self,
+        BackupStatus.self, MacroTier.self, CycleMacroTag.self, MacroLog.self,
     ])
 
     // MARK: - Canonical dumps
@@ -269,6 +269,23 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             out["phase \(tag.phase?.number ?? -1) cycle \(tag.cycleNumber)"] = [
                 "tier": tag.tier?.name ?? "<none>",
             ]
+        }
+        return out
+    }
+
+    /// Ships with MacroLog, per the standing rule.
+    private func dumpMacroLogs(_ ctx: ModelContext) -> Dump {
+        var out: Dump = [:]
+        for log in (try! ctx.fetch(FetchDescriptor<MacroLog>())) {
+            // Every category spelled out, with "<nil>" for unlogged rather
+            // than 0 — a restore that invented zeroes would otherwise look
+            // identical to one that carried the nils through.
+            var fields: [String: String] = [:]
+            for c in MacroCategory.allCases {
+                fields[c.rawValue] = log.grams(c).map(num) ?? "<nil>"
+            }
+            fields["calories"] = log.calories.map(num) ?? "<nil>"
+            out["macros \(day(log.date))"] = fields
         }
         return out
     }
@@ -523,6 +540,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         }
         ImportEngine.restoreProgram(wb.program, context: target)
         ImportEngine.restoreLibraryAndEquipment(wb, context: target)
+        ImportEngine.restoreMacroLogs(wb.macroRows, context: target)
         _ = await ImportEngine.importIntoStore(wb.historyRows, context: target)
         try target.save()
         return target
@@ -610,6 +628,23 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             try source.save()
         }
 
+        // Same reasoning as the seeds above: no macro logs means the
+        // MacroLog dump compares [] against []. Seeds a PARTIAL day on
+        // purpose — the nil-not-zero rule is the one most likely to break
+        // silently, and a seed with every field filled would never
+        // exercise it.
+        if (try source.fetch(FetchDescriptor<MacroLog>())).isEmpty {
+            let cal = Calendar.current
+            source.insert(MacroLog(date: cal.date(byAdding: .day, value: -3, to: .now)!,
+                                   proteinGrams: 186, carbsGrams: 261, fatGrams: 74,
+                                   sugarGrams: 91, fiberGrams: 37))
+            // Protein and fiber only — carbs, fat and sugar must come back
+            // nil, not 0.
+            source.insert(MacroLog(date: cal.date(byAdding: .day, value: -2, to: .now)!,
+                                   proteinGrams: 172, fiberGrams: 29))
+            try source.save()
+        }
+
         // Export with the app's own builder, then import the way the
         // Recovery Import screen does: program, then library, then history.
         let data = ExportBuilder.workbook(from: source)
@@ -627,6 +662,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         }
         ImportEngine.restoreProgram(wb.program, context: target)
         ImportEngine.restoreLibraryAndEquipment(wb, context: target)
+        ImportEngine.restoreMacroLogs(wb.macroRows, context: target)
         _ = await ImportEngine.importIntoStore(wb.historyRows, context: target)
         try target.save()
 
@@ -665,6 +701,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         diff("RestDayActivity", dumpRestActivities(source), dumpRestActivities(target), into: &report)
         diff("MacroTier", dumpMacroTiers(source), dumpMacroTiers(target), into: &report)
         diff("CycleTag", dumpCycleTags(source), dumpCycleTags(target), into: &report)
+        diff("MacroLog", dumpMacroLogs(source), dumpMacroLogs(target), into: &report)
         diff("Misc", dumpMisc(source), dumpMisc(target), into: &report)
 
         // --- report

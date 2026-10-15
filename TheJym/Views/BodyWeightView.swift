@@ -110,11 +110,9 @@ struct BodyWeightView: View {
 
     private func logWeight() {
         guard let w = Double(newWeightText) else { return }
-        if let existing = existingEntryOnSelectedDay {
-            existing.weight = w
-        } else {
-            context.insert(BodyWeightEntry(date: selectedWeightDate, weight: w))
-        }
+        // The shared upsert, so this screen and the Body table can't drift
+        // into two different per-day write rules.
+        BodyWeightEntry.upsert(weight: w, on: selectedWeightDate, in: weights, context: context)
         try? context.save()
         newWeightText = ""
         selectedWeightDate = Calendar.current.startOfDay(for: .now)

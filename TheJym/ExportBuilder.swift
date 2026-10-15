@@ -33,6 +33,7 @@ enum ExportBuilder {
             ("Exercises", exercisesRows(from: context)),
             ("Equipment", equipmentRows(from: context)),
             ("Program", programRows(from: context)),
+            ("Macros", macroRows(from: context)),
         ])
     }
 
@@ -255,6 +256,31 @@ enum ExportBuilder {
             // geminiAPIKey stays out on purpose — a workbook gets shared.
             setting("aiAssistantEnabled", .string(s.aiAssistantEnabled ? "Yes" : "No"))
             setting("useGeminiForPhasePlanning", .string(s.useGeminiForPhasePlanning ? "Yes" : "No"))
+        }
+        return rows
+    }
+
+    /// One row per day that has macros — per-date and headed for 365/year,
+    /// so a sheet of its own rather than Program rows.
+    ///
+    /// THE WEIGHT COLUMN IS WRITE-ONLY. It's here so a row is a complete
+    /// picture of a day when read by a human or a spreadsheet, but
+    /// BodyWeightEntry remains the single source of truth and the History
+    /// sheet is what restores it. The importer deliberately does NOT read
+    /// this column — if it did, the two sheets would both write the same
+    /// weigh-in and fight over it. Do not "fix" that asymmetry.
+    static func macroRows(from context: ModelContext) -> [[XLSXCell]] {
+        var rows: [[XLSXCell]] = [[.string("Date"), .string("Weight"), .string("Protein"),
+                                   .string("Carbs"), .string("Fat"), .string("Sugar"),
+                                   .string("Fiber")]]
+        let weights = fetch(BodyWeightEntry.self, context)
+        for log in fetch(MacroLog.self, context).sorted(by: { $0.date < $1.date }) {
+            // Blank, never 0 — an unlogged category must come back as nil.
+            func cell(_ v: Double?) -> XLSXCell { v.map { XLSXCell.number($0) } ?? .blank }
+            rows.append([.string(Formatters.exportDate.string(from: log.date)),
+                         cell(BodyWeightEntry.entry(on: log.date, in: weights)?.weight),
+                         cell(log.proteinGrams), cell(log.carbsGrams), cell(log.fatGrams),
+                         cell(log.sugarGrams), cell(log.fiberGrams)])
         }
         return rows
     }
