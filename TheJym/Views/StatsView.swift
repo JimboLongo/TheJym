@@ -48,6 +48,7 @@ struct StatsView: View {
     @Query(sort: \ActiveRecovery.date) private var activeRecoveries: [ActiveRecovery]
     @Query(sort: \TrainingDaysPerWeekChange.date) private var tdpwChanges: [TrainingDaysPerWeekChange]
     @Query private var phases: [Phase]
+    @Query(sort: \MacroLog.date) private var macroLogs: [MacroLog]
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
 
     // @Query already keeps every stat live against real data changes (e.g.
@@ -220,6 +221,7 @@ struct StatsView: View {
                 consistencySection(stats)
                 if let activePhase {
                     currentPhaseSection(activePhase, stats)
+                    macroCycleSection(activePhase)
                 } else if let fallback = stats.perfectWeekFallback {
                     // No active phase to judge cycles against — a simpler,
                     // phase-independent progress stat instead.
@@ -384,6 +386,97 @@ struct StatsView: View {
         pairs.append(("Rest days banked", String(format: "%.1f", stats.bankBalance)))
         return Section("Current Phase — Phase \(activePhase.number)") {
             statGrid(pairs)
+        }
+    }
+
+    /// How the current cycle's logged macros compare to the tier it was
+    /// tagged with. Absent entirely when the cycle isn't tagged — an
+    /// untagged cycle has nothing to be measured against, and an empty
+    /// section would just be clutter.
+    ///
+    /// CURRENT CYCLE ONLY, matching the section's name. Comparing cycles
+    /// against each other is the eventual point of per-cycle tags, but it
+    /// needs a screen of its own rather than a scrolling history inside
+    /// Stats.
+    ///
+    /// Shown from the first logged day rather than waiting for the cycle to
+    /// fill: variance is only ACTIONABLE mid-cycle. Appearing on day 4 of 6
+    /// would mean most of the cycle had already run on whatever you were
+    /// doing. The day count beside each row is what keeps an early figure
+    /// honest.
+    @ViewBuilder
+    private func macroCycleSection(_ phase: Phase) -> some View {
+        if let summary = MacroCycleSummary.compute(phase: phase,
+                                                   cycle: phase.displayCurrentCycle,
+                                                   logs: macroLogs) {
+            Section {
+                if summary.isEmpty {
+                    Text("Nothing logged this cycle yet.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    ForEach(summary.variances) { variance in
+                        macroVarianceRow(variance)
+                    }
+                    calorieRow(summary)
+                }
+            } header: {
+                Text("Cycle \(summary.cycleNumber) · \(summary.tier.name)")
+            } footer: {
+                Text("Averages cover the days that logged each category, so the counts differ — a day you didn't record fiber isn't a day you ate none. Calories average only over days with protein, carbs and fat all logged, so the figure is a real day's total rather than three different day sets added together.")
+            }
+        }
+    }
+
+    private func macroVarianceRow(_ v: MacroVariance) -> some View {
+        HStack(spacing: 6) {
+            Text(v.category.label)
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(width: 58, alignment: .leading)
+            Text(v.average.mean.map { "\(Formatters.trim($0))g" } ?? "—")
+                .font(.system(.subheadline, design: .monospaced))
+                .frame(width: 62, alignment: .trailing)
+            Text("\(v.category.direction.symbol)\(Formatters.trim(v.target))")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 54, alignment: .trailing)
+            Spacer(minLength: 2)
+            if let delta = v.delta, let status = v.status {
+                // Coloured by whether the DIRECTION treats this as good,
+                // never by the sign: "+15" on protein is the target beaten,
+                // "+15" on sugar is the ceiling breached.
+                Text("\(delta > 0 ? "+" : "")\(Formatters.trim(delta))")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(status.isFavourable ? Color.green : Color.orange)
+            }
+            Text("(\(v.average.dayCount)d)")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .frame(width: 34, alignment: .trailing)
+        }
+    }
+
+    private func calorieRow(_ summary: MacroCycleSummary) -> some View {
+        HStack(spacing: 6) {
+            Text("Calories")
+                .font(.caption.bold()).foregroundStyle(.secondary)
+                .frame(width: 58, alignment: .leading)
+            Text(summary.calories.mean.map { Formatters.trim($0) } ?? "—")
+                .font(.system(.subheadline, design: .monospaced)).bold()
+                .frame(width: 62, alignment: .trailing)
+            Text(Formatters.trim(summary.calorieTarget))
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 54, alignment: .trailing)
+            Spacer(minLength: 2)
+            if let delta = summary.calorieDelta {
+                Text("\(delta > 0 ? "+" : "")\(Formatters.trim(delta))")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            // Its own count, on the stricter basis — differing from the
+            // rows above is informative, not a bug.
+            Text("(\(summary.calories.dayCount)d)")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .frame(width: 34, alignment: .trailing)
         }
     }
 

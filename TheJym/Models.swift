@@ -802,6 +802,38 @@ final class Phase {
     /// again the day each of its cycles completes — except the very last
     /// cycle, since there's nothing left to bank ahead for once the phase
     /// itself is over.
+    /// The calendar range one cycle covers, for mapping dated things
+    /// (macro logs) onto it. nil when the cycle has no attributed sessions.
+    ///
+    /// Runs to the day BEFORE the next cycle's first session, not to its
+    /// own last one. The difference is gap days: measured on this store,
+    /// Phase 2's cycle 5 ended Aug 7 and cycle 6 began Aug 9, so Aug 8
+    /// belonged to neither under a [first..last] rule — 1 of 100 days
+    /// homeless, with 0 overlaps. Extending to the next cycle's eve makes
+    /// the mapping total within a phase, and a rest day between cycles is
+    /// lived as the tail of the one it followed.
+    ///
+    /// The LAST cycle with sessions has no successor, so it runs to `now` —
+    /// a cycle in progress owns today.
+    func dateRange(forCycle cycle: Int, now: Date = .now) -> ClosedRange<Date>? {
+        let cal = Calendar.current
+        var firstByCycle: [Int: Date] = [:]
+        for session in sessions where session.day != nil && session.cycleNumber > 0 {
+            let day = cal.startOfDay(for: session.date)
+            if let existing = firstByCycle[session.cycleNumber], existing <= day { continue }
+            firstByCycle[session.cycleNumber] = day
+        }
+        guard let start = firstByCycle[cycle] else { return nil }
+        let nextStart = firstByCycle
+            .filter { $0.key > cycle }
+            .min { $0.key < $1.key }?.value
+        let end = nextStart.flatMap { cal.date(byAdding: .day, value: -1, to: $0) }
+            ?? cal.startOfDay(for: now)
+        // A next cycle starting the same day (possible with a bonus or a
+        // same-day double) would otherwise produce an inverted range.
+        return start <= end ? start...end : start...start
+    }
+
     var restBankResetEvents: [(date: Date, resetTo: Double)] {
         var events: [(date: Date, resetTo: Double)] = []
         if let firstLoggedDate {
