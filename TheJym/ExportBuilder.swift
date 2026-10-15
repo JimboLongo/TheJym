@@ -221,6 +221,17 @@ enum ExportBuilder {
                          .string(Formatters.exportDate.string(from: tier.modifiedAt))])
         }
 
+        // Tags reference their tier BY NAME here — a workbook has no object
+        // graph, and the name is the tier's natural key. Safe because both
+        // sides of a round trip see the same name at the same moment; the
+        // STORE still holds a relationship (see CycleMacroTag.tier).
+        for tag in fetch(CycleMacroTag.self, context)
+            .sorted(by: { ($0.phase?.number ?? 0, $0.cycleNumber) < ($1.phase?.number ?? 0, $1.cycleNumber) }) {
+            guard let phaseNumber = tag.phase?.number, let tierName = tag.tier?.name else { continue }
+            rows.append([.string("CycleTier"), .number(Double(phaseNumber)),
+                         .number(Double(tag.cycleNumber)), .string(tierName)])
+        }
+
         if let s = fetch(AppSettings.self, context).first {
             func setting(_ key: String, _ value: XLSXCell) {
                 rows.append([.string("Setting"), .string(key), value])

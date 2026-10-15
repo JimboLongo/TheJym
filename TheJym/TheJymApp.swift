@@ -23,7 +23,7 @@ struct TheJymApp: App {
             // restored install can't inherit the old device's "last
             // backup" date. See BackupStatus.
             BackupStatus.self,
-            MacroTier.self
+            MacroTier.self, CycleMacroTag.self
         ])
     }
 }

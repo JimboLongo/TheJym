@@ -86,7 +86,7 @@ final class BackupEngineTests: XCTestCase {
             PlannedExercise.self, WorkoutSession.self, ExerciseLog.self, SetLog.self,
             BodyWeightEntry.self, RestDayActivity.self, ActiveRecovery.self,
             TrainingDaysPerWeekChange.self, TimerTemplate.self, TimerPreset.self,
-            BackupStatus.self, MacroTier.self,
+            BackupStatus.self, MacroTier.self, CycleMacroTag.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let ctx = ModelContext(c)
         ctx.insert(AppSettings())
@@ -263,7 +263,7 @@ final class BackupEngineRunTests: XCTestCase {
             PlannedExercise.self, WorkoutSession.self, ExerciseLog.self, SetLog.self,
             BodyWeightEntry.self, RestDayActivity.self, ActiveRecovery.self,
             TrainingDaysPerWeekChange.self, TimerTemplate.self, TimerPreset.self,
-            BackupStatus.self, MacroTier.self,
+            BackupStatus.self, MacroTier.self, CycleMacroTag.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let ctx = ModelContext(c)
         ctx.insert(AppSettings())

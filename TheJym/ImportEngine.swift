@@ -1700,12 +1700,13 @@ extension ImportEngine {
         var macroTiers: [(name: String, order: Int, protein: Double, carbs: Double,
                           fat: Double, sugar: Double, fiber: Double,
                           createdAt: Date?, modifiedAt: Date?)] = []
+        var cycleTiers: [(phaseNumber: Int, cycleNumber: Int, tierName: String)] = []
 
         var isEmpty: Bool {
             phases.isEmpty && days.isEmpty && planned.isEmpty
                 && recoveries.isEmpty && tdpwChanges.isEmpty && settings.isEmpty
                 && timerTemplates.isEmpty && timerPresets.isEmpty
-                && macroTiers.isEmpty
+                && macroTiers.isEmpty && cycleTiers.isEmpty
         }
     }
 
@@ -1763,6 +1764,10 @@ extension ImportEngine {
                 guard !name.isEmpty else { continue }
                 p.macroTiers.append((name, int(row, 2), num(3), num(4), num(5), num(6), num(7),
                                      parseDate(str(row, 8)), parseDate(str(row, 9))))
+            case "cycletier":
+                let tierName = str(row, 3)
+                guard !tierName.isEmpty else { continue }
+                p.cycleTiers.append((int(row, 1), int(row, 2), tierName))
             case "setting":
                 p.settings[str(row, 1)] = str(row, 2)
             default:
@@ -1935,6 +1940,21 @@ extension ImportEngine {
             // the model default) stands.
             if let created = row.createdAt { tier.createdAt = created }
             if let modified = row.modifiedAt { tier.modifiedAt = modified }
+        }
+
+        // Re-linked by (phase number, cycle number) -> tier BY NAME, which
+        // is how the tag's relationship is rebuilt from a flat file. Runs
+        // after the tier loop above so every named tier exists to link to.
+        if !p.cycleTiers.isEmpty {
+            let tiersByName = Dictionary(
+                existingTiers.map { ($0.name.trimmingCharacters(in: .whitespaces).lowercased(), $0) },
+                uniquingKeysWith: { a, _ in a })
+            for row in p.cycleTiers {
+                guard let phase = existingPhases.first(where: { $0.number == row.phaseNumber }),
+                      let tier = tiersByName[row.tierName.trimmingCharacters(in: .whitespaces).lowercased()]
+                else { continue }
+                CycleMacroTag.set(tier, for: phase, cycle: row.cycleNumber, context: context)
+            }
         }
 
         if let settings = (try? context.fetch(FetchDescriptor<AppSettings>()))?.first {

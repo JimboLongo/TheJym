@@ -20,6 +20,7 @@ struct MacroTiersView: View {
 
     @State private var editing: MacroTier?
     @State private var creating = false
+    @State private var pendingDelete: MacroTier?
 
     var body: some View {
         NavigationStack {
@@ -35,7 +36,7 @@ struct MacroTiersView: View {
                                 .buttonStyle(.plain)
                         }
                         .onMove(perform: move)
-                        .onDelete(perform: delete)
+                        .onDelete(perform: requestDelete)
                     } footer: {
                         Text("Calories are 4×protein + 4×carbs + 9×fat. Sugar and fiber are part of carbs, so they're tracked but never added on top.")
                     }
@@ -55,6 +56,15 @@ struct MacroTiersView: View {
             }
             .sheet(item: $editing) { tier in
                 MacroTierEditSheet(tier: tier, existing: tiers, nextOrder: tier.order)
+            }
+            .confirmationDialog("Delete \(pendingDelete?.name ?? "")?",
+                                isPresented: Binding(get: { pendingDelete != nil },
+                                                     set: { if !$0 { pendingDelete = nil } }),
+                                titleVisibility: .visible, presenting: pendingDelete) { tier in
+                Button("Delete Tier", role: .destructive) { confirmDelete(tier) }
+                Button("Cancel", role: .cancel) { pendingDelete = nil }
+            } message: { tier in
+                Text(Self.deleteWarning(for: tier) ?? "")
             }
         }
     }
@@ -96,11 +106,42 @@ struct MacroTiersView: View {
         try? context.save()
     }
 
-    private func delete(_ offsets: IndexSet) {
-        for i in offsets { context.delete(tiers[i]) }
+    /// What deleting this tier actually costs, or nil when nothing points
+    /// at it — confirm only when the impact is non-zero, the same rule
+    /// RepSchemeImpact follows.
+    ///
+    /// The wording names the CONSEQUENCE, not the row count. Deleting a
+    /// tier doesn't merely clear some tags: it takes the targets those
+    /// cycles would be measured against with it, so their variance becomes
+    /// uncomputable. "Clears 3 tags" undersells a loss of the ability to
+    /// analyse past cycles at all.
+    static func deleteWarning(for tier: MacroTier) -> String? {
+        let n = tier.cycleTags.count
+        guard n > 0 else { return nil }
+        let cycles = tier.cycleTags
+            .sorted { ($0.phase?.number ?? 0, $0.cycleNumber) < ($1.phase?.number ?? 0, $1.cycleNumber) }
+            .map { "Phase \($0.phase?.number ?? 0) cycle \($0.cycleNumber)" }
+            .joined(separator: ", ")
+        return "\(n) cycle\(n == 1 ? "" : "s") ran on \(tier.name) (\(cycles)). "
+            + "Deleting it clears their tags and removes the targets those cycles "
+            + "would be measured against — their variance can't be worked out afterwards."
+    }
+
+    private func requestDelete(_ offsets: IndexSet) {
+        guard let i = offsets.first else { return }
+        let tier = tiers[i]
+        guard Self.deleteWarning(for: tier) != nil else { return confirmDelete(tier) }
+        pendingDelete = tier
+    }
+
+    private func confirmDelete(_ tier: MacroTier) {
+        context.delete(tier)
         // Renumber so a later insert doesn't land on a used order.
-        for (i, tier) in tiers.enumerated() where !offsets.contains(i) { tier.order = i }
+        for (i, t) in tiers.enumerated() where t.persistentModelID != tier.persistentModelID {
+            t.order = i
+        }
         try? context.save()
+        pendingDelete = nil
     }
 }
 

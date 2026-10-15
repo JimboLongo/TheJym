@@ -68,7 +68,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         // Local-only and deliberately not exported, but it IS in the app's
         // container — so a copy of the real store has the table, and the
         // schema used to open that copy has to know about it.
-        BackupStatus.self, MacroTier.self,
+        BackupStatus.self, MacroTier.self, CycleMacroTag.self,
     ])
 
     // MARK: - Canonical dumps
@@ -253,6 +253,21 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
                 "calories": num(tier.calories),
                 "createdAt": day(tier.createdAt),
                 "modifiedAt": day(tier.modifiedAt),
+            ]
+        }
+        return out
+    }
+
+    /// Ships with CycleMacroTag, per the standing rule — a new @Model is
+    /// simply not diffed until a dump exists for it.
+    private func dumpCycleTags(_ ctx: ModelContext) -> Dump {
+        var out: Dump = [:]
+        for tag in (try! ctx.fetch(FetchDescriptor<CycleMacroTag>())) {
+            // Keyed by (phase, cycle) — the tag's own identity. The tier
+            // NAME is the value, so a tag re-linked to the wrong tier shows
+            // as a changed field rather than vanishing.
+            out["phase \(tag.phase?.number ?? -1) cycle \(tag.cycleNumber)"] = [
+                "tier": tag.tier?.name ?? "<none>",
             ]
         }
         return out
@@ -583,6 +598,17 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
             }
             try source.save()
         }
+        // Same reasoning as the tier seed above: an untagged store makes
+        // the CycleTag dump compare [] against [] and report fidelity over
+        // nothing. Tags two cycles of the oldest phase with the two seeds.
+        if (try source.fetch(FetchDescriptor<CycleMacroTag>())).isEmpty,
+           let phase = (try source.fetch(FetchDescriptor<Phase>())).min(by: { $0.number < $1.number }) {
+            let seeds = (try source.fetch(FetchDescriptor<MacroTier>())).sorted { $0.order < $1.order }
+            for (i, tier) in seeds.prefix(2).enumerated() {
+                CycleMacroTag.set(tier, for: phase, cycle: i + 1, context: source)
+            }
+            try source.save()
+        }
 
         // Export with the app's own builder, then import the way the
         // Recovery Import screen does: program, then library, then history.
@@ -638,6 +664,7 @@ final class RealStoreRoundTripDiffTests: XCTestCase {
         diff("Session", dumpSessions(source), dumpSessions(target), into: &report)
         diff("RestDayActivity", dumpRestActivities(source), dumpRestActivities(target), into: &report)
         diff("MacroTier", dumpMacroTiers(source), dumpMacroTiers(target), into: &report)
+        diff("CycleTag", dumpCycleTags(source), dumpCycleTags(target), into: &report)
         diff("Misc", dumpMisc(source), dumpMisc(target), into: &report)
 
         // --- report

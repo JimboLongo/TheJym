@@ -145,6 +145,7 @@ struct PhaseDetailView: View {
     @Query(sort: \ExerciseDef.name) private var exerciseDefs: [ExerciseDef]
     @Query(sort: \Bar.name) private var bars: [Bar]
     @Query private var settingsList: [AppSettings]
+    @Query(sort: \MacroTier.order) private var macroTiers: [MacroTier]
     private var aiDeloadEnabled: Bool { settingsList.first?.deloadWeeksEnabled == true }
 
     @State private var showingEdit = false
@@ -223,15 +224,63 @@ struct PhaseDetailView: View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Cycle \(cycle)").font(.headline)
+                tierMenu(cycle)
                 deloadToggle(cycle)
             }
         } else {
             HStack {
                 Text("Cycle \(cycle)").font(.headline)
                 Spacer()
+                tierMenu(cycle)
                 deloadToggle(cycle)
             }
         }
+    }
+
+    /// The macro tier this cycle ran on.
+    ///
+    /// AT THE HEADER, not in the per-slot override dialog, because that
+    /// dialog only opens for a slot with nothing logged yet — a past cycle
+    /// could never be tagged from there, and tagging is exactly the thing
+    /// you want to do retroactively.
+    ///
+    /// Measured before being put on this row, which is already tight:
+    /// "Cycle 1" (56pt) + the Deload toggle (101pt) = 157pt against a
+    /// 333pt budget at 393pt, so a name chip at 62-84pt leaves ~90pt spare
+    /// and fits 375pt too. At an accessibility size the row already stacks
+    /// (367pt against 333pt), so this becomes a third stacked item rather
+    /// than making the documented "Deload" wrap worse.
+    ///
+    /// NAME ONLY, never name-plus-calories: "Tier: 2550 · 2548 cal" is
+    /// 435pt at AX5 and would wrap, where the bare name is 216pt.
+    private func tierMenu(_ cycle: Int) -> some View {
+        let tagged = CycleMacroTag.tag(for: phase, cycle: cycle)?.tier
+        return Menu {
+            ForEach(macroTiers) { tier in
+                Button {
+                    CycleMacroTag.set(tier, for: phase, cycle: cycle, context: context)
+                    try? context.save()
+                } label: {
+                    // Calories belong here, where there's room for them,
+                    // rather than on the chip.
+                    Text("\(tier.name) — \(Formatters.trim(tier.calories)) cal")
+                }
+            }
+            if tagged != nil {
+                Divider()
+                Button("No Tier", role: .destructive) {
+                    CycleMacroTag.set(nil, for: phase, cycle: cycle, context: context)
+                    try? context.save()
+                }
+            }
+        } label: {
+            Text(tagged?.name ?? "Tier")
+                .font(.caption)
+                .foregroundStyle(tagged == nil ? Color.secondary : Color.accentColor)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(.quaternary.opacity(0.3), in: Capsule())
+        }
+        .disabled(macroTiers.isEmpty)
     }
 
     /// `.switch` style's default view spreads its label and the switch

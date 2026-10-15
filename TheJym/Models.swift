@@ -413,6 +413,11 @@ final class Phase {
     @Relationship(deleteRule: .nullify, inverse: \WorkoutSession.phase)
     var sessions: [WorkoutSession] = []
 
+    /// Cascade, unlike sessions: a macro tag is keyed on (phase, cycle) and
+    /// says nothing once the phase it names is gone.
+    @Relationship(deleteRule: .cascade, inverse: \CycleMacroTag.phase)
+    var macroTags: [CycleMacroTag] = []
+
     init(number: Int, totalCycles: Int,
          startDate: Date = .now, isActive: Bool = true, deloadCycle: Int = 0,
          legacyCompletedCycles: Int? = 0) {
@@ -1822,6 +1827,15 @@ final class MacroTier {
             + "(\(Formatters.trim(carbsGrams))g). They're part of carbs, not extra."
     }
 
+    /// Deleting a tier deletes the tags pointing at it. A tag whose tier is
+    /// gone is indistinguishable from an untagged cycle, and nulling it
+    /// would preserve nothing worth keeping: the targets those cycles would
+    /// be measured against go with the tier either way, so variance for
+    /// them is unrecoverable regardless. MacroTiersView warns before this
+    /// happens, naming that consequence rather than just the row count.
+    @Relationship(deleteRule: .cascade, inverse: \CycleMacroTag.tier)
+    var cycleTags: [CycleMacroTag] = []
+
     /// Case-insensitive, whitespace-trimmed, excluding `self`. Names are
     /// the export's key, so two tiers called "Bulk" would collapse into
     /// one on import.
@@ -1833,6 +1847,59 @@ final class MacroTier {
             $0.persistentModelID != tier?.persistentModelID
                 && $0.name.trimmingCharacters(in: .whitespaces).lowercased() == key
         }
+    }
+}
+
+/// Which macro tier a single cycle of a phase ran on.
+///
+/// Keyed by (phase, cycleNumber) because cycles are NOT stored entities —
+/// Phase.cycleWalk derives them from sessions, and WorkoutSession.cycleNumber
+/// is the only durable handle on one.
+@Model
+final class CycleMacroTag {
+    var cycleNumber: Int = 0
+    var phase: Phase?
+
+    /// A RELATIONSHIP, never a stored tier name — and this is the whole
+    /// point of the type.
+    ///
+    /// Storing "2450" as a string would orphan every tag the moment the
+    /// tier is renamed: the tag would go on pointing at a name nothing
+    /// answers to, invisible and unfixable. That is the identical failure
+    /// to ExerciseDef's rep ceilings being keyed on the reps array that an
+    /// edit then changes out from under them — a lookup keyed on a value
+    /// the user can edit. A relationship follows a rename for free.
+    ///
+    /// The EXPORT still writes the name, because a workbook has no object
+    /// graph and the name is the tier's natural key; that is safe precisely
+    /// because both sides of a round trip see the same name at the same
+    /// moment. Do not let that export format leak back into storage.
+    var tier: MacroTier?
+
+    init(cycleNumber: Int = 0, phase: Phase? = nil, tier: MacroTier? = nil) {
+        self.cycleNumber = cycleNumber
+        self.phase = phase
+        self.tier = tier
+    }
+
+    /// The tag for one cycle, if any. One tag per (phase, cycle) — `set`
+    /// below upholds that.
+    static func tag(for phase: Phase, cycle: Int) -> CycleMacroTag? {
+        phase.macroTags.first { $0.cycleNumber == cycle }
+    }
+
+    /// Tags `cycle` with `tier`, or clears it when `tier` is nil. Updates
+    /// an existing tag rather than adding a second for the same cycle.
+    @MainActor
+    static func set(_ tier: MacroTier?, for phase: Phase, cycle: Int, context: ModelContext) {
+        if let existing = tag(for: phase, cycle: cycle) {
+            guard let tier else { return context.delete(existing) }
+            existing.tier = tier
+            return
+        }
+        guard let tier else { return }
+        let tag = CycleMacroTag(cycleNumber: cycle, phase: phase, tier: tier)
+        context.insert(tag)
     }
 }
 
