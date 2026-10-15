@@ -134,16 +134,46 @@ private struct DayLogRow: View {
     private var editor: some View {
         // Two columns normally, one at an accessibility size — six labelled
         // fields fit either way, which six columns never could.
-        let columns = dynamicTypeSize.isAccessibilitySize
-            ? [GridItem(.flexible(), alignment: .leading)]
-            : [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-            field(label: "Weight", unit: "lb", text: $weightDraft, focus: nil)
-            ForEach(MacroCategory.allCases) { category in
-                field(label: category.label, unit: "g",
-                      text: Binding(get: { draft[category] ?? "" },
-                                    set: { draft[category] = $0 }),
-                      focus: category)
+        //
+        // EXPLICIT HStack ROWS, NOT LazyVGrid. A LazyVGrid with .flexible()
+        // columns inside a self-sizing List row crashed the app, and UIKit
+        // named the mechanism exactly:
+        //
+        //   _UICollectionViewFeedbackLoopDebugger.swift:93: Fatal error:
+        //   <UpdateCoalescingCollectionView> is stuck in a recursive layout
+        //   loop.
+        //   Element (0-2) preferredSize (370.333, 140.0) -> (370.333, 139.0),
+        //   layout generated (370.0, 140.0)   ... then 139 -> 140, forever.
+        //
+        // The grid is measured at a fractional width (370.333) but laid out
+        // at 370.0, and its height differs by 1pt between the two — so the
+        // row never settles, the collection view re-invalidates on every
+        // pass, and UIKit traps after eight of them. A flexible grid's
+        // height depends on the width it's given, which is exactly what a
+        // self-sizing row cannot promise.
+        //
+        // Reproduced and attributed by A/B/A in the simulator: LazyVGrid
+        // crashes, these HStacks survive three consecutive runs. Today's
+        // row happened not to crash, but it was never safe — it just didn't
+        // land on the 1pt boundary. Don't reintroduce a width-dependent
+        // layout here.
+        let pairs: [[MacroCategory?]] = dynamicTypeSize.isAccessibilitySize
+            ? [[nil], [.protein], [.carbs], [.fat], [.sugar], [.fiber]]
+            : [[nil, .protein], [.carbs, .fat], [.sugar, .fiber]]
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(pairs.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 12) {
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, slot in
+                        if let category = slot {
+                            field(label: category.label, unit: "g",
+                                  text: Binding(get: { draft[category] ?? "" },
+                                                set: { draft[category] = $0 }),
+                                  focus: category)
+                        } else {
+                            field(label: "Weight", unit: "lb", text: $weightDraft, focus: nil)
+                        }
+                    }
+                }
             }
         }
         if let cal = draftCalories {
