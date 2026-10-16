@@ -152,9 +152,14 @@ final class StatGridCellHeightTests: XCTestCase {
                                  "the measured requirement at AX5/256pt is 0.4447; the floor must reach it")
     }
 
-    /// Pixel rows containing ink, for a cell rendered with an empty label
-    /// so only the value draws.
     private func inkHeight(value: String, width: CGFloat, size: DynamicTypeSize) throws -> Int {
+        try inkBounds(value: value, width: width, size: size).rows
+    }
+
+    /// Inked pixel rows, and the horizontal extent of the ink, for a cell
+    /// rendered with an empty label so only the value draws.
+    private func inkBounds(value: String, width: CGFloat,
+                           size: DynamicTypeSize) throws -> (rows: Int, inkWidth: Int) {
         let v = StatGridCell(label: "", value: value)
             .environment(\.dynamicTypeSize, size)
             .frame(width: width, alignment: .leading)
@@ -169,6 +174,7 @@ final class StatGridCellHeightTests: XCTestCase {
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         ctx?.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
         var rows = 0
+        var minX = Int.max, maxX = -1
         for y in 0..<h {
             var inked = false
             for x in 0..<w {
@@ -176,12 +182,55 @@ final class StatGridCellHeightTests: XCTestCase {
                 // Anything meaningfully darker than the white ground.
                 if pixels[i] < 200 || pixels[i + 1] < 200 || pixels[i + 2] < 200 {
                     inked = true
-                    break
+                    if x < minX { minX = x }
+                    if x > maxX { maxX = x }
                 }
             }
             if inked { rows += 1 }
         }
-        return rows
+        return (rows, maxX >= minX ? maxX - minX + 1 : 0)
+    }
+
+    /// CHECK 1 — the overlay's proposed width.
+    ///
+    /// `.overlay` is proposed its PARENT's size, and the parent here is
+    /// the sizing glyph. If `.frame(maxWidth: .infinity)` were applied
+    /// after the overlay instead of before it, the real text would be
+    /// laying out against a one-character proposal — and every
+    /// height-equality test in this file would still pass, because a
+    /// collapsed width pins the height just as well as a correct one.
+    ///
+    /// So assert the ink actually spans the column.
+    func testOverlayIsProposedTheFullColumnWidth() throws {
+        // Comfortably within one line at this width and size, so it is
+        // laid out, not scaled: intrinsic 176.333pt against 338pt.
+        let b = try inkBounds(value: "September 2026 (31)", width: 338, size: .large)
+        XCTAssertGreaterThan(b.inkWidth, 150,
+                             "the value's ink spans \(b.inkWidth)pt of a 338pt column — if this is "
+                             + "about one character wide, the overlay is being proposed the sizing "
+                             + "glyph's width instead of the column's")
+        // And a value too wide for the column still fills it rather than
+        // collapsing: scaled to fit, it should reach most of the width.
+        let wide = try inkBounds(value: "September 2026 (31)", width: 161, size: .large)
+        XCTAssertGreaterThan(wide.inkWidth, 130,
+                             "scaled-to-fit ink spans \(wide.inkWidth)pt of a 161pt column")
+    }
+
+    /// CHECK 2 — the sizing glyph's font.
+    ///
+    /// A sizer in the wrong font pins the row to a stable but WRONG
+    /// height, and no height-equality test would notice. The anchor is
+    /// the height the grid had before any of this: measured by hosting
+    /// the real StatsView, an unwrapped statGrid cell was 32.333pt tall
+    /// at the default Dynamic Type size. The sizing glyphs must still
+    /// produce exactly that.
+    func testRowHeightMatchesTheOriginalUnconstrainedLayout() {
+        for (label, value) in Self.pairs {
+            XCTAssertEqual(height(label, value, width: 161.0, size: .large), 32.333,
+                           accuracy: 0.01,
+                           "<\(label)>/<\(value)> is not the 32.333pt the grid measured before "
+                           + "the sizing glyphs went in — is a sizer's font out of step with its text?")
+        }
     }
 
     /// The other half of the sabotage check: these are not strings that
