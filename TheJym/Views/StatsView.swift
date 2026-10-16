@@ -1019,18 +1019,63 @@ struct StatsView: View {
     private func statGrid(_ pairs: [(String, String)]) -> some View {
         LazyVGrid(columns: statGridColumns, alignment: .leading, spacing: 10) {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(pair.0)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(pair.1)
-                        .font(.system(.subheadline, design: .monospaced))
-                        .bold()
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                StatGridCell(label: pair.0, value: pair.1)
             }
         }
         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+    }
+}
+
+/// One label/value cell of `statGrid`.
+///
+/// Its own `struct` (not an inline VStack) for the same reason as
+/// `BigLiftGroupTable`: so a test can render it directly and assert the
+/// one property that matters here — its height is PINNED, identical at
+/// every width.
+///
+/// Both `lineLimit(1)`s are load-bearing, and not for tidiness. A
+/// self-sizing List row whose height changes with its width is what put
+/// `UpdateCoalescingCollectionView` into a recursive layout loop on the
+/// Body tab (see BodyLogView's own note, and commit 77ea2ff): the
+/// collection view hands the cell a rounded width, the cell answers with
+/// a preferred width a third of a point wider, the line count flips, the
+/// height flips with it, and the two passes never agree. The keyboard
+/// made that one easy to trigger; it was never the mechanism.
+///
+/// Measured on this grid (column width is `(deviceWidth - 80) / 2`), the
+/// margin is already inside that 1/3pt window on shipping hardware:
+///
+///     "100% (on pace)"        xLarge  375pt device  col 147.500  intrinsic 147.333  gap 0.167
+///     "96% (4 behind)"        xLarge  375pt device  col 147.500  intrinsic 147.333  gap 0.167
+///     "Lifetime perfect weeks" large  320pt device  col 120.000  intrinsic 119.667  gap 0.333
+///
+/// So this is a "hasn't happened yet", not a "can't happen" — the
+/// closest approach on a 402pt phone at the default type size is 12.0pt
+/// ("Current perfect-week streak"), which is why nobody has seen it here.
+/// Change a label, ship a narrower device, or move one type size and the
+/// gap closes.
+///
+/// The cost is real and deliberate: at an accessibility Dynamic Type size
+/// a long value now truncates rather than wrapping (statGridColumns
+/// already drops to one column there, which was the previous mitigation).
+/// A pinned height that truncates is the trade for a layout that can't
+/// livelock.
+struct StatGridCell: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.system(.subheadline, design: .monospaced))
+                .bold()
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
