@@ -1038,7 +1038,7 @@ struct StatsView: View {
 /// one property that matters here — its height is PINNED, identical at
 /// every width.
 ///
-/// Both `lineLimit(1)`s are load-bearing, and not for tidiness. A
+/// The pinned height is load-bearing, and not for tidiness. A
 /// self-sizing List row whose height changes with its width is what put
 /// `UpdateCoalescingCollectionView` into a recursive layout loop on the
 /// Body tab (see BodyLogView's own note, and commit 77ea2ff): the
@@ -1046,6 +1046,14 @@ struct StatsView: View {
 /// a preferred width a third of a point wider, the line count flips, the
 /// height flips with it, and the two passes never agree. The keyboard
 /// made that one easy to trigger; it was never the mechanism.
+///
+/// `.lineLimit(1)` is NOT what does that work any more, despite what
+/// 4fa6288's message claimed. Measured: with the sizing glyph in place,
+/// deleting it changes nothing observable — not the height, not the ink
+/// extent, not even for a value far too long to fit at the scale floor.
+/// A Text proposed a one-line-high frame lays out one line regardless.
+/// It stays as a statement of intent, but nothing guards it, because
+/// there is nothing left for it to change.
 ///
 /// Column widths, measured by hosting the real StatsView rather than
 /// derived from the device width — the two widest phones do NOT follow
@@ -1072,14 +1080,28 @@ struct StatsView: View {
 /// `minimumScaleFactor` is what pays for the pinned height. Pinning alone
 /// truncates, and these cells exist to be read — a clipped number is
 /// worse than a small one. The floor is measured, not chosen: at AX5 in
-/// the single-column fallback the widest real value is
-/// "September 2026 (31)" at 575.667pt, against the 256pt column of an
-/// iPad Slide Over (the narrowest container this app can be handed, and
-/// it IS reachable — the target device family is iPhone and iPad).
-/// 256 / 575.667 = 0.4447, so 0.44 is the largest two-decimal floor that
-/// still fits it. Truncation is not an accessibility-only problem either:
-/// at the DEFAULT type size "September 2026 (31)" already overflows six
-/// of the seven column widths above.
+/// the single-column fallback, against the 256pt column of an iPad Slide
+/// Over (the narrowest container this app can be handed, and it IS
+/// reachable — the target device family is iPhone and iPad), the
+/// tightest real strings are
+///
+///     "1200% (11 ahead)"            484.667pt  needs 0.5282
+///     "Current perfect-week streak" 478.000pt  needs 0.5356
+///     "100% (on pace)"              424.333pt  needs 0.6033
+///
+/// so 0.52 is the largest two-decimal floor that still fits all of them.
+/// It used to be 0.44, set single-handedly by "September 2026 (31)" at
+/// 575.667pt; abbreviating that month (StatsAndPlates' bestMonthLabel)
+/// bought back a third of its width and let the floor rise.
+///
+/// A floor is a safety net for the pathological string, not a layout
+/// strategy — if real values start landing near it, the answer is
+/// shorter strings, not more scaling. On a 402pt phone at AX5 nothing
+/// now scales below 0.697, and at AX1 nothing scales at all.
+///
+/// Truncation was never an accessibility-only problem either: before
+/// this, at the DEFAULT type size, 53 label/column and 100 value/column
+/// combinations already exceeded their column.
 ///
 /// But minimumScaleFactor does NOT keep the height pinned on its own, and
 /// assuming it did would have put the variable height straight back.
@@ -1094,42 +1116,49 @@ struct StatsView: View {
 /// sized by an invisible unscaled glyph and the real text rides on top as
 /// an overlay: the text may shrink, the row cannot.
 struct StatGridCell: View {
-    /// See the note above: 256 / 575.667, rounded down to two decimals.
-    static let minimumScale: CGFloat = 0.44
+    /// See the note above: 256 / 484.667, rounded down to two decimals.
+    static let minimumScale: CGFloat = 0.52
+
+    /// ONE definition each, used by both the sizing glyph and the text it
+    /// sizes. A sizer in a different font from its text pins the row to a
+    /// stable but wrong height, and only two of the four font axes are
+    /// visible to a height test at all — SF and SF Mono share a line
+    /// height at subheadline, as do their regular and bold weights, so
+    /// nothing would catch a `.bold()` or a `design:` drifting apart.
+    /// The fix for that isn't a cleverer test, it's having nothing to
+    /// drift: write each font once.
+    static let labelFont: Font = .caption2
+    static let valueFont: Font = .system(.subheadline, design: .monospaced).bold()
 
     let label: String
     let value: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            // An invisible single glyph in the SAME font sizes each row;
-            // the real text is an overlay on it. See the note above —
-            // minimumScaleFactor alone does not pin the height.
-            Text(verbatim: "0")
-                .font(.caption2)
-                .hidden()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .leading) {
-                    Text(label)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(Self.minimumScale)
-                }
-            Text(verbatim: "0")
-                .font(.system(.subheadline, design: .monospaced))
-                .bold()
-                .hidden()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .leading) {
-                    Text(value)
-                        .font(.system(.subheadline, design: .monospaced))
-                        .bold()
-                        .lineLimit(1)
-                        .minimumScaleFactor(Self.minimumScale)
-                }
+            line(label, font: Self.labelFont, secondary: true)
+            line(value, font: Self.valueFont, secondary: false)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One row of the cell: an invisible unscaled glyph fixes the line
+    /// box, and the real text rides on it as an overlay, free to shrink.
+    /// `.frame` comes BEFORE `.overlay` deliberately — an overlay is
+    /// proposed its parent's size, so putting the frame after would hand
+    /// the text a one-character width to lay out against. See
+    /// testOverlayIsProposedTheFullColumnWidth.
+    private func line(_ text: String, font: Font, secondary: Bool) -> some View {
+        Text(verbatim: "0")
+            .font(font)
+            .hidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) {
+                Text(text)
+                    .font(font)
+                    .foregroundStyle(secondary ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                    .lineLimit(1)
+                    .minimumScaleFactor(Self.minimumScale)
+            }
     }
 }
 

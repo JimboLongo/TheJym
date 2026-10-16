@@ -160,7 +160,7 @@ struct TrainingStats {
     // against (no schedule = not counted either way).
     var perfectWeeks: Int       // every scheduled training day that week was logged
     var perfectMonths: Int      // every scheduled training day that month was logged
-    var bestMonthLabel: String? // e.g. "March 2026"
+    var bestMonthLabel: String? // e.g. "Mar 2026" — abbreviated, see below
     var bestMonthWorkouts: Int  // workouts logged in that month
 
     // Active-Phase-only stats (nil with no active phase).
@@ -1134,8 +1134,14 @@ enum StatsEngine {
            best.value > 0 {
             bestMonthWorkouts = best.value
             if let monthDate = cal.date(from: best.key) {
+                // "MMM", not "MMMM". This lands in a statGrid cell, and
+                // the full month name was the widest value the grid can
+                // produce at any Dynamic Type size — "September 2026 (31)"
+                // is 575.667pt at AX5, against a 256pt column, which on
+                // its own set the floor on StatGridCell.minimumScale.
+                // Abbreviating buys back a third of the width.
                 let f = DateFormatter()
-                f.dateFormat = "MMMM yyyy"
+                f.dateFormat = "MMM yyyy"
                 bestMonthLabel = f.string(from: monthDate)
             }
         }

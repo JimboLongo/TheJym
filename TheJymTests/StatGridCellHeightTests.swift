@@ -54,7 +54,7 @@ final class StatGridCellHeightTests: XCTestCase {
         ("Perfect weeks", "999"),
         ("Perfect months", "999"),
         ("All-time miles", "12345.6 mi"),
-        ("Best month all-time", "September 2026 (31)"),
+        ("Best month all-time", "Sep 2026 (31)"),
         ("All-time active days", "9999"),
         ("All-time hours trained", "12345.6 hr"),
         ("Final adherence", "96% (4 behind)"),
@@ -130,26 +130,31 @@ final class StatGridCellHeightTests: XCTestCase {
     /// Without minimumScaleFactor it would truncate at full size instead
     /// and the two traces would match.
     ///
-    /// Sabotage check: delete either .minimumScaleFactor in StatGridCell
-    /// and this fails.
+    /// Sabotage check: delete .minimumScaleFactor in StatGridCell and
+    /// this fails (ink ratio 1.0 instead of 0.545).
     func testScaleFactorActuallyShrinksTheGlyphs() throws {
-        // Widest real value: "September 2026 (31)", 575.667pt at AX5.
-        let value = "September 2026 (31)"
+        // Widest real value: "1200% (11 ahead)", 484.667pt at AX5, which
+        // is what sets StatGridCell.minimumScale.
+        let value = "1200% (11 ahead)"
         let roomy = try inkHeight(value: value, width: 700, size: .accessibility5)
         let cramped = try inkHeight(value: value, width: 256, size: .accessibility5)
         XCTAssertGreaterThan(roomy, 0, "sanity: something was drawn")
-        // Measured: 48px of ink roomy, 22px cramped — ratio 0.458, which
-        // tracks the 0.4447 the width demands. The threshold is 0.6
-        // because the two ways of breaking this both land far above it:
-        // dropping .minimumScaleFactor gives full-size truncated glyphs,
-        // and dropping .lineLimit(1) stops the scale factor applying at
-        // all (measured ratio 0.9375 — it wraps and clips instead).
-        XCTAssertLessThan(Double(cramped), Double(roomy) * 0.6,
+        // Measured: 44px of ink roomy, 24px cramped — ratio 0.545, which
+        // tracks the 0.5282 the width demands. The threshold is 0.75
+        // because the one way of breaking this lands at 1.0: without
+        // .minimumScaleFactor the glyphs stay full size and truncate.
+        XCTAssertLessThan(Double(cramped), Double(roomy) * 0.75,
                           "at 256pt the value must SHRINK (ink \(cramped)px) rather than truncate "
                           + "or wrap at full size (ink \(roomy)px)")
-        // And the floor is low enough to fit it, not just to shrink it.
-        XCTAssertLessThanOrEqual(256.0 / 575.667, Double(StatGridCell.minimumScale) + 0.005,
-                                 "the measured requirement at AX5/256pt is 0.4447; the floor must reach it")
+        // And the floor reaches far enough DOWN to fit it — a floor above
+        // the requirement would stop the shrink short and clip — while
+        // not being needlessly lower than it needs to be.
+        let required = 256.0 / 484.667   // "1200% (11 ahead)" at AX5
+        XCTAssertLessThanOrEqual(Double(StatGridCell.minimumScale), required,
+                                 "floor \(StatGridCell.minimumScale) must reach the \(required) "
+                                 + "the widest real value demands")
+        XCTAssertGreaterThan(Double(StatGridCell.minimumScale), required - 0.02,
+                             "floor \(StatGridCell.minimumScale) is lower than anything needs")
     }
 
     private func inkHeight(value: String, width: CGFloat, size: DynamicTypeSize) throws -> Int {
@@ -202,18 +207,18 @@ final class StatGridCellHeightTests: XCTestCase {
     ///
     /// So assert the ink actually spans the column.
     func testOverlayIsProposedTheFullColumnWidth() throws {
-        // Comfortably within one line at this width and size, so it is
-        // laid out, not scaled: intrinsic 176.333pt against 338pt.
-        let b = try inkBounds(value: "September 2026 (31)", width: 338, size: .large)
-        XCTAssertGreaterThan(b.inkWidth, 150,
+        // The widest real value. Comfortably within one line here, so it
+        // is laid out rather than scaled: intrinsic 148.667pt in 338pt.
+        let b = try inkBounds(value: "1200% (11 ahead)", width: 338, size: .large)
+        XCTAssertGreaterThan(b.inkWidth, 120,
                              "the value's ink spans \(b.inkWidth)pt of a 338pt column — if this is "
                              + "about one character wide, the overlay is being proposed the sizing "
                              + "glyph's width instead of the column's")
-        // And a value too wide for the column still fills it rather than
-        // collapsing: scaled to fit, it should reach most of the width.
-        let wide = try inkBounds(value: "September 2026 (31)", width: 161, size: .large)
-        XCTAssertGreaterThan(wide.inkWidth, 130,
-                             "scaled-to-fit ink spans \(wide.inkWidth)pt of a 161pt column")
+        // And in a column too narrow for it, it fills the column rather
+        // than collapsing: scaled to fit, the ink still reaches across.
+        let narrow = try inkBounds(value: "1200% (11 ahead)", width: 120, size: .large)
+        XCTAssertGreaterThan(narrow.inkWidth, 95,
+                             "scaled-to-fit ink spans \(narrow.inkWidth)pt of a 120pt column")
     }
 
     /// CHECK 2 — the sizing glyph's font.
@@ -246,22 +251,33 @@ final class StatGridCellHeightTests: XCTestCase {
             return UIHostingController(rootView: v)
                 .sizeThatFits(in: CGSize(width: width, height: CGFloat(100_000))).height
         }
-        // 161.0 is the column width on a 402pt phone at the default size.
+        func unpinnedLabelHeight(_ text: String, width: CGFloat) -> CGFloat {
+            let v = Text(text)
+                .font(.caption2)
+                .environment(\.dynamicTypeSize, .large)
+                .frame(width: width, alignment: .leading)
+            return UIHostingController(rootView: v)
+                .sizeThatFits(in: CGSize(width: width, height: CGFloat(100_000))).height
+        }
+        // Both of these clear their column by a third of a point or less
+        // — which is exactly the width wobble a self-sizing row sees
+        // between the collection view's two layout passes. Half a point
+        // narrower and the line count flips.
+        //
+        // "100% (on pace)": 147.333pt intrinsic against a 375pt phone's
+        // 147.5pt column. (Measured at xLarge; reproduced here at the
+        // default size by using the width the ratio works out to.)
         let oneLine = unpinnedHeight("100% (on pace)", width: 161.0)
-        XCTAssertGreaterThan(unpinnedHeight("September 2026 (31)", width: 161.0), oneLine,
-                             "the longest bestMonthLabel wraps unpinned at this phone's column width")
-        // The near-misses that make this a "hasn't happened yet". Each
-        // fits by less than a third of a point, which is exactly the
-        // width wobble a self-sizing row sees between layout passes.
-        XCTAssertEqual(unpinnedHeight("100% (on pace)", width: 147.5), oneLine,
-                       accuracy: 0.5, "fits by 0.167pt at xLarge on a 375pt phone — see StatGridCell")
-        // 176.333 intrinsic against a 176.0 column: it MISSES by a third
-        // of a point on a 440pt phone at the default size, and clears by
-        // the same margin a third of a point wider. Either side of that
-        // line is a line-count flip.
-        XCTAssertGreaterThan(unpinnedHeight("September 2026 (31)", width: 176.0), oneLine,
-                             "wraps at a 440pt phone's 176.0 column")
-        XCTAssertEqual(unpinnedHeight("September 2026 (31)", width: 176.0 + 2.0 / 3.0), oneLine,
-                       accuracy: 0.5, "and fits two thirds of a point wider — see StatGridCell")
+        XCTAssertEqual(unpinnedHeight("100% (on pace)", width: 130.0), oneLine,
+                       accuracy: 0.5, "fits at its own intrinsic width of 130.0")
+        XCTAssertGreaterThan(unpinnedHeight("100% (on pace)", width: 129.5), oneLine,
+                             "and wraps half a point narrower")
+        // "Lifetime perfect weeks": 119.667pt against a 320pt container's
+        // 120.0pt column, at the DEFAULT type size.
+        let oneLabelLine = unpinnedLabelHeight("Lifetime perfect weeks", width: 161.0)
+        XCTAssertEqual(unpinnedLabelHeight("Lifetime perfect weeks", width: 120.0), oneLabelLine,
+                       accuracy: 0.5, "clears a 320pt container's column by 0.333pt")
+        XCTAssertGreaterThan(unpinnedLabelHeight("Lifetime perfect weeks", width: 118.0), oneLabelLine,
+                             "and wraps just below it — see StatGridCell")
     }
 }
