@@ -372,7 +372,12 @@ struct StatsView: View {
             // as a label told you nothing about "7 of 7" meaning.
             pairs.append(("Perfect Cycles",
                           progress.completedCount == 0
-                              ? "No completed cycles yet"
+                              // Short because this is a stat cell, not a
+                              // sentence. "No completed cycles yet" is
+                              // 697pt wide at AX5 — nearly three times
+                              // the narrowest column, unreadable at any
+                              // scale factor that would fit it.
+                              ? "No cycles yet"
                               : "\(progress.perfectCount) of \(progress.completedCount)"))
         }
         if let miles = stats.milesThisPhase {
@@ -1042,12 +1047,21 @@ struct StatsView: View {
 /// height flips with it, and the two passes never agree. The keyboard
 /// made that one easy to trigger; it was never the mechanism.
 ///
-/// Measured on this grid (column width is `(deviceWidth - 80) / 2`), the
-/// margin is already inside that 1/3pt window on shipping hardware:
+/// Column widths, measured by hosting the real StatsView rather than
+/// derived from the device width — the two widest phones do NOT follow
+/// `(deviceWidth - 80) / 2`, they get larger List margins:
 ///
-///     "100% (on pace)"        xLarge  375pt device  col 147.500  intrinsic 147.333  gap 0.167
-///     "96% (4 behind)"        xLarge  375pt device  col 147.500  intrinsic 147.333  gap 0.167
-///     "Lifetime perfect weeks" large  320pt device  col 120.000  intrinsic 119.667  gap 0.333
+///     container  320    375    390    393    402    430    440
+///     2 columns  120.0  147.5  155.0  156.5  161.0  171.0  176.0
+///     1 column   256    311    326    329    338    354    368
+///
+/// Against those, the margin is already inside the 1/3pt window on
+/// shipping hardware:
+///
+///     "100% (on pace)"         xLarge 375pt  col 147.500  intrinsic 147.333  gap 0.167
+///     "96% (4 behind)"         xLarge 375pt  col 147.500  intrinsic 147.333  gap 0.167
+///     "September 2026 (31)"    large  440pt  col 176.000  intrinsic 176.333  gap 0.333
+///     "Lifetime perfect weeks" large  320pt  col 120.000  intrinsic 119.667  gap 0.333
 ///
 /// So this is a "hasn't happened yet", not a "can't happen" — the
 /// closest approach on a 402pt phone at the default type size is 12.0pt
@@ -1055,25 +1069,65 @@ struct StatsView: View {
 /// Change a label, ship a narrower device, or move one type size and the
 /// gap closes.
 ///
-/// The cost is real and deliberate: at an accessibility Dynamic Type size
-/// a long value now truncates rather than wrapping (statGridColumns
-/// already drops to one column there, which was the previous mitigation).
-/// A pinned height that truncates is the trade for a layout that can't
-/// livelock.
+/// `minimumScaleFactor` is what pays for the pinned height. Pinning alone
+/// truncates, and these cells exist to be read — a clipped number is
+/// worse than a small one. The floor is measured, not chosen: at AX5 in
+/// the single-column fallback the widest real value is
+/// "September 2026 (31)" at 575.667pt, against the 256pt column of an
+/// iPad Slide Over (the narrowest container this app can be handed, and
+/// it IS reachable — the target device family is iPhone and iPad).
+/// 256 / 575.667 = 0.4447, so 0.44 is the largest two-decimal floor that
+/// still fits it. Truncation is not an accessibility-only problem either:
+/// at the DEFAULT type size "September 2026 (31)" already overflows six
+/// of the seven column widths above.
+///
+/// But minimumScaleFactor does NOT keep the height pinned on its own, and
+/// assuming it did would have put the variable height straight back.
+/// Measured, scaled text reports a SHORTER line box, and by a different
+/// amount at different widths:
+///
+///     AX1  "September 2026 (31)"  256pt column -> 51.0   wider columns -> 55.0
+///     AX2  "100% (on pace)"       311pt column -> 65.667 wider columns -> 65.0
+///
+/// That is a continuous height-follows-width dependence, which is worse
+/// than the discrete line-count flip it replaced. So the line box is
+/// sized by an invisible unscaled glyph and the real text rides on top as
+/// an overlay: the text may shrink, the row cannot.
 struct StatGridCell: View {
+    /// See the note above: 256 / 575.667, rounded down to two decimals.
+    static let minimumScale: CGFloat = 0.44
+
     let label: String
     let value: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label)
+            // An invisible single glyph in the SAME font sizes each row;
+            // the real text is an overlay on it. See the note above —
+            // minimumScaleFactor alone does not pin the height.
+            Text(verbatim: "0")
                 .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Text(value)
+                .hidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .leading) {
+                    Text(label)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(Self.minimumScale)
+                }
+            Text(verbatim: "0")
                 .font(.system(.subheadline, design: .monospaced))
                 .bold()
-                .lineLimit(1)
+                .hidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .leading) {
+                    Text(value)
+                        .font(.system(.subheadline, design: .monospaced))
+                        .bold()
+                        .lineLimit(1)
+                        .minimumScaleFactor(Self.minimumScale)
+                }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

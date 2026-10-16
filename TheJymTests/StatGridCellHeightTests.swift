@@ -26,7 +26,7 @@ final class StatGridCellHeightTests: XCTestCase {
     /// the real StatsView, not derived. These are every shipping iPhone
     /// width, each flanked by the ±1/3pt neighbours a collection view's
     /// rounded-vs-preferred width pass actually produces.
-    private static let deviceColumns: [CGFloat] = [120.0, 147.5, 155.0, 156.5, 161.0, 175.0, 180.0]
+    private static let deviceColumns: [CGFloat] = [120.0, 147.5, 155.0, 156.5, 161.0, 171.0, 176.0]
     private static let columnWidths: [CGFloat] = {
         let third: CGFloat = 1.0 / 3.0
         var out: [CGFloat] = []
@@ -45,7 +45,7 @@ final class StatGridCellHeightTests: XCTestCase {
         ("Adherence", "100% (on pace)"),
         ("Adherence", "96% (4 behind)"),
         ("Adherence", "1200% (11 ahead)"),
-        ("Perfect Cycles", "No completed cycles yet"),
+        ("Perfect Cycles", "No cycles yet"),
         ("Perfect Cycles", "999 of 999"),
         ("Miles walked", "12345.6 mi"),
         ("Rest days banked", "12.5"),
@@ -90,6 +90,100 @@ final class StatGridCellHeightTests: XCTestCase {
         }
     }
 
+    /// At an accessibility size statGridColumns drops to ONE column, so
+    /// the widths are different ones entirely — and that is exactly where
+    /// minimumScaleFactor does its work. If scaling the glyphs down were
+    /// to leave the line box at its unscaled height, or to change it, the
+    /// variable height would be straight back.
+    func testHeightIsPinnedAcrossAccessibilityWidths() {
+        let third: CGFloat = 1.0 / 3.0
+        var widths: [CGFloat] = []
+        for c in [CGFloat(256), 311, 326, 329, 338, 354, 368] {
+            widths.append(c - third); widths.append(c); widths.append(c + third)
+        }
+        let axSizes: [DynamicTypeSize] = [.accessibility1, .accessibility2,
+                                          .accessibility3, .accessibility4, .accessibility5]
+        for size in axSizes {
+            var expected: CGFloat?
+            for (label, value) in Self.pairs {
+                for width in widths {
+                    let h = height(label, value, width: width, size: size)
+                    if let expected {
+                        XCTAssertEqual(h, expected, accuracy: 0.01,
+                                       "\(size): <\(label)>/<\(value)> is \(h) at width \(width), "
+                                       + "but \(expected) elsewhere — scaled text must not move the height")
+                    } else {
+                        expected = h
+                    }
+                }
+            }
+        }
+    }
+
+    /// Proves minimumScaleFactor is actually doing something, which an
+    /// equal-heights assertion cannot: a pinned height stays pinned
+    /// whether the text scales or truncates.
+    ///
+    /// Same string, two widths. At a width that fits it, it renders at
+    /// full size. At the narrowest accessibility column it cannot fit, so
+    /// it must shrink — and shrunk glyphs leave a SHORTER ink trace.
+    /// Without minimumScaleFactor it would truncate at full size instead
+    /// and the two traces would match.
+    ///
+    /// Sabotage check: delete either .minimumScaleFactor in StatGridCell
+    /// and this fails.
+    func testScaleFactorActuallyShrinksTheGlyphs() throws {
+        // Widest real value: "September 2026 (31)", 575.667pt at AX5.
+        let value = "September 2026 (31)"
+        let roomy = try inkHeight(value: value, width: 700, size: .accessibility5)
+        let cramped = try inkHeight(value: value, width: 256, size: .accessibility5)
+        XCTAssertGreaterThan(roomy, 0, "sanity: something was drawn")
+        // Measured: 48px of ink roomy, 22px cramped — ratio 0.458, which
+        // tracks the 0.4447 the width demands. The threshold is 0.6
+        // because the two ways of breaking this both land far above it:
+        // dropping .minimumScaleFactor gives full-size truncated glyphs,
+        // and dropping .lineLimit(1) stops the scale factor applying at
+        // all (measured ratio 0.9375 — it wraps and clips instead).
+        XCTAssertLessThan(Double(cramped), Double(roomy) * 0.6,
+                          "at 256pt the value must SHRINK (ink \(cramped)px) rather than truncate "
+                          + "or wrap at full size (ink \(roomy)px)")
+        // And the floor is low enough to fit it, not just to shrink it.
+        XCTAssertLessThanOrEqual(256.0 / 575.667, Double(StatGridCell.minimumScale) + 0.005,
+                                 "the measured requirement at AX5/256pt is 0.4447; the floor must reach it")
+    }
+
+    /// Pixel rows containing ink, for a cell rendered with an empty label
+    /// so only the value draws.
+    private func inkHeight(value: String, width: CGFloat, size: DynamicTypeSize) throws -> Int {
+        let v = StatGridCell(label: "", value: value)
+            .environment(\.dynamicTypeSize, size)
+            .frame(width: width, alignment: .leading)
+            .background(Color.white)
+        let renderer = ImageRenderer(content: v)
+        renderer.scale = 1
+        guard let cg = renderer.cgImage else { throw XCTSkip("ImageRenderer produced no image") }
+        let w = cg.width, h = cg.height
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8,
+                            bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        ctx?.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var rows = 0
+        for y in 0..<h {
+            var inked = false
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                // Anything meaningfully darker than the white ground.
+                if pixels[i] < 200 || pixels[i + 1] < 200 || pixels[i + 2] < 200 {
+                    inked = true
+                    break
+                }
+            }
+            if inked { rows += 1 }
+        }
+        return rows
+    }
+
     /// The other half of the sabotage check: these are not strings that
     /// happen to fit. Without the lineLimit they genuinely wrap at a real
     /// column width, which is what makes the test above meaningful rather
@@ -105,13 +199,20 @@ final class StatGridCellHeightTests: XCTestCase {
         }
         // 161.0 is the column width on a 402pt phone at the default size.
         let oneLine = unpinnedHeight("100% (on pace)", width: 161.0)
-        XCTAssertGreaterThan(unpinnedHeight("No completed cycles yet", width: 161.0), oneLine,
-                             "Perfect Cycles' empty-state value wraps unpinned (38.0 vs \(oneLine))")
         XCTAssertGreaterThan(unpinnedHeight("September 2026 (31)", width: 161.0), oneLine,
-                             "the longest bestMonthLabel wraps unpinned (38.0 vs \(oneLine))")
-        // And the near-miss that makes this a "hasn't happened yet":
-        // 147.333 intrinsic against a 147.5 column on a 375pt phone.
+                             "the longest bestMonthLabel wraps unpinned at this phone's column width")
+        // The near-misses that make this a "hasn't happened yet". Each
+        // fits by less than a third of a point, which is exactly the
+        // width wobble a self-sizing row sees between layout passes.
         XCTAssertEqual(unpinnedHeight("100% (on pace)", width: 147.5), oneLine,
                        accuracy: 0.5, "fits by 0.167pt at xLarge on a 375pt phone — see StatGridCell")
+        // 176.333 intrinsic against a 176.0 column: it MISSES by a third
+        // of a point on a 440pt phone at the default size, and clears by
+        // the same margin a third of a point wider. Either side of that
+        // line is a line-count flip.
+        XCTAssertGreaterThan(unpinnedHeight("September 2026 (31)", width: 176.0), oneLine,
+                             "wraps at a 440pt phone's 176.0 column")
+        XCTAssertEqual(unpinnedHeight("September 2026 (31)", width: 176.0 + 2.0 / 3.0), oneLine,
+                       accuracy: 0.5, "and fits two thirds of a point wider — see StatGridCell")
     }
 }
