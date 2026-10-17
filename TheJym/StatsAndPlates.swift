@@ -1620,6 +1620,75 @@ enum StatsEngine {
                               maxStreakRestDays: maxStreakRestDays)
     }
 
+    /// "Best Streak" for ONE phase, as the per-phase stats screen shows
+    /// it: the best rest-bank streak reached while that phase was running,
+    /// walked with only that phase's own reset events.
+    ///
+    /// ONE definition of "inside this phase", applied to all three inputs.
+    /// It did not used to be: training came from the phase's `sessions`
+    /// relationship while rest activities and recovery credits were taken
+    /// as "dated at or after this phase's start" with no ceiling at all,
+    /// and the walk's end was then the maximum of all three. A closed
+    /// phase therefore walked forward through every LATER phase's rest
+    /// days while still using its own reset events — Phase 1's walk ran
+    /// to 16 Oct 2026 against resets that stopped on 20 Aug. Harmless
+    /// while rest days didn't count; not harmless once they did.
+    ///
+    /// Phase has no endDate, so the window is [startDate, next phase's
+    /// startDate), and `.now` for the active phase. That is a DATE rule
+    /// where sessions use a stored relationship, which would be two
+    /// definitions again if the two disagreed — they don't: on the real
+    /// store, 0 of 94 phase-attributed sessions fall outside their own
+    /// phase's window. The window is applied to sessions too, so there is
+    /// one rule and the relationship is a cross-check on it rather than a
+    /// second scope.
+    ///
+    /// A closed phase is still bounded at its last logged day WITHIN the
+    /// window, not at the window's ceiling — unchanged behaviour, and the
+    /// reason trailing unlogged days can't quietly spend its bank down.
+    static func phaseBestStreak(phase: Phase,
+                                allPhases: [Phase],
+                                restActivities: [RestDayActivity],
+                                activeRecoveries: [ActiveRecovery],
+                                now: Date = .now) -> RestBankResult {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: phase.startDate)
+        // Exclusive ceiling: the earliest later phase's start. nil for the
+        // last phase on record, which then has no upper bound but its own
+        // data.
+        let ceiling = allPhases
+            .filter { $0.startDate > phase.startDate }
+            .map { cal.startOfDay(for: $0.startDate) }
+            .min()
+        func inWindow(_ date: Date) -> Bool {
+            let day = cal.startOfDay(for: date)
+            guard day >= start else { return false }
+            guard let ceiling else { return true }
+            return day < ceiling
+        }
+
+        let activityDates = restActivities.map(\.date).filter(inWindow)
+        let activitySet = Set(activityDates.map { cal.startOfDay(for: $0) })
+        let sessionDates = phase.sessions
+            .filter { !$0.exerciseLogs.isEmpty }
+            .map(\.date)
+            .filter(inWindow)
+        let trainingDates = sessionDates.filter { !activitySet.contains(cal.startOfDay(for: $0)) }
+        let plainRestDates = activeRecoveries.map(\.date).filter(inWindow)
+
+        let all = trainingDates + activityDates + plainRestDates
+        guard !all.isEmpty else {
+            return RestBankResult(currentStreak: 0, maxStreak: 0, bankBalance: 0,
+                                  maxStreakRange: nil, currentStreakStartDate: nil)
+        }
+        let end = phase.isActive ? now : (all.max() ?? phase.startDate)
+        return computeRestBank(trainingDates: trainingDates,
+                               activityRestDates: activityDates,
+                               plainRestDates: plainRestDates,
+                               resetEvents: phase.restBankResetEvents,
+                               now: end)
+    }
+
     /// Required pace (slots per calendar day) implied by the phase's own
     /// split — one day-template slot (training or Rest, both now tracked by
     /// filledSlotCount) per calendar day, so expected slots by today is just

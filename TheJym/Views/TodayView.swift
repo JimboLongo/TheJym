@@ -1174,6 +1174,9 @@ struct PhaseStatsView: View {
     let phase: Phase
     @Query(sort: \ActiveRecovery.date) private var activeRecoveries: [ActiveRecovery]
     @Query private var restActivities: [RestDayActivity]
+    /// Needed only to find where this phase's window ends — Phase has no
+    /// endDate, so the ceiling is the next phase's startDate.
+    @Query(sort: \Phase.number) private var allPhases: [Phase]
 
     private struct TopSet: Identifiable {
         let id = UUID()
@@ -1191,21 +1194,16 @@ struct PhaseStatsView: View {
         phase.filledSlotCount / max(phase.orderedDays.count, 1)
     }
 
-    /// Best rest-bank streak achieved during this phase's own timeframe,
-    /// using only this phase's own reset events (its first logged day, its
-    /// own cycle-finish dates) — an inactive/completed phase is bounded at
-    /// its last logged session rather than walking all the way to today.
+    /// Best rest-bank streak achieved during this phase's own timeframe.
+    /// The scoping — one window for all three inputs, rather than a
+    /// relationship for sessions and an open-ended date floor for the
+    /// rest days — lives in the engine so a test can reach it. See
+    /// StatsEngine.phaseBestStreak.
     private var bestStreak: Int {
-        let cal = Calendar.current
-        let activityDates = restActivities.filter { $0.date >= phase.startDate }.map(\.date)
-        let activitySet = Set(activityDates.map { cal.startOfDay(for: $0) })
-        let trainingDates = phaseSessions.map(\.date).filter { !activitySet.contains(cal.startOfDay(for: $0)) }
-        let plainRestDates = activeRecoveries.filter { $0.date >= phase.startDate }.map(\.date)
-        guard !(trainingDates + activityDates + plainRestDates).isEmpty else { return 0 }
-        let end = phase.isActive ? Date() : ((trainingDates + activityDates + plainRestDates).max() ?? phase.startDate)
-        return StatsEngine.computeRestBank(trainingDates: trainingDates, activityRestDates: activityDates,
-                                           plainRestDates: plainRestDates, resetEvents: phase.restBankResetEvents,
-                                           now: end).maxStreak
+        StatsEngine.phaseBestStreak(phase: phase,
+                                    allPhases: allPhases,
+                                    restActivities: restActivities,
+                                    activeRecoveries: activeRecoveries).maxStreak
     }
 
     /// One entry per exercise logged in this phase — its best session, by
