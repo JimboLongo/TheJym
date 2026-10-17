@@ -160,8 +160,22 @@ struct TrainingStats {
     // against (no schedule = not counted either way).
     var perfectWeeks: Int       // every scheduled training day that week was logged
     var perfectMonths: Int      // every scheduled training day that month was logged
-    var bestMonthLabel: String? // e.g. "Mar 2026" — abbreviated, see below
+    var bestMonthLabel: String? // e.g. "Mar 2026" — abbreviated, see monthLabel
     var bestMonthWorkouts: Int  // workouts logged in that month
+
+    /// "MMM", not "MMMM". This lands in a statGrid cell, and the full
+    /// month name was the widest value the grid could produce at any
+    /// Dynamic Type size — "September 2026 (31)" is 575.667pt at AX5
+    /// against a 256pt column, and on its own it set the floor on
+    /// StatGridCell. Abbreviating buys back a third of the width.
+    ///
+    /// A named function, not an inline DateFormatter, so StatGridFloorTests
+    /// can derive the real widest label from it instead of retyping one.
+    static func monthLabel(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "MMM yyyy"
+        return f.string(from: date)
+    }
 
     // Active-Phase-only stats (nil with no active phase).
     var cyclePaceDelta: Int?        // actual sessions vs. floor(daysElapsed * pace)
@@ -1134,15 +1148,7 @@ enum StatsEngine {
            best.value > 0 {
             bestMonthWorkouts = best.value
             if let monthDate = cal.date(from: best.key) {
-                // "MMM", not "MMMM". This lands in a statGrid cell, and
-                // the full month name was the widest value the grid can
-                // produce at any Dynamic Type size — "September 2026 (31)"
-                // is 575.667pt at AX5, against a 256pt column, which on
-                // its own set the floor on StatGridCell.minimumScale.
-                // Abbreviating buys back a third of the width.
-                let f = DateFormatter()
-                f.dateFormat = "MMM yyyy"
-                bestMonthLabel = f.string(from: monthDate)
+                bestMonthLabel = TrainingStats.monthLabel(monthDate)
             }
         }
 

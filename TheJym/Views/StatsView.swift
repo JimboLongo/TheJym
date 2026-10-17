@@ -131,7 +131,11 @@ struct StatsView: View {
             .transition(.opacity)
     }
 
-    private func milesLabel(_ miles: Double) -> String {
+    /// `static` (and not private) so StatGridFloorTests can derive the
+    /// real value strings from the real formatter rather than retyping
+    /// them — see that file's note on why a retyped catalogue proves
+    /// nothing.
+    static func milesLabel(_ miles: Double) -> String {
         "\(Formatters.trim(miles)) mi"
     }
 
@@ -171,7 +175,7 @@ struct StatsView: View {
         return start == end ? start : "\(start) – \(end)"
     }
 
-    private func hoursLabel(_ hours: Double) -> String {
+    static func hoursLabel(_ hours: Double) -> String {
         String(format: "%.1f hr", hours)
     }
 
@@ -195,7 +199,7 @@ struct StatsView: View {
     /// Shared by the Current Phase section and every completed-phase
     /// summary, which render the same pair — the two would otherwise be
     /// free to drift into different treatments of one number.
-    private func adherenceLabel(percent: Double, delta: Int) -> String {
+    static func adherenceLabel(percent: Double, delta: Int) -> String {
         let pct = String(format: "%.0f%%", percent)
         if delta == 0 { return "\(pct) (on pace)" }
         return "\(pct) (\(abs(delta)) \(delta > 0 ? "ahead" : "behind"))"
@@ -363,32 +367,32 @@ struct StatsView: View {
         // the delta falls back to 0 ("on pace") only to satisfy the
         // optional, and can't actually be reached with a percent in hand.
         if let adherence = stats.adherencePercent {
-            pairs.append(("Adherence",
-                          adherenceLabel(percent: adherence, delta: stats.cyclePaceDelta ?? 0)))
+            pairs.append((StatGridLabel.adherence.rawValue,
+                          Self.adherenceLabel(percent: adherence, delta: stats.cyclePaceDelta ?? 0)))
         }
         if let progress = stats.activePhaseCycleProgress {
             // Named for what the number IS, not which phase it's from —
             // the section header already says the phase, and "Phase 2"
             // as a label told you nothing about "7 of 7" meaning.
-            pairs.append(("Perfect Cycles",
+            pairs.append((StatGridLabel.perfectCycles.rawValue,
                           progress.completedCount == 0
                               // Short because this is a stat cell, not a
                               // sentence. "No completed cycles yet" is
                               // 697pt wide at AX5 — nearly three times
                               // the narrowest column, unreadable at any
                               // scale factor that would fit it.
-                              ? "No cycles yet"
+                              ? StatGridValueLiteral.noCyclesYet.rawValue
                               : "\(progress.perfectCount) of \(progress.completedCount)"))
         }
         if let miles = stats.milesThisPhase {
-            pairs.append(("Miles walked", milesLabel(miles)))
+            pairs.append((StatGridLabel.milesWalked.rawValue, Self.milesLabel(miles)))
         }
         // Moved down from the Consistency section, where it was the one
         // phase-scoped number in a since-start block. The bank resets at
         // phase start and again at every cycle finish
         // (Phase.restBankResetEvents), so its balance only means anything
         // relative to the phase you're in.
-        pairs.append(("Rest days banked", String(format: "%.1f", stats.bankBalance)))
+        pairs.append((StatGridLabel.restDaysBanked.rawValue, String(format: "%.1f", stats.bankBalance)))
         return Section("Current Phase — Phase \(activePhase.number)") {
             statGrid(pairs)
         }
@@ -488,8 +492,8 @@ struct StatsView: View {
     private func progressFallbackSection(_ fallback: PerfectWeekFallback) -> some View {
         Section("Progress") {
             statGrid([
-                ("Lifetime perfect weeks", "\(fallback.lifetimeCount)"),
-                ("Current perfect-week streak", "\(fallback.currentStreak)"),
+                (StatGridLabel.lifetimePerfectWeeks.rawValue, "\(fallback.lifetimeCount)"),
+                (StatGridLabel.currentPerfectWeekStreak.rawValue, "\(fallback.currentStreak)"),
             ])
         }
     }
@@ -506,8 +510,8 @@ struct StatsView: View {
             if dynamicTypeSize.isAccessibilitySize {
                 statRow("YTD workouts", "\(stats.ytdWorkoutDays) (PY: \(stats.priorYearYtdWorkoutDays))")
                 statRow("MTD workouts", "\(stats.mtdWorkoutDays) (PY: \(stats.priorYearMtdWorkoutDays))")
-                statRow("YTD miles", "\(milesLabel(stats.ytdMiles)) (PY: \(milesLabel(stats.priorYearYtdMiles)))")
-                statRow("MTD miles", "\(milesLabel(stats.mtdMiles)) (PY: \(milesLabel(stats.priorYearMtdMiles)))")
+                statRow("YTD miles", "\(Self.milesLabel(stats.ytdMiles)) (PY: \(Self.milesLabel(stats.priorYearYtdMiles)))")
+                statRow("MTD miles", "\(Self.milesLabel(stats.mtdMiles)) (PY: \(Self.milesLabel(stats.priorYearMtdMiles)))")
             } else {
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                     GridRow {
@@ -522,8 +526,8 @@ struct StatsView: View {
                     }
                     GridRow {
                         Text("Miles").font(.caption).foregroundStyle(.secondary)
-                        yearMonthCell(milesLabel(stats.ytdMiles), py: milesLabel(stats.priorYearYtdMiles))
-                        yearMonthCell(milesLabel(stats.mtdMiles), py: milesLabel(stats.priorYearMtdMiles))
+                        yearMonthCell(Self.milesLabel(stats.ytdMiles), py: Self.milesLabel(stats.priorYearYtdMiles))
+                        yearMonthCell(Self.milesLabel(stats.mtdMiles), py: Self.milesLabel(stats.priorYearMtdMiles))
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
@@ -827,15 +831,15 @@ struct StatsView: View {
     private func milestonesSection(_ stats: TrainingStats) -> some View {
         Section {
             statGrid([
-                ("Perfect weeks", "\(stats.perfectWeeks)"),
-                ("Perfect months", "\(stats.perfectMonths)"),
+                (StatGridLabel.perfectWeeks.rawValue, "\(stats.perfectWeeks)"),
+                (StatGridLabel.perfectMonths.rawValue, "\(stats.perfectMonths)"),
                 // All-time, unbounded window — see consistencySection's own
                 // note on why this is kept separate from "Miles walked"
                 // (since-start) rather than merged into it.
-                ("All-time miles", milesLabel(stats.allTimeMiles)),
-                ("Best month all-time", stats.bestMonthLabel.map { "\($0) (\(stats.bestMonthWorkouts))" } ?? "—"),
-                ("All-time active days", "\(stats.allTimeActiveDayCount)"),
-                ("All-time hours trained", hoursLabel(stats.allTimeHoursTrained)),
+                (StatGridLabel.allTimeMiles.rawValue, Self.milesLabel(stats.allTimeMiles)),
+                (StatGridLabel.bestMonthAllTime.rawValue, stats.bestMonthLabel.map { "\($0) (\(stats.bestMonthWorkouts))" } ?? StatGridValueLiteral.none.rawValue),
+                (StatGridLabel.allTimeActiveDays.rawValue, "\(stats.allTimeActiveDayCount)"),
+                (StatGridLabel.allTimeHoursTrained.rawValue, Self.hoursLabel(stats.allTimeHoursTrained)),
             ])
         } header: {
             Text("Milestones")
@@ -975,10 +979,10 @@ struct StatsView: View {
                     // Same merge as the Current Phase section, through the
                     // same helper, so the page can't end up with two
                     // treatments of one number.
-                    ("Final adherence", adherenceLabel(percent: summary.adherencePercent,
+                    (StatGridLabel.finalAdherence.rawValue, Self.adherenceLabel(percent: summary.adherencePercent,
                                                        delta: summary.cyclePaceDelta)),
-                    ("Perfect cycles", "\(summary.perfectCount) of \(summary.completedCount)"),
-                    ("Miles walked", milesLabel(summary.milesWalked)),
+                    (StatGridLabel.completedPerfectCycles.rawValue, "\(summary.perfectCount) of \(summary.completedCount)"),
+                    (StatGridLabel.milesWalked.rawValue, Self.milesLabel(summary.milesWalked)),
                 ])
             } label: {
                 VStack(alignment: .leading, spacing: 1) {
@@ -1031,6 +1035,43 @@ struct StatsView: View {
     }
 }
 
+/// This exists for exactly one reason: `StatGridCell.minimumScale` is a
+/// number derived from how wide the widest of these gets at AX5, and a
+/// test that retyped the list would be checking the constant against a
+/// copy of its own assumptions — the empty-vs-empty diff problem. Adding
+/// a stat means adding a case here, and the floor test then measures it
+/// whether or not anyone remembered to think about width.
+enum StatGridValueLiteral: String, CaseIterable {
+    /// currentPhaseSection, when no cycle has completed yet.
+    case noCyclesYet = "No cycles yet"
+    /// milestonesSection, when there is no best month to name.
+    case none = "\u{2014}"
+}
+
+/// Every label the four `statGrid` callers use, in one `CaseIterable`
+/// list so a test can enumerate them. See StatGridValueLiteral above for
+/// the handful of values that are literals rather than formatter output.
+enum StatGridLabel: String, CaseIterable {
+    // currentPhaseSection
+    case adherence = "Adherence"
+    case perfectCycles = "Perfect Cycles"
+    case milesWalked = "Miles walked"
+    case restDaysBanked = "Rest days banked"
+    // progressFallbackSection
+    case lifetimePerfectWeeks = "Lifetime perfect weeks"
+    case currentPerfectWeekStreak = "Current perfect-week streak"
+    // milestonesSection
+    case perfectWeeks = "Perfect weeks"
+    case perfectMonths = "Perfect months"
+    case allTimeMiles = "All-time miles"
+    case bestMonthAllTime = "Best month all-time"
+    case allTimeActiveDays = "All-time active days"
+    case allTimeHoursTrained = "All-time hours trained"
+    // completedPhaseSection
+    case finalAdherence = "Final adherence"
+    case completedPerfectCycles = "Perfect cycles"
+}
+
 /// One label/value cell of `statGrid`.
 ///
 /// Its own `struct` (not an inline VStack) for the same reason as
@@ -1047,13 +1088,34 @@ struct StatsView: View {
 /// height flips with it, and the two passes never agree. The keyboard
 /// made that one easy to trigger; it was never the mechanism.
 ///
-/// `.lineLimit(1)` is NOT what does that work any more, despite what
-/// 4fa6288's message claimed. Measured: with the sizing glyph in place,
-/// deleting it changes nothing observable — not the height, not the ink
-/// extent, not even for a value far too long to fit at the scale floor.
-/// A Text proposed a one-line-high frame lays out one line regardless.
-/// It stays as a statement of intent, but nothing guards it, because
-/// there is nothing left for it to change.
+/// `.lineLimit(1)` IS load-bearing, and both earlier commit messages
+/// overstated their case in opposite directions. 4fa6288 said dropping
+/// it always breaks things; e624b1c said dropping it changes nothing.
+/// The variable neither of them controlled for is the floor itself.
+/// Measured, "September 2026 (31)" in a 256pt column at AX5:
+///
+///     floor 0.44  with .lineLimit(1)     ink ratio 0.458, ink width 251
+///     floor 0.44  without                ink ratio 0.938, ink width 210
+///     floor 0.52  with .lineLimit(1)     ink ratio 0.500, ink width 234
+///     floor 0.52  without                ink ratio 0.500, ink width 234
+///
+/// The mechanism: given the choice, SwiftUI wraps rather than scales, so
+/// the line limit is what makes it scale. At 0.44 that string needs
+/// 0.4447 and scaling CAN fit it in one line, so removing the limit
+/// visibly changes the render. At 0.52 it needs more shrink than allowed
+/// and both paths end at the same truncated result, which is why a sweep
+/// of 11 strings x 26 widths at the current floor finds no difference at
+/// all. That is "the current floor doesn't exercise it", not "it does
+/// nothing" — exactly the distinction that mattered for the livelock.
+/// Do not delete it. StatGridLineLimitTests pins the discriminating case
+/// by building the real cell with a lower floor.
+///
+/// (The overlay is NOT the risk here, which was the other hypothesis: an
+/// overlay is proposed its parent's size, and a Text honours a one-line
+/// height proposal by laying out one line. Verified against a positive
+/// control — a 200pt block overlaid on an 18pt parent does draw 91 rows
+/// of ink below it, so the measurement can see overflow when there is
+/// any. With a Text there never is.)
 ///
 /// Column widths, measured by hosting the real StatsView rather than
 /// derived from the device width — the two widest phones do NOT follow
@@ -1085,11 +1147,17 @@ struct StatsView: View {
 /// reachable — the target device family is iPhone and iPad), the
 /// tightest real strings are
 ///
+///     "1200% (11 behind)"           515.000pt  needs 0.4971
 ///     "1200% (11 ahead)"            484.667pt  needs 0.5282
 ///     "Current perfect-week streak" 478.000pt  needs 0.5356
 ///     "100% (on pace)"              424.333pt  needs 0.6033
 ///
-/// so 0.52 is the largest two-decimal floor that still fits all of them.
+/// so 0.49 is the largest two-decimal floor that still fits all of them.
+/// Note the top line: "behind" is a character longer than "ahead", and I
+/// had the floor at 0.52 off a hand-written catalogue that only listed
+/// the "ahead" form. StatGridFloorTests found it on its first run by
+/// calling the real adherenceLabel over both signs — which is the whole
+/// argument for deriving the floor instead of restating it.
 /// It used to be 0.44, set single-handedly by "September 2026 (31)" at
 /// 575.667pt; abbreviating that month (StatsAndPlates' bestMonthLabel)
 /// bought back a third of its width and let the floor rise.
@@ -1116,8 +1184,15 @@ struct StatsView: View {
 /// sized by an invisible unscaled glyph and the real text rides on top as
 /// an overlay: the text may shrink, the row cannot.
 struct StatGridCell: View {
-    /// See the note above: 256 / 484.667, rounded down to two decimals.
-    static let minimumScale: CGFloat = 0.52
+    /// See the note above: 256 / 515.0, rounded down to two decimals.
+    ///
+    /// A property rather than a constant so tests can build the real cell
+    /// at a floor that exercises the wrap-versus-scale choice. Production
+    /// never passes it. StatGridFloorTests re-derives this number from
+    /// the strings the four callers actually produce, and fails naming
+    /// the string if a new one no longer fits.
+    static let defaultMinimumScale: CGFloat = 0.49
+    var minimumScale: CGFloat = Self.defaultMinimumScale
 
     /// ONE definition each, used by both the sizing glyph and the text it
     /// sizes. A sizer in a different font from its text pins the row to a
@@ -1157,7 +1232,7 @@ struct StatGridCell: View {
                     .font(font)
                     .foregroundStyle(secondary ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
                     .lineLimit(1)
-                    .minimumScaleFactor(Self.minimumScale)
+                    .minimumScaleFactor(minimumScale)
             }
     }
 }
@@ -1433,7 +1508,7 @@ struct YearlyTotalsTable: View {
                     valueText("\(column.activeDayCount)")
                 }
                 LabeledContent("\(column.header) — Miles") {
-                    valueText(milesLabel(column.miles))
+                    valueText(StatsView.milesLabel(column.miles))
                 }
             }
         } else {
@@ -1457,7 +1532,7 @@ struct YearlyTotalsTable: View {
                 GridRow {
                     Text("Miles").font(.caption).foregroundStyle(.secondary)
                     ForEach(columns) { column in
-                        valueText(milesLabel(column.miles))
+                        valueText(StatsView.milesLabel(column.miles))
                             .fixedSize()
                             .gridColumnAlignment(.center)
                     }

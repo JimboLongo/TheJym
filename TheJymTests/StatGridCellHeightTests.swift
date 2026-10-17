@@ -146,15 +146,10 @@ final class StatGridCellHeightTests: XCTestCase {
         XCTAssertLessThan(Double(cramped), Double(roomy) * 0.75,
                           "at 256pt the value must SHRINK (ink \(cramped)px) rather than truncate "
                           + "or wrap at full size (ink \(roomy)px)")
-        // And the floor reaches far enough DOWN to fit it — a floor above
-        // the requirement would stop the shrink short and clip — while
-        // not being needlessly lower than it needs to be.
-        let required = 256.0 / 484.667   // "1200% (11 ahead)" at AX5
-        XCTAssertLessThanOrEqual(Double(StatGridCell.minimumScale), required,
-                                 "floor \(StatGridCell.minimumScale) must reach the \(required) "
-                                 + "the widest real value demands")
-        XCTAssertGreaterThan(Double(StatGridCell.minimumScale), required - 0.02,
-                             "floor \(StatGridCell.minimumScale) is lower than anything needs")
+        // Whether the floor is low enough for the widest string is NOT
+        // asserted here: 484.667 would be a hardcoded copy of the number
+        // the floor was derived from. StatGridFloorTests re-derives it
+        // from the real labels, literals and formatters instead.
     }
 
     private func inkHeight(value: String, width: CGFloat, size: DynamicTypeSize) throws -> Int {
