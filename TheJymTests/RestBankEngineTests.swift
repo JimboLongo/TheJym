@@ -5,11 +5,11 @@
 //  Verifies StatsEngine.computeRestBank against the reset-based rest-bank
 //  model: the bank RESETS (not adds) to restDaysPerCycle when a phase's
 //  first session is logged and again each time a cycle finishes (except the
-//  last), training and activity-logged rest days both grow the streak count
-//  while a plain/unscheduled rest "does nothing" for it (but still spends
-//  the bank and can still break the streak), and Phase.cycleCompletionDates/
-//  firstLoggedDate/restBankResetEvents actually produce the right events
-//  from real logged history.
+//  last); training, activity-logged rest and plain LOGGED rest all grow the
+//  streak count (rest of either kind still spends the bank and can still
+//  break the streak); an UNLOGGED day spends without counting; and
+//  Phase.cycleCompletionDates/firstLoggedDate/restBankResetEvents actually
+//  produce the right events from real logged history.
 //
 
 import XCTest
@@ -49,16 +49,21 @@ final class RestBankEngineTests: XCTestCase {
         XCTAssertEqual(result.bankBalance, 1.0, accuracy: 1e-9, "2.0 - 0.5 - 0.5")
     }
 
-    // MARK: - A plain rest day "does nothing" for the streak count
+    // MARK: - A plain LOGGED rest day spends AND counts
 
-    /// A plain/unscheduled rest day still spends 1.0 from the bank and
-    /// still keeps the ledger open if it survives, but does NOT add to the
-    /// streak count — the count stays exactly where training left it.
-    func testPlainRestDoesNotGrowTheStreakButStillSpends() {
+    /// A plain LOGGED rest mid-streak, with the bank holding: it spends
+    /// 1.0 and it counts. A rest day you told the app about is a day of
+    /// the program, and the bank is what stops that inflating anything —
+    /// you can only spend what a cycle earned.
+    ///
+    /// Sabotage: drop the `recordCredit(on: day, isRest: true)` in
+    /// computeRestBank's no-reset branch and this reads 2, not 3.
+    func testPlainRestGrowsTheStreakAndStillSpends() {
         let reset: [(date: Date, resetTo: Double)] = [(day(1), 2.0)]
         let result = StatsEngine.computeRestBank(trainingDates: [day(1), day(3)], activityRestDates: [],
                                                   plainRestDates: [day(2)], resetEvents: reset, now: day(3))
-        XCTAssertEqual(result.currentStreak, 2, "day 2's plain rest doesn't count -- only the 2 training days do")
+        XCTAssertEqual(result.currentStreak, 3, "two training days plus day 2's logged rest")
+        XCTAssertEqual(result.currentStreakRestDays, 1, "exactly one of those three was a rest day")
         XCTAssertEqual(result.bankBalance, 1.0, accuracy: 1e-9, "2.0 - 1.0 (day 2's spend), day 3 training is neutral")
     }
 
@@ -92,10 +97,18 @@ final class RestBankEngineTests: XCTestCase {
     // reopening the streak same-day if that spend just broke it.
 
     /// At 0.5, a plain rest as the cycle's last day: the spend (-1.0) goes
-    /// negative against the OLD bank, breaking the streak (restarts at 0,
-    /// since a plain rest never itself counts) -- but because this day also
-    /// completes the cycle, the bank still ends reset to 2.0, not 0.
-    func testLastDayPlainRestBreaksButBankStillResets() {
+    /// negative against the OLD bank, breaking the streak -- but because
+    /// this day also completes the cycle, the bank still ends reset to
+    /// 2.0, not 0.
+    ///
+    /// THE ORDER IS THE POINT. A logged rest normally counts, but the
+    /// break happens first, and the reset reopening the ledger on this
+    /// same date must not hand it the credit for the day it broke on. The
+    /// reopened streak starts empty, at 0 -- not 1.
+    ///
+    /// Sabotage: drop the `!brokeToday` guard on the plain-rest branch
+    /// inside computeRestBank's reset arm and this reads 1.
+    func testLastDayPlainRestBreaksBeforeTheResetAndIsNotCreditedForIt() {
         // day1: training, reset 1.5 -> bank 1.5. day2: plain rest (no reset)
         // -> bank 0.5, streak still just day1's 1. day3: the cycle's last
         // day, itself a plain rest, WITH its own reset to 2.0.
@@ -103,8 +116,30 @@ final class RestBankEngineTests: XCTestCase {
         let result = StatsEngine.computeRestBank(trainingDates: [day(1)], activityRestDates: [],
                                                   plainRestDates: [day(2), day(3)],
                                                   resetEvents: resets, now: day(3))
-        XCTAssertEqual(result.currentStreak, 0, "day 3's plain rest broke it against the pre-reset 0.5, and never counts anyway")
+        XCTAssertEqual(result.currentStreak, 0,
+                       "day 3's plain rest broke it against the pre-reset 0.5, and the reset "
+                       + "reopening the ledger on the same date doesn't credit the breaking day")
+        XCTAssertEqual(result.currentStreakRestDays, 0, "nothing counted into the reopened streak")
         XCTAssertEqual(result.bankBalance, 2.0, accuracy: 1e-9, "still resets despite the break")
+    }
+
+    /// The same shape with the bank able to afford it: a plain rest on a
+    /// cycle-completion day that stays non-negative IS credited, and the
+    /// reset still lands on top.
+    ///
+    /// This is the counterpart to the test above, and the pair is what
+    /// shows the `!brokeToday` guard is a guard rather than a blanket
+    /// refusal to credit rest on reset days.
+    func testCycleCompletionPlainRestTheBankCanAffordIsCredited() {
+        // day1: training, reset 2.0 -> bank 2.0. day2: training, neutral.
+        // day3: the cycle's last day, a plain rest, WITH its own reset.
+        let resets: [(date: Date, resetTo: Double)] = [(day(1), 2.0), (day(3), 2.0)]
+        let result = StatsEngine.computeRestBank(trainingDates: [day(1), day(2)], activityRestDates: [],
+                                                  plainRestDates: [day(3)],
+                                                  resetEvents: resets, now: day(3))
+        XCTAssertEqual(result.currentStreak, 3, "two training days plus the affordable logged rest")
+        XCTAssertEqual(result.currentStreakRestDays, 1, "day 3")
+        XCTAssertEqual(result.bankBalance, 2.0, accuracy: 1e-9, "the cycle reset lands on top of the spend")
     }
 
     /// At 0.5, a rest ACTIVITY as the cycle's last day: the spend (-0.5)
@@ -119,7 +154,9 @@ final class RestBankEngineTests: XCTestCase {
         let result = StatsEngine.computeRestBank(trainingDates: [day(1)], activityRestDates: [day(3)],
                                                   plainRestDates: [day(2)],
                                                   resetEvents: resets, now: day(3))
-        XCTAssertEqual(result.currentStreak, 2, "never broke -- day 1's training plus day 3's activity")
+        XCTAssertEqual(result.currentStreak, 3,
+                       "never broke -- day 1's training, day 2's logged rest, day 3's activity")
+        XCTAssertEqual(result.currentStreakRestDays, 1, "day 2")
         XCTAssertEqual(result.bankBalance, 2.0, accuracy: 1e-9)
     }
 
@@ -154,7 +191,10 @@ final class RestBankEngineTests: XCTestCase {
                                                   resetEvents: reset, now: day(4))
         XCTAssertEqual(result.currentStreak, 0, "day 4's rest has nothing left to spend -- breaks")
         XCTAssertEqual(result.bankBalance, 0, accuracy: 1e-9)
-        XCTAssertEqual(result.maxStreak, 1, "only day 1's training ever counted")
+        XCTAssertEqual(result.maxStreak, 3, "day 1's training plus days 2 and 3's logged rests, "
+                       + "which the bank could still afford")
+        XCTAssertEqual(result.maxStreakRestDays, 2, "two of that record's three days were rests")
+        XCTAssertEqual(result.currentStreakRestDays, 0, "the broken streak carries nothing forward")
     }
 
     /// A blank/unlogged day, while the ledger is open, spends 1.0 exactly
@@ -220,7 +260,9 @@ final class RestBankEngineTests: XCTestCase {
 
         guard let range = result.maxStreakRange else { return XCTFail("Expected a maxStreakRange") }
         XCTAssertEqual(cal.isDate(range.start, inSameDayAs: day(1)), true)
-        XCTAssertEqual(cal.isDate(range.end, inSameDayAs: day(1)), true)
+        XCTAssertEqual(cal.isDate(range.end, inSameDayAs: day(3)), true,
+                       "the record now runs to day 3 -- days 2 and 3 are logged rests the bank "
+                       + "could afford, and they count")
         XCTAssertNil(range.precedingBreakDate, "Nothing came before the very first credited day")
         XCTAssertNotNil(range.followingBreakDate)
         if let following = range.followingBreakDate {

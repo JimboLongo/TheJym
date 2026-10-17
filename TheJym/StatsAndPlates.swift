@@ -133,13 +133,12 @@ struct TrainingStats {
     var maxActiveStreakLiftDays: Int
     var maxActiveStreakWalkDays: Int
 
-    // The same four figures for the two BANKED streaks, from the same
-    // `composition(of:)` helper over the same `activeDays` — so
-    // Lift + Walk = Active holds on those rows identically, and their Rest
-    // cells are blank for the same reason. The two streak kinds count the
-    // same days and differ only in what breaks them; see
-    // ConsistencyStreakCell for why that isn't the duplication it looks
-    // like.
+    // The same figures for the two BANKED streaks, Lift and Walk from the
+    // same `composition(of:)` helper over the same `activeDays`. The two
+    // streak kinds no longer count the same days: a banked streak also
+    // counts logged rest days, so its identity is
+    // Lift + Walk + Rest = Program, while an active streak keeps
+    // Lift + Walk = Active with Rest blank. See ConsistencyStreakCell.
     /// "Last N days" rows, ascending by window length. Denominator is
     /// the window, not daysSinceStart — see RollingWindow.
     var rollingWindows: [RollingWindow]
@@ -148,6 +147,11 @@ struct TrainingStats {
     var currentBankedStreakWalkDays: Int
     var maxBankedStreakLiftDays: Int
     var maxBankedStreakWalkDays: Int
+    /// Logged rest days counted INSIDE each banked streak. Straight from
+    /// the bank walk (RestBankResult), not re-derived from a date range —
+    /// see that type for the edge case where the two disagree.
+    var currentBankedStreakRestDays: Int
+    var maxBankedStreakRestDays: Int
 
     // Year/month-to-date workout-day counts, vs. the same window last year.
     var ytdWorkoutDays: Int
@@ -270,35 +274,44 @@ struct TrainingStats {
 /// was uncovered: sabotaging the Rest cell to print `0` instead of no value
 /// broke nothing, because nothing outside the view could ask it.
 enum ConsistencyStreakCell {
-    /// Lift and Walk are the **composition** of the streak, so they sum to
-    /// it. Rest has no composition in a streak of active days — so it
-    /// shows no value rather than a misleading `0`. "—" is this
-    /// codebase's existing way of saying that.
+    /// Lift and Walk are the **composition** of the streak. What else is
+    /// in that composition depends on which of the two streak kinds the
+    /// row is, and this is the one place the two genuinely differ:
     ///
-    /// Shared verbatim by all FOUR streak rows, the two active and the two
-    /// banked, with no per-kind branch — worth being explicit about,
-    /// because the two pairs look like duplication and aren't:
+    ///   Daily  (active)  Lift + Walk         = Active,  Rest blank
+    ///   Program (banked) Lift + Walk + Rest  = Program
     ///
-    /// Both kinds count the same thing: days you were active. They differ
-    /// only in what ENDS them. An active streak ends at the first rest
-    /// day. A banked streak survives rest days for as long as the bank
-    /// holds — it runs THROUGH them, spending balance, while counting
-    /// none of them (computeRestBank calls recordCredit only for a
-    /// training or activity-rest day; a plain rest day "spends, but does
-    /// nothing for the count", and an unlogged day is absorbed without
-    /// being counted either).
+    /// Both still count days you told the app about. They differ in what
+    /// ends them, and now also in what they admit:
     ///
-    /// So a banked streak covers a longer calendar span than an active
-    /// one, but both are still a count of active days, and Lift + Walk ==
-    /// Active holds identically for both. Rest is blank on all four for
-    /// the same reason: no streak of either kind has rest days inside its
-    /// COUNT. Showing the banked span's absorbed rest days here would
-    /// redefine a number that has always meant the count.
-    static func text(header: String, active: Int, lift: Int, walk: Int) -> String {
+    /// A DAILY streak ends at the first rest day, so a rest day is by
+    /// definition not inside one. Its Rest cell shows no value rather
+    /// than a misleading `0` — "—" is this codebase's existing way of
+    /// saying "no such thing here".
+    ///
+    /// A PROGRAM streak runs THROUGH rest days, spending bank balance,
+    /// and counts the ones that were logged (see
+    /// StatsEngine.computeRestBank). So its Rest cell is a real number,
+    /// and the three columns sum to the streak.
+    ///
+    /// An UNLOGGED day is in neither identity. A Program streak absorbs
+    /// those without counting them, which is exactly why its count and
+    /// its date span stay different numbers — the span is what the
+    /// dateLine carries, and it is still telling you something the count
+    /// isn't.
+    ///
+    /// Free of the view so it is reachable from a test. Left inside the
+    /// view it was uncovered: sabotaging the Rest cell to print `0`
+    /// instead of no value broke nothing, because nothing outside the
+    /// view could ask it.
+    /// `rest` is nil for a Daily row (no rest day can be inside one) and
+    /// a count for a Program row.
+    static func text(header: String, active: Int, lift: Int, walk: Int,
+                     rest: Int? = nil) -> String {
         switch header {
         case "Lift": return "\(lift)"
         case "Walk": return "\(walk)"
-        case "Rest": return "—"
+        case "Rest": return rest.map { "\($0)" } ?? "\u{2014}"
         default: return "\(active)"
         }
     }
@@ -785,15 +798,15 @@ enum StatsEngine {
         let currentComposition = composition(of: currentStreakDays)
         let maxComposition = composition(of: maxStreakDays)
 
-        // The banked streaks' composition, through the very same helper
-        // and the very same `activeDays` set — no banked-specific rule.
-        // A banked streak counts exactly the days an active streak would
-        // (computeRestBank's recordCredit fires only on a training or
-        // activity-rest day, which together are precisely `activeDays`);
-        // it just spans further, because the bank carries it across the
-        // rest days in between without counting them. That's why
-        // Lift + Walk == Active holds here identically — see
-        // ConsistencyStreakCell.
+        // The banked streaks' Lift/Walk split, through the very same
+        // helper and the very same `activeDays` set — no banked-specific
+        // rule. `activeDays` is exactly the training and activity-rest
+        // days, which is exactly what recordCredit fires on for those two
+        // kinds, so Lift + Walk accounts for every counted day of the
+        // streak EXCEPT its logged plain rests. Those come from the walk
+        // itself (bank.currentStreakRestDays / .maxStreakRestDays) rather
+        // than from a second filter over this range, and the three
+        // together make Lift + Walk + Rest = Program.
         let bankedCurrentStreakDays: Set<Date> = bank.currentStreakStartDate.map { start in
             activeDays.filter { $0 >= start && $0 <= today }
         } ?? []
@@ -1177,6 +1190,8 @@ enum StatsEngine {
                              currentBankedStreakWalkDays: bankedCurrentComposition.walk,
                              maxBankedStreakLiftDays: bankedMaxComposition.lift,
                              maxBankedStreakWalkDays: bankedMaxComposition.walk,
+                             currentBankedStreakRestDays: bank.currentStreakRestDays,
+                             maxBankedStreakRestDays: bank.maxStreakRestDays,
                              ytdWorkoutDays: ytdWorkoutDays,
                              priorYearYtdWorkoutDays: priorYearYtdWorkoutDays,
                              mtdWorkoutDays: mtdWorkoutDays,
@@ -1374,6 +1389,19 @@ enum StatsEngine {
         var maxStreakRange: MaxStreakDateRange?
         /// When the currently-open streak began — nil once currentStreak is 0.
         var currentStreakStartDate: Date?
+        /// How many of each streak's counted days were logged rest days.
+        ///
+        /// Tracked HERE, inside the walk, rather than re-derived by
+        /// filtering rest dates against the streak's date range. The two
+        /// would disagree on the one case that matters: a plain rest that
+        /// takes the bank negative breaks the streak and is NOT credited,
+        /// but if a cycle reset lands on that same day the streak reopens
+        /// with that very date as its start — so a range filter would
+        /// count a day the streak itself doesn't. Returning the count the
+        /// walk actually made is what keeps Lift + Walk + Rest = Program
+        /// true by construction instead of by coincidence.
+        var currentStreakRestDays: Int = 0
+        var maxStreakRestDays: Int = 0
     }
 
     /// Pure day-by-day walk of the rest-bank model. The bank only ever
@@ -1399,10 +1427,29 @@ enum StatsEngine {
     /// ledger is already open going into it — it can't spontaneously open
     /// one on its own.
     ///
-    /// The streak count itself only increases for a training day or an
-    /// activity-logged rest — a plain/unscheduled rest "does nothing": it
-    /// still spends from the bank (and can still break the streak if that
-    /// spend goes negative), it just doesn't add to the count on its own.
+    /// The streak count increases for a training day, an activity-logged
+    /// rest, OR a plain logged rest. All three are days you told the app
+    /// about; the bank is what stops rest from inflating the streak,
+    /// since you can only spend what a cycle earned you.
+    ///
+    /// An UNLOGGED day is still not credited, and deliberately so. It
+    /// spends 1.0 exactly like a plain rest, but silence is not a rest
+    /// day — crediting it would mean the streak grows while the app hears
+    /// nothing, and the bank's limit would stop being a limit on anything
+    /// the user actually did. Measured on the real store before the
+    /// change: 37 unlogged days against 9 logged plain rests all-time,
+    /// but inside the streak then showing it was 1 against 6, so
+    /// crediting logged rests alone moved it 90 -> 96 and crediting
+    /// silence too would have added just one more day while rewriting
+    /// which historical streaks existed at all (many of those 37 are
+    /// streak-breakers).
+    ///
+    /// A plain rest that takes the bank negative still breaks FIRST and
+    /// is not credited for the day it broke on — even when a reset lands
+    /// on that same day and reopens the ledger. An activity rest in that
+    /// position IS credited, because it never costs more than 0.5 and so
+    /// only reaches negative from a bank that was already short; the
+    /// asymmetry is in the existing reset branch and is left as it was.
     ///
     /// Outside of a reset, the bank never goes negative: the moment a spend
     /// would take it below 0, the streak breaks right there and the ledger
@@ -1446,12 +1493,17 @@ enum StatsEngine {
         var maxStreakEndDate: Date?
         var maxStreakPrecedingBreakDate: Date?
         var maxStreakFollowingBreakDate: Date?
+        /// Counted logged-rest days: in the open streak, and in whichever
+        /// instance currently holds the record. See RestBankResult.
+        var restDaysInStreak = 0
+        var maxStreakRestDays = 0
 
         // Only true once streak has just tied/exceeded the record — a
         // streak that's still smaller than the historical max leaves
         // maxStreak (and this check) untouched.
-        func recordCredit(on day: Date) {
+        func recordCredit(on day: Date, isRest: Bool = false) {
             streak += 1
+            if isRest { restDaysInStreak += 1 }
             maxStreak = max(maxStreak, streak)
             if streak == maxStreak {
                 if maxStreakStartDate != currentStreakStart {
@@ -1461,6 +1513,7 @@ enum StatsEngine {
                     maxStreakFollowingBreakDate = nil
                 }
                 maxStreakEndDate = day
+                maxStreakRestDays = restDaysInStreak
             }
         }
 
@@ -1470,6 +1523,7 @@ enum StatsEngine {
             }
             streakOpen = false
             streak = 0
+            restDaysInStreak = 0
             bank = 0   // ledger closed — no meaningful balance until the next streak starts
             lastBreakDate = day
             currentStreakStart = nil
@@ -1516,13 +1570,22 @@ enum StatsEngine {
                     bank = reset
                     if isTraining || isActivityRest {
                         recordCredit(on: day)
+                    } else if isPlainRest, !brokeToday {
+                        // `!brokeToday` is the difference from the two
+                        // above: a plain rest that went negative broke the
+                        // streak, and the reset reopening the ledger on the
+                        // same date must not also hand it the credit for
+                        // the day it broke on. The reopened streak starts
+                        // empty, at 0.
+                        recordCredit(on: day, isRest: true)
                     }
                 } else if !brokeToday, isTraining || isActivityRest {
                     recordCredit(on: day)
+                } else if !brokeToday, isPlainRest {
+                    recordCredit(on: day, isRest: true)
                 }
-                // else: either a plain rest that stayed non-negative with no
-                // reset today (spends, but "does nothing" for the count), or
-                // today broke the streak and there's no reset to reopen it.
+                // else: today broke the streak and there's no reset to
+                // reopen it.
             } else if streakOpen {
                 bank -= 1.0
                 let brokeToday = bank < -1e-9
@@ -1552,7 +1615,9 @@ enum StatsEngine {
         }
         return RestBankResult(currentStreak: streak, maxStreak: maxStreak, bankBalance: max(0, bank),
                               maxStreakRange: maxStreakRange,
-                              currentStreakStartDate: streakOpen ? currentStreakStart : nil)
+                              currentStreakStartDate: streakOpen ? currentStreakStart : nil,
+                              currentStreakRestDays: restDaysInStreak,
+                              maxStreakRestDays: maxStreakRestDays)
     }
 
     /// Required pace (slots per calendar day) implied by the phase's own

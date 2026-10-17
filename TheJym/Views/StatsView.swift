@@ -789,19 +789,28 @@ struct StatsView: View {
                                                lift: stats.maxActiveStreakLiftDays,
                                                walk: stats.maxActiveStreakWalkDays)
                 },
+                // `rest:` is what separates these two rows from the two
+                // Daily ones above: a Program streak counts its logged
+                // rest days, so Lift + Walk + Rest = Program here, while
+                // Daily keeps Lift + Walk = Active and a blank Rest. The
+                // dateLine stays because the span still exceeds the
+                // count — unlogged days are absorbed without being
+                // counted, so the two numbers mean different things.
                 ConsistencyRow("Program Streak",
                                dateLine: stats.currentStreakStartDate.map(streakSinceLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
                                                active: stats.currentStreak,
                                                lift: stats.currentBankedStreakLiftDays,
-                                               walk: stats.currentBankedStreakWalkDays)
+                                               walk: stats.currentBankedStreakWalkDays,
+                                               rest: stats.currentBankedStreakRestDays)
                 },
                 ConsistencyRow("Max Program Streak",
                                dateLine: stats.maxStreakRange.map(streakRangeLabel)) { header, _ in
                     ConsistencyStreakCell.text(header: header,
                                                active: stats.maxStreak,
                                                lift: stats.maxBankedStreakLiftDays,
-                                               walk: stats.maxBankedStreakWalkDays)
+                                               walk: stats.maxBankedStreakWalkDays,
+                                               rest: stats.maxBankedStreakRestDays)
                 },
                 // A ROW, not a column. Measured: five data columns need
                 // 458.7pt against 393 and can't be made to fit, and every

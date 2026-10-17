@@ -617,12 +617,12 @@ final class LiftDaysPerWeekTests: XCTestCase {
             trainingDates: trained, activityRestDates: [], plainRestDates: [d(-3)],
             resetEvents: [], now: .now)
 
-        XCTAssertEqual(withBalance.currentStreak, 3,
-                       "the bank spends a day to carry the streak across the rest day")
+        XCTAssertEqual(withBalance.currentStreak, 4,
+                       "the bank spends a day to carry the streak across the rest day, and the "
+                       + "logged rest counts: three training days plus it")
+        XCTAssertEqual(withBalance.currentStreakRestDays, 1)
         XCTAssertEqual(withoutBalance.currentStreak, 2,
                        "with nothing banked, the same rest day breaks it")
-        // And the rest day is carried through, not counted: three training
-        // days span four calendar days but the streak reads 3.
         XCTAssertEqual(withBalance.currentStreakStartDate, d(-4))
     }
 
