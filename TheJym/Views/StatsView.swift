@@ -1158,6 +1158,18 @@ enum StatGridLabel: String, CaseIterable {
 /// the "ahead" form. StatGridFloorTests found it on its first run by
 /// calling the real adherenceLabel over both signs — which is the whole
 /// argument for deriving the floor instead of restating it.
+///
+/// READ THIS BEFORE "CORRECTING" 0.49 BACK UP. That binding string is a
+/// BOUND on what the formatter can emit, not a string the app has ever
+/// shown. "1200% (11 behind)" is almost certainly unreachable: 1200%
+/// adherence means wildly ahead of schedule, so that percentage and that
+/// suffix can't co-occur. StatGridFloorTests takes the cross-product of
+/// adherenceLabel's inputs deliberately and does not try to exclude the
+/// impossible cells, because a floor set by an unreachable upper bound
+/// errs in the safe direction — the cost of being too low is nothing,
+/// and the cost of being too high is a clipped number. So measuring the
+/// strings the app actually produces WILL find that none of them needs
+/// 0.4971. That is expected, and it is not a reason to raise the floor.
 /// It used to be 0.44, set single-handedly by "September 2026 (31)" at
 /// 575.667pt; abbreviating that month (StatsAndPlates' bestMonthLabel)
 /// bought back a third of its width and let the floor rise.

@@ -50,8 +50,15 @@ final class StatGridFloorTests: XCTestCase {
 
         // adherenceLabel: percent is filledSlots/daysElapsed*100, so it
         // is unbounded upward early in a phase; delta is a day count.
-        // Widest realistic shape is a 4-digit percent with a 2-digit
-        // delta and the longest of the three suffixes.
+        //
+        // This is a deliberate CROSS-PRODUCT, and some of its cells are
+        // impossible — 1200% adherence means wildly ahead, so it can't
+        // carry a "behind" suffix, yet "1200% (11 behind)" is the string
+        // that currently binds the floor. That is the intent: the floor
+        // should be a bound on what the formatter can emit, not on what
+        // the app has been observed to show. Too low costs nothing; too
+        // high clips a number someone is trying to read. Don't prune
+        // these to "realistic" pairs.
         for pct in [100.0, 96.0, 104.0, 1200.0] {
             for delta in [0, 2, -4, 11, -11] {
                 out.append(StatsView.adherenceLabel(percent: pct, delta: delta))
