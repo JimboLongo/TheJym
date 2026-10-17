@@ -25,6 +25,22 @@
 //  because the unlogged day is absorbed without being credited. That gap
 //  is the thing the dateLine on those rows is still carrying.
 //
+//  SECOND SURFACE. TodayView's phase detail shows "Best Streak — N days"
+//  from the same engine, scoped to one phase and its own reset events, so
+//  it inherits the rule too and the all-history figures say nothing about
+//  it. The three phase-scoped cases below are that screen, transcribed
+//  the same way:
+//
+//      Phase 1   44 -> 45   1 logged rest inside the record
+//      Phase 2   46 -> 49   3
+//      Phase 3    0 ->  2   2
+//
+//  Phase 3 is the interesting one and is kept deliberately: it has no
+//  training and no activity at all, so its entire Best Streak is logged
+//  rest days — and its first day is a rest that breaks against an empty
+//  bank before the phase-start reset lands, which is why it reads 2 and
+//  not 3.
+//
 
 import XCTest
 @testable import TheJym
@@ -103,6 +119,62 @@ final class ProgramStreakAcceptanceTests: XCTestCase {
                              "the unlogged day is inside the span but not the count")
         XCTAssertEqual(r.currentStreakStartDate, d(0))
     }
+
+    // MARK: - TodayView's per-phase "Best Streak"
+
+    /// Each phase walked with its OWN reset events, the way
+    /// TodayView.bestStreak does. A closed phase is bounded at the last
+    /// logged day it can see rather than at today.
+    private func phaseBest(training: [Int], activity: [Int], plain: [Int],
+                           resets: [Int], span: Int) -> StatsEngine.RestBankResult {
+        StatsEngine.computeRestBank(
+            trainingDates: training.map(d),
+            activityRestDates: activity.map(d),
+            plainRestDates: plain.map(d),
+            resetEvents: resets.map { (date: d($0), resetTo: 2.0) },
+            now: d(span))
+    }
+
+    func testPhase1BestStreakIs45() {
+        let r = phaseBest(
+            training: [0, 2, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22, 24, 25, 27, 28, 30, 31,
+                       34, 35, 37, 38, 40, 41, 43, 44, 46, 47, 49, 50],
+            activity: [3, 8, 11, 14, 17, 23, 26, 29, 32, 36, 39, 42, 45, 48, 51, 57, 60, 66, 69,
+                       72, 75, 78, 81, 84, 87, 89, 93, 96, 99],
+            plain: [1, 4, 5, 20, 54, 63, 100, 101, 102],
+            resets: [0, 7, 14, 20, 26, 32, 39, 45], span: 102)
+        XCTAssertEqual(r.maxStreak, 45, "Best Streak on Phase 1: was 44")
+        XCTAssertEqual(r.maxStreakRestDays, 1, "one logged rest inside the record run")
+    }
+
+    func testPhase2BestStreakIs49() {
+        let r = phaseBest(
+            training: [0, 1, 3, 4, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19, 21, 22, 24, 25, 27, 28,
+                       30, 31, 33, 34, 36, 38, 39, 40, 42, 43, 45, 46],
+            activity: [5, 8, 14, 17, 20, 23, 26, 29, 32, 35, 37, 41, 44, 47],
+            plain: [2, 11, 48, 49, 50],
+            resets: [0, 5, 11, 17, 23, 29, 35, 41], span: 50)
+        XCTAssertEqual(r.maxStreak, 49, "Best Streak on Phase 2: was 46")
+        XCTAssertEqual(r.maxStreakRestDays, 3)
+    }
+
+    /// A phase whose every counted day is a logged rest — no training, no
+    /// activity. Worth keeping exactly as it is: it is the shape that
+    /// makes the new rule most visible, and it also pins the break-order
+    /// case on a real screen. Day 0 is a rest against an empty bank, so
+    /// it breaks BEFORE the phase-start reset lands and takes no credit
+    /// for itself; days 1 and 2 are then affordable and count. Hence 2,
+    /// not 3.
+    func testPhase3BestStreakIs2AndIsAllRest() {
+        let r = phaseBest(training: [], activity: [], plain: [0, 1, 2], resets: [0], span: 3)
+        XCTAssertEqual(r.maxStreak, 2, "Best Streak on Phase 3: was 0")
+        XCTAssertEqual(r.maxStreakRestDays, 2, "both counted days are logged rests")
+        XCTAssertEqual(r.maxStreakRange?.start, d(0),
+                       "the reset reopens the ledger on day 0 even though day 0 took no credit")
+        XCTAssertEqual(r.maxStreakRange?.end, d(2))
+    }
+
+    // MARK: - The cell
 
     /// The two row kinds now genuinely differ, and the cell is what
     /// expresses that. Daily rows pass no rest and must stay blank.
