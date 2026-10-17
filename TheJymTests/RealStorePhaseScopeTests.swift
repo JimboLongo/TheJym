@@ -20,6 +20,25 @@
 //  then a failure to look at, not a silent re-resolution in favour of
 //  whichever rule happened to be applied first.
 //
+//  ACKNOWLEDGING ONE. Hand-attributing a session against its date is a
+//  legitimate thing to do, so this detector has an accept list — see
+//  `acceptedDivergences`. A detector with no way to say "yes, that one
+//  is deliberate" is a detector that eventually gets deleted instead of
+//  read, which is strictly worse than a noisy one.
+//
+//  Three arms, all three tested:
+//    - an UNACCEPTED divergence fails, with the full report
+//    - an ACCEPTED one passes quietly
+//    - an acknowledgement that no longer matches anything ALSO fails,
+//      as stale. A list of exceptions nobody prunes is how a detector
+//      stops meaning anything, so the list is required to stay honest
+//      in both directions.
+//
+//  The list starts EMPTY and is deliberately not pre-populated: there
+//  are no divergences today, and the empty list is the correct starting
+//  state. The structure exists before it is needed, for the same reason
+//  the scale-floor catalogue carries a string that can't be reached.
+//
 //  FAILS LOUDLY when the store copy isn't present, for the same reason
 //  RealStoreRoundTripDiffTests does — a dormant correctness test that
 //  reads green is worse than a failing one. Opting out deliberately
@@ -112,8 +131,37 @@ final class RealStorePhaseScopeTests: XCTestCase {
         return ModelContext(container)
     }
 
+    /// One deliberately hand-attributed session, acknowledged so the
+    /// detector stays quiet about it.
+    ///
+    /// `date` is the session's own date formatted "d MMM yyyy" — the
+    /// same spelling the failure report prints, so an entry can be
+    /// copied straight out of a red run. `phaseNumber` and `dayLabel`
+    /// disambiguate two sessions on one day.
+    struct AcceptedDivergence {
+        let phaseNumber: Int
+        let date: String
+        let dayLabel: String
+        /// Why this one is correct despite its date. Required — an
+        /// unexplained exception is the thing this list exists to avoid
+        /// becoming.
+        let reason: String
+
+        var key: String { "\(phaseNumber)|\(date)|\(dayLabel)" }
+    }
+
+    /// EMPTY ON PURPOSE. There are no divergences in the store today.
+    ///
+    /// To accept one: run the failing test, copy the phase number, date
+    /// and label out of its report, and add an entry with a one-line
+    /// reason. To un-accept one: delete the entry — and note that if the
+    /// divergence is already gone, the test will tell you to delete it
+    /// rather than letting it sit here forever.
+    static let acceptedDivergences: [AcceptedDivergence] = []
+
     /// Every exercise-bearing session attributed to a phase must also
-    /// fall inside that phase's date window. Failure names the session.
+    /// fall inside that phase's date window, unless it is on the accept
+    /// list above. Failure names the session.
     func testTheRelationshipAndTheWindowAgree() throws {
         let ctx = try openCopy()
         let cal = Calendar.current
@@ -121,7 +169,7 @@ final class RealStorePhaseScopeTests: XCTestCase {
         let f = DateFormatter(); f.dateFormat = "d MMM yyyy"
 
         var checked = 0
-        var divergent: [String] = []
+        var found: [(key: String, line: String)] = []
         for phase in phases {
             let start = cal.startOfDay(for: phase.startDate)
             let ceiling = phases
@@ -133,23 +181,31 @@ final class RealStorePhaseScopeTests: XCTestCase {
                 let day = cal.startOfDay(for: session.date)
                 let inside = day >= start && (ceiling.map { day < $0 } ?? true)
                 if !inside {
-                    divergent.append(
-                        "  Phase \(phase.number) [\(f.string(from: start))"
-                        + " – \(ceiling.map(f.string(from:)) ?? "open"))"
-                        + "  <-  \"\(session.dayLabel)\" on \(f.string(from: session.date))"
-                        + " (cycle \(session.cycleNumber))")
+                    let dateText = f.string(from: session.date)
+                    found.append((
+                        key: "\(phase.number)|\(dateText)|\(session.dayLabel)",
+                        line: "  Phase \(phase.number) [\(f.string(from: start))"
+                            + " – \(ceiling.map(f.string(from:)) ?? "open"))"
+                            + "  <-  \"\(session.dayLabel)\" on \(dateText)"
+                            + " (cycle \(session.cycleNumber))"))
                 }
             }
         }
 
         XCTAssertGreaterThan(checked, 0, "no attributed sessions found — is this the right store?")
-        XCTAssertTrue(divergent.isEmpty,
+
+        let acceptedKeys = Set(Self.acceptedDivergences.map(\.key))
+        let foundKeys = Set(found.map(\.key))
+
+        // ARM 1 — a divergence nobody has acknowledged.
+        let unaccepted = found.filter { !acceptedKeys.contains($0.key) }
+        XCTAssertTrue(unaccepted.isEmpty,
                       """
 
                       The phase RELATIONSHIP and the date WINDOW now disagree on \
-                      \(divergent.count) of \(checked) attributed sessions:
+                      \(unaccepted.count) of \(checked) attributed sessions:
 
-                      \(divergent.joined(separator: "\n"))
+                      \(unaccepted.map(\.line).joined(separator: "\n"))
 
                       This is a notification, not necessarily a bug. \
                       StatsEngine.phaseBestStreak trusts the relationship for \
@@ -158,6 +214,36 @@ final class RealStorePhaseScopeTests: XCTestCase {
                       scoped by the window, so the two inputs now describe \
                       different spans. Decide which is right for these sessions \
                       before changing anything.
+
+                      If a line above is a deliberate hand-attribution, add it to \
+                      RealStorePhaseScopeTests.acceptedDivergences with a one-line \
+                      reason, in the form:
+
+                        AcceptedDivergence(phaseNumber: 1, date: "28 Aug 2026",
+                                           dayLabel: "Push Day",
+                                           reason: "…")
+                      """)
+
+        // ARM 3 — an acknowledgement that no longer matches anything.
+        // Just as important as arm 1: an accept list nobody prunes stops
+        // describing the store and starts hiding whatever drifts into
+        // its shape later.
+        let stale = Self.acceptedDivergences.filter { !foundKeys.contains($0.key) }
+        XCTAssertTrue(stale.isEmpty,
+                      """
+
+                      \(stale.count) acknowledged divergence\(stale.count == 1 ? "" : "s") in \
+                      RealStorePhaseScopeTests.acceptedDivergences no longer \
+                      exist\(stale.count == 1 ? "s" : "") in the store:
+
+                      \(stale.map { "  Phase \($0.phaseNumber)  \"\($0.dayLabel)\" on \($0.date)"
+                                      + "\n      reason given: \($0.reason)" }
+                              .joined(separator: "\n"))
+
+                      Delete \(stale.count == 1 ? "it" : "them"). An exception list \
+                      nobody prunes is how this detector stops meaning anything — \
+                      a stale entry silently pre-approves any future divergence \
+                      that happens to land on the same phase, date and label.
                       """)
     }
 
