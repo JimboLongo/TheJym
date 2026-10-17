@@ -19,6 +19,12 @@
 //  offset fixtures in ProgramStreakAcceptanceTests cannot catch a bad
 //  window — they hand the engine its inputs already filtered.
 //
+//  The window bounds the two REST models only. Sessions keep the stored
+//  `phase` relationship as their scope — see
+//  testSessionsFollowTheRelationshipNotTheWindow, and
+//  RealStorePhaseScopeTests for the assertion that the two agree on real
+//  data.
+//
 //  Sabotage: drop the ceiling from `inWindow` in
 //  StatsEngine.phaseBestStreak and testAClosedPhaseIgnoresLaterRestDays
 //  fails.
@@ -133,27 +139,29 @@ final class PhaseBestStreakWindowTests: XCTestCase {
         XCTAssertEqual(r.maxStreakRestDays, 0)
     }
 
-    /// The window applies to SESSIONS too, so there is one rule rather
-    /// than a relationship for one input and a date range for the others.
-    /// A session explicitly attributed to Phase 1 but dated inside Phase
-    /// 2's window is out of Phase 1's walk.
+    /// Sessions are NOT windowed: `WorkoutSession.phase` is the
+    /// authoritative record of membership, and a session attributed to
+    /// Phase 1 but dated inside Phase 2's window still belongs to Phase
+    /// 1. That is not hypothetical — 27 sessions in the real store were
+    /// hand-attributed during recovery exactly because their dates
+    /// didn't imply the right phase.
     ///
-    /// This does not happen on the real store — 0 of 94 phase-attributed
-    /// sessions fall outside their own phase's window — which is what
-    /// made it safe to pick the date window as the single rule. The case
-    /// is pinned anyway so the choice is visible rather than incidental.
-    func testTheWindowAlsoBoundsSessions() {
+    /// RealStorePhaseScopeTests asserts the relationship and the window
+    /// agree on the real store, so a future divergence is reported
+    /// rather than silently decided here.
+    func testSessionsFollowTheRelationshipNotTheWindow() {
         let ctx = makeContext()
         let phase1 = makePhase(1, start: day(0), active: false, in: ctx)
         let phase2 = makePhase(2, start: day(3), active: true, in: ctx)
         for i in 0...2 { train(phase1, on: day(i), cycle: 1, in: ctx) }
-        // Attributed to Phase 1, but dated after Phase 2 began.
+        // Attributed to Phase 1, dated after Phase 2 began.
         train(phase1, on: day(3), cycle: 1, in: ctx)
 
         let r = StatsEngine.phaseBestStreak(phase: phase1, allPhases: [phase1, phase2],
                                             restActivities: [], activeRecoveries: [], now: day(6))
-        XCTAssertEqual(r.maxStreak, 3, "day 3 is inside Phase 2's window, so not Phase 1's streak")
-        XCTAssertEqual(r.maxStreakRange?.end, day(2))
+        XCTAssertEqual(r.maxStreak, 4,
+                       "the relationship says Phase 1, so day 3 counts for Phase 1")
+        XCTAssertEqual(r.maxStreakRange?.end, day(3))
     }
 
     /// The last phase on record has no later phase to bound it, so it

@@ -1635,13 +1635,27 @@ enum StatsEngine {
     /// while rest days didn't count; not harmless once they did.
     ///
     /// Phase has no endDate, so the window is [startDate, next phase's
-    /// startDate), and `.now` for the active phase. That is a DATE rule
-    /// where sessions use a stored relationship, which would be two
-    /// definitions again if the two disagreed — they don't: on the real
-    /// store, 0 of 94 phase-attributed sessions fall outside their own
-    /// phase's window. The window is applied to sessions too, so there is
-    /// one rule and the relationship is a cross-check on it rather than a
-    /// second scope.
+    /// startDate), and `.now` for the active phase.
+    ///
+    /// SESSIONS ARE NOT WINDOWED. `WorkoutSession.phase` is a stored
+    /// relationship, written deliberately at log and import time, and
+    /// during the recovery 27 sessions were hand-attributed precisely
+    /// BECAUSE their dates didn't imply the right phase. That
+    /// relationship is the authoritative record of which phase a session
+    /// belongs to; the window is a proxy for it, and a proxy does not get
+    /// to overrule the record it stands in for.
+    ///
+    /// The window applies only to the two models that have no
+    /// relationship to apply instead — RestDayActivity and
+    /// ActiveRecovery carry nothing but a date, so a date rule is the
+    /// only rule available for them.
+    ///
+    /// The two do agree on the real store today (0 of 94 attributed
+    /// sessions fall outside their own phase's window), and
+    /// RealStorePhaseScopeTests asserts that and names the session if it
+    /// ever stops being true. Agreement is something to be NOTIFIED of
+    /// losing, not something to assume and quietly resolve in favour of
+    /// the dates.
     ///
     /// A closed phase is still bounded at its last logged day WITHIN the
     /// window, not at the window's ceiling — unchanged behaviour, and the
@@ -1669,10 +1683,10 @@ enum StatsEngine {
 
         let activityDates = restActivities.map(\.date).filter(inWindow)
         let activitySet = Set(activityDates.map { cal.startOfDay(for: $0) })
+        // Relationship, not window — see the note above.
         let sessionDates = phase.sessions
             .filter { !$0.exerciseLogs.isEmpty }
             .map(\.date)
-            .filter(inWindow)
         let trainingDates = sessionDates.filter { !activitySet.contains(cal.startOfDay(for: $0)) }
         let plainRestDates = activeRecoveries.map(\.date).filter(inWindow)
 
