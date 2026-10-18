@@ -423,69 +423,51 @@ struct StatsView: View {
                     Text("Nothing logged this cycle yet.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    ForEach(summary.variances) { variance in
-                        macroVarianceRow(variance)
+                    // The header carries the day count, so a row only
+                    // prints its own when it disagrees — see
+                    // MacroCycleSummary.headerDayCount.
+                    let header = summary.headerDayCount
+                    ForEach(summary.variances) { v in
+                        MacroTableRow(
+                            label: v.category.label,
+                            value: MacroFigure.value(v.average.mean, unit: "g"),
+                            target: MacroFigure.target(v.target,
+                                                       symbol: v.category.direction.symbol),
+                            delta: MacroFigure.delta(v.delta),
+                            deltaIsFavourable: v.status?.isFavourable,
+                            dayCount: v.average.dayCount == header ? nil : v.average.dayCount)
                     }
-                    calorieRow(summary)
+                    MacroTableRow(
+                        label: "Calories",
+                        // No unit: the row label already says what these
+                        // are, and the target beside it carries none
+                        // either. The SPACING rule is what's shared.
+                        value: MacroFigure.value(summary.calories.mean, unit: ""),
+                        target: MacroFigure.target(summary.calorieTarget),
+                        delta: MacroFigure.delta(summary.calorieDelta),
+                        // Calories have no direction of their own — the
+                        // five categories above already said whether the
+                        // day went well, and colouring this too would be
+                        // the same verdict twice.
+                        deltaIsFavourable: nil,
+                        dayCount: summary.calories.dayCount == header ? nil : summary.calories.dayCount,
+                        emphasised: true)
                 }
             } header: {
-                Text("Cycle \(summary.cycleNumber) · \(summary.tier.name)")
+                Text(summary.headerDayCount.map {
+                    "Cycle \(summary.cycleNumber) · \(summary.tier.name) · \($0) day\($0 == 1 ? "" : "s")"
+                } ?? "Cycle \(summary.cycleNumber) · \(summary.tier.name)")
             } footer: {
-                Text("Averages cover the days that logged each category, so the counts differ — a day you didn't record fiber isn't a day you ate none. Calories average only over days with protein, carbs and fat all logged, so the figure is a real day's total rather than three different day sets added together.")
+                // The counts-differ half explains the per-row suffixes.
+                // When every row shares the header's count there are no
+                // suffixes, so it would be explaining something that
+                // isn't on screen.
+                Text(summary.dayCountsAreUniform
+                     ? "Calories average only over days with protein, carbs and fat all logged."
+                     : "Each category averages over the days that logged it — a day you didn't "
+                       + "record fiber isn't a day you ate none. Calories average only over days "
+                       + "with protein, carbs and fat all logged.")
             }
-        }
-    }
-
-    private func macroVarianceRow(_ v: MacroVariance) -> some View {
-        HStack(spacing: 6) {
-            Text(v.category.label)
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(width: 58, alignment: .leading)
-            Text(v.average.mean.map { "\(Formatters.trim($0))g" } ?? "—")
-                .font(.system(.subheadline, design: .monospaced))
-                .frame(width: 62, alignment: .trailing)
-            Text("\(v.category.direction.symbol)\(Formatters.trim(v.target))")
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 54, alignment: .trailing)
-            Spacer(minLength: 2)
-            if let delta = v.delta, let status = v.status {
-                // Coloured by whether the DIRECTION treats this as good,
-                // never by the sign: "+15" on protein is the target beaten,
-                // "+15" on sugar is the ceiling breached.
-                Text("\(delta > 0 ? "+" : "")\(Formatters.trim(delta))")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(status.isFavourable ? Color.green : Color.orange)
-            }
-            Text("(\(v.average.dayCount)d)")
-                .font(.caption2).foregroundStyle(.tertiary)
-                .frame(width: 34, alignment: .trailing)
-        }
-    }
-
-    private func calorieRow(_ summary: MacroCycleSummary) -> some View {
-        HStack(spacing: 6) {
-            Text("Calories")
-                .font(.caption.bold()).foregroundStyle(.secondary)
-                .frame(width: 58, alignment: .leading)
-            Text(summary.calories.mean.map { Formatters.trim($0) } ?? "—")
-                .font(.system(.subheadline, design: .monospaced)).bold()
-                .frame(width: 62, alignment: .trailing)
-            Text(Formatters.trim(summary.calorieTarget))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 54, alignment: .trailing)
-            Spacer(minLength: 2)
-            if let delta = summary.calorieDelta {
-                Text("\(delta > 0 ? "+" : "")\(Formatters.trim(delta))")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            // Its own count, on the stricter basis — differing from the
-            // rows above is informative, not a bug.
-            Text("(\(summary.calories.dayCount)d)")
-                .font(.caption2).foregroundStyle(.tertiary)
-                .frame(width: 34, alignment: .trailing)
         }
     }
 
@@ -1082,6 +1064,88 @@ enum StatGridLabel: String, CaseIterable {
     // completedPhaseSection — `perfectCycles` and `milesWalked` above
     // are shared with currentPhaseSection.
     case finalAdherence = "Final adherence"
+}
+
+/// One row of the cycle macro table — the five categories and Calories
+/// through the SAME view, so their columns cannot drift apart. They were
+/// two near-identical builders before, which is how the category rows
+/// ended up carrying a "g" the calorie row didn't and how the two got
+/// different spacing.
+///
+/// Its own `struct`, like StatGridCell and for the same reason: these are
+/// values in a self-sizing List row, so the property that matters is that
+/// the height is PINNED — identical on every row at every width. A row
+/// whose height changes with its width is what put the Body tab into a
+/// recursive layout loop (commit 77ea2ff). Here the column widths are
+/// fixed, which makes a long value wrap rather than overflow, so the
+/// guard is `lineLimit(1)` on every column plus the same measured
+/// `minimumScaleFactor` floor StatGridCell uses.
+///
+/// Text comes in already formatted — see MacroFigure, which is the one
+/// place a figure here becomes a string.
+struct MacroTableRow: View {
+    let label: String
+    let value: String
+    let target: String
+    let delta: String?
+    /// nil renders the delta in a neutral colour: used by Calories,
+    /// which has no direction of its own.
+    let deltaIsFavourable: Bool?
+    /// nil when this row's count matches the section header's, which is
+    /// the common case — see MacroCycleSummary.headerDayCount.
+    let dayCount: Int?
+    var emphasised: Bool = false
+
+    /// The tallest font in the row, and therefore the one that sets its
+    /// line box. Written once and used both for the invisible sizer and
+    /// for the value column, so the two cannot disagree.
+    static let valueFont: Font = .system(.subheadline, design: .monospaced)
+
+    var body: some View {
+        // Invisible unscaled glyph fixes the height; the real row rides
+        // on it as an overlay. minimumScaleFactor alone does NOT keep a
+        // height pinned — scaled text reports a shorter line box, by
+        // different amounts at different widths, which is the same trap
+        // StatGridCell documents. Measured here before the fix: 51.33pt
+        // at a 311pt width against 29.67pt at 256pt, at AX5.
+        Text(verbatim: "0")
+            .font(Self.valueFont.bold())
+            .hidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) { columns }
+    }
+
+    private var columns: some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(emphasised ? .caption.bold() : .caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 58, alignment: .leading)
+            Text(value)
+                .font(Self.valueFont)
+                .bold(emphasised)
+                .frame(width: 62, alignment: .trailing)
+            Text(target)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .frame(width: 54, alignment: .trailing)
+            Spacer(minLength: 2)
+            if let delta {
+                // Coloured by whether the DIRECTION treats this as good,
+                // never by the sign: "+15" on protein is the target
+                // beaten, "+15" on sugar is the ceiling breached.
+                Text(delta)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(deltaIsFavourable.map { $0 ? Color.green : Color.orange }
+                                     ?? Color.secondary)
+            }
+            Text(dayCount.map { "(\($0)d)" } ?? "")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .frame(width: 34, alignment: .trailing)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(StatGridCell.defaultMinimumScale)
+    }
 }
 
 /// One label/value cell of `statGrid`.

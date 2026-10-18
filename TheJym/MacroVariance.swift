@@ -110,6 +110,34 @@ struct MacroCycleSummary {
     /// per-category count, and from the calorie count.
     let loggedDayCount: Int
 
+    /// Every day count the table shows: the five categories plus
+    /// calories, in row order.
+    var allDayCounts: [Int] { variances.map(\.average.dayCount) + [calories.dayCount] }
+
+    /// The count to put in the section header, so six identical "(3d)"
+    /// suffixes don't have to be read six times.
+    ///
+    /// The MODE, not the maximum: the header stands for "what most of
+    /// this table is measured over", and a row that disagrees prints its
+    /// own count beside it. Ties break toward the larger count, so the
+    /// header never understates the basis.
+    ///
+    /// nil only when there is nothing to count at all.
+    var headerDayCount: Int? {
+        let counts = allDayCounts
+        guard !counts.isEmpty else { return nil }
+        var tally: [Int: Int] = [:]
+        for c in counts { tally[c, default: 0] += 1 }
+        return tally.max { a, b in
+            a.value != b.value ? a.value < b.value : a.key < b.key
+        }?.key
+    }
+
+    /// True when every row shares the header's count — the common case,
+    /// and the one where both the per-row suffixes and half the footnote
+    /// are saying nothing.
+    var dayCountsAreUniform: Bool { Set(allDayCounts).count <= 1 }
+
     /// Nothing was logged in this cycle's window — the section should say
     /// so rather than render five empty rows.
     var isEmpty: Bool { loggedDayCount == 0 }
@@ -136,5 +164,77 @@ struct MacroCycleSummary {
             calories: CalorieAverage.compute(over: inRange),
             calorieTarget: tier.calories,
             loggedDayCount: inRange.filter { !$0.isEmpty }.count)
+    }
+}
+
+// MARK: - Display
+
+/// The ONE place a figure in the cycle macro table becomes text.
+///
+/// Every value in that table is rounded to whole units for display, and
+/// computed unrounded. Two decimals were wide enough to wrap protein and
+/// carbs but not fat and sugar, which made the row heights uneven and the
+/// units look inconsistently spaced — one fix for all three symptoms.
+///
+/// Rounding the DISPLAY only, never the arithmetic: `MacroVariance.delta`
+/// still subtracts the exact mean from the exact target, and `status` is
+/// still decided on exact values, so a 0.4g miss is still coloured as a
+/// miss even when it rounds to a delta of 0.
+///
+/// THE TIE RULE IS LOAD-BEARING. The three columns stay consistent —
+/// displayed value minus target equals displayed delta — only if
+/// rounding commutes with subtracting a whole number, and most tie rules
+/// don't. Measured, mean 118.5 against a target of 185:
+///
+///     half away from zero (Swift's .rounded())   119 - 185 = -66,  round(-66.5) = -67
+///     half to even                               118 - 185 = -67,  round(-66.5) = -66
+///     half UP (floor(x + 0.5))                   119 - 185 = -66,  round(-66.5) = -66
+///
+/// Half-up is the only one of the three that is translation-invariant,
+/// because floor(x + n + 0.5) == floor(x + 0.5) + n for whole n. The
+/// other two break at exactly .5, which a mean over an even number of
+/// days reaches routinely (187 and 188 average to 187.5). So `round`
+/// below is half-up, deliberately, and not Double.rounded().
+///
+/// It exists as a type rather than three call sites because the unit and
+/// its spacing drifted last time: the category rows carried "g" with no
+/// space while the calorie row carried none at all, and nothing stopped
+/// them diverging further.
+enum MacroFigure {
+    /// What a missing average reads as — this codebase's existing way of
+    /// saying "no value", not zero.
+    static let none = "\u{2014}"
+
+    /// Half-UP, not Double.rounded(). See the note above — this is the
+    /// only tie rule under which the table's three number columns can't
+    /// contradict each other.
+    static func round(_ v: Double) -> Int { Int((v + 0.5).rounded(.down)) }
+
+    /// A measured average. `unit` is "g" for the five categories and ""
+    /// for calories, whose row label already says what it is; the SPACING
+    /// rule (none, unit butted against the digits) is the part that is
+    /// shared and must not drift.
+    static func value(_ v: Double?, unit: String) -> String {
+        guard let v else { return none }
+        return "\(round(v))\(unit)"
+    }
+
+    /// A target, with its direction symbol. Calories pass no symbol.
+    static func target(_ v: Double, symbol: String = "") -> String {
+        "\(symbol)\(round(v))"
+    }
+
+    /// A signed difference, or nil when there is no average to compare.
+    ///
+    /// A rounded-to-zero delta prints as a bare "0", never "+0" or "-0":
+    /// the sign would claim a direction the displayed numbers don't show.
+    /// Its colour still carries the truth — a 184.6g average against a
+    /// 185g floor shows "0" in orange, because `status` was decided
+    /// before any rounding.
+    static func delta(_ v: Double?) -> String? {
+        guard let v else { return nil }
+        let rounded = round(v)
+        if rounded == 0 { return "0" }
+        return rounded > 0 ? "+\(rounded)" : "\(rounded)"
     }
 }
