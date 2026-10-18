@@ -990,7 +990,7 @@ struct StatsView: View {
                     // treatments of one number.
                     (StatGridLabel.finalAdherence.rawValue, Self.adherenceLabel(percent: summary.adherencePercent,
                                                        delta: summary.cyclePaceDelta)),
-                    (StatGridLabel.completedPerfectCycles.rawValue, "\(summary.perfectCount) of \(summary.completedCount)"),
+                    (StatGridLabel.perfectCycles.rawValue, "\(summary.perfectCount) of \(summary.completedCount)"),
                     (StatGridLabel.milesWalked.rawValue, Self.milesLabel(summary.milesWalked)),
                 ])
             } label: {
@@ -1063,7 +1063,10 @@ enum StatGridValueLiteral: String, CaseIterable {
 enum StatGridLabel: String, CaseIterable {
     // currentPhaseSection
     case adherence = "Adherence"
-    case perfectCycles = "Perfect Cycles"
+    /// Shared by currentPhaseSection and completedPhaseSection — one
+    /// case, not two, because it is one stat. They used to be separate
+    /// and had drifted to "Perfect Cycles" and "Perfect cycles".
+    case perfectCycles = "Perfect cycles"
     case milesWalked = "Miles walked"
     case restDaysBanked = "Rest days banked"
     // progressFallbackSection
@@ -1076,9 +1079,9 @@ enum StatGridLabel: String, CaseIterable {
     case bestMonthAllTime = "Best month all-time"
     case allTimeActiveDays = "All-time active days"
     case allTimeHoursTrained = "All-time hours trained"
-    // completedPhaseSection
+    // completedPhaseSection — `perfectCycles` and `milesWalked` above
+    // are shared with currentPhaseSection.
     case finalAdherence = "Final adherence"
-    case completedPerfectCycles = "Perfect cycles"
 }
 
 /// One label/value cell of `statGrid`.

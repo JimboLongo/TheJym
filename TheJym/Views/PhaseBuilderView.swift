@@ -39,7 +39,7 @@ struct PhaseBuilderView: View {
     /// moment the button was tapped, so that `shouldActivate` below would
     /// see no active phase. Backing out of the builder then left NO phase
     /// active at all — which is how Phase 2 ended up inactive with no
-    /// Phase 3 to replace it, hiding Adherence, Perfect Cycles, Miles this
+    /// Phase 3 to replace it, hiding Adherence, Perfect cycles, Miles this
     /// phase and Rest days banked from Stats, and leaving the rest bank
     /// with nothing to top it up. The intent now travels as a flag and is
     /// acted on only once a phase actually exists.

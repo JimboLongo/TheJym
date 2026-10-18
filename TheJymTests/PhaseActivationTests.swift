@@ -10,7 +10,7 @@
 //  see no active phase. Backing out of the builder then left NO phase
 //  active at all — which is exactly what happened to Phase 2: complete at
 //  8 of 8, deactivated by a tap, no Phase 3 created, and Adherence,
-//  Perfect Cycles, Miles this phase and Rest days banked all silently
+//  Perfect cycles, Miles this phase and Rest days banked all silently
 //  gone from Stats.
 //
 
