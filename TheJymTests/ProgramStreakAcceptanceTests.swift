@@ -35,6 +35,14 @@
 //      Phase 2   46 -> 48   2
 //      Phase 3    0 ->  2   1
 //
+//  Phase 3's figure is a SNAPSHOT of an active phase and has already
+//  moved on — a session logged on 17 Oct took it to 3. That is correct
+//  and is not a reason to edit the arrays below: these are frozen
+//  offsets, so the case still pins how the walk behaves on that shape.
+//  The live store's active phase is checked for invariants rather than a
+//  figure, in RealStorePhaseScopeTests, precisely so a day's training
+//  doesn't turn the suite red.
+//
 //  These are the WINDOWED figures. An earlier revision of this file said
 //  Phase 2 was 49 with 3 rests; that number was inflated by a rest day
 //  logged under Phase 3, which a scoping bug let Phase 2 count. See

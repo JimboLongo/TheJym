@@ -162,6 +162,24 @@ struct MacroCycleSummary {
                               target: tier.grams($0))
             },
             calories: CalorieAverage.compute(over: inRange),
+            // IF YOU ARE HERE BECAUSE THE HEADER SAYS 2450 AND THIS ROW
+            // SAYS 2455, THAT IS CORRECT. They are different numbers
+            // measuring different things:
+            //
+            //   2450  the tier's NAME — a label you typed, which happens
+            //         to look like a calorie figure because that is how
+            //         diet tiers are usually named
+            //   2455  this tier's macros, costed: 4*185 + 4*260 + 9*75
+            //
+            // A tier named "2450" whose grams come to 2455 is not
+            // inconsistent; naming is free text and nothing rounds the
+            // grams to make the label come true. Sourcing the target
+            // from the name would measure the cycle against a string,
+            // and would silently stop tracking the moment anyone edited
+            // a gram value without renaming the tier.
+            //
+            // MacroCalorieIdentityTests asserts this, and fails if the
+            // target is ever taken from the name.
             calorieTarget: tier.calories,
             loggedDayCount: inRange.filter { !$0.isEmpty }.count)
     }

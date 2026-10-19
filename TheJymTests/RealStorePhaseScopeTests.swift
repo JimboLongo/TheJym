@@ -247,28 +247,71 @@ final class RealStorePhaseScopeTests: XCTestCase {
                       """)
     }
 
-    /// The headline numbers, computed through the real engine against
-    /// the real store, so the offsets baked into
-    /// ProgramStreakAcceptanceTests can be caught drifting from reality.
-    /// Phase-by-phase, this is what the per-phase screen shows.
-    func testPerPhaseBestStreakMatchesTheAcceptanceFigures() throws {
+    /// The headline numbers, computed through the real engine against the
+    /// real store, so the offsets baked into ProgramStreakAcceptanceTests
+    /// can be caught drifting from reality.
+    ///
+    /// CLOSED PHASES ONLY, and that is the whole design of this test. A
+    /// closed phase's inputs cannot change unless history is edited, so
+    /// 45 and 48 are stable facts and pinning them is free. The ACTIVE
+    /// phase's Best Streak moves every time a workout is logged — it went
+    /// 2 -> 3 the day after the figure was accepted, for the entirely
+    /// correct reason that a session was logged on 17 Oct — so pinning it
+    /// here would turn this file red every few days for no defect. That
+    /// is exactly how a detector earns its deletion.
+    ///
+    /// The active phase's behaviour is still pinned, by the frozen offset
+    /// fixture in ProgramStreakAcceptanceTests: fixed arrays, fixed
+    /// answer, unaffected by new logs. What is asserted HERE for the
+    /// active phase is only what stays true as it grows.
+    func testClosedPhaseBestStreaksMatchTheAcceptanceFigures() throws {
         let ctx = try openCopy()
         let phases = try ctx.fetch(FetchDescriptor<Phase>()).sorted { $0.number < $1.number }
         let restActivities = try ctx.fetch(FetchDescriptor<RestDayActivity>())
         let recoveries = try ctx.fetch(FetchDescriptor<ActiveRecovery>())
-        // Fixed, so an active phase's walk doesn't drift with the clock.
-        let now = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 17,
-                                                             hour: 12))!
-        let expected = [1: 45, 2: 48, 3: 2]
-        for phase in phases {
+        let expected = [1: 45, 2: 48]
+        var checked = 0
+        for phase in phases where !phase.isActive {
             guard let want = expected[phase.number] else { continue }
+            checked += 1
             let r = StatsEngine.phaseBestStreak(phase: phase, allPhases: phases,
                                                 restActivities: restActivities,
-                                                activeRecoveries: recoveries, now: now)
+                                                activeRecoveries: recoveries)
             XCTAssertEqual(r.maxStreak, want,
-                           "Phase \(phase.number) Best Streak — the acceptance figure is \(want). "
-                           + "If this moved because you logged more training, update the figure "
-                           + "and ProgramStreakAcceptanceTests together.")
+                           "Phase \(phase.number) Best Streak — the accepted figure is \(want), "
+                           + "and this phase is CLOSED, so new training cannot have moved it. "
+                           + "Either history was edited or the walk changed.")
+        }
+        XCTAssertEqual(checked, expected.count,
+                       "expected to check \(expected.count) closed phases — if a phase named "
+                       + "here has become active again, this test needs rethinking, not bumping")
+    }
+
+    /// What stays true of the ACTIVE phase however much is logged into
+    /// it. Deliberately not a figure: see the note above.
+    func testTheActivePhaseBestStreakStaysInternallyConsistent() throws {
+        let ctx = try openCopy()
+        let phases = try ctx.fetch(FetchDescriptor<Phase>()).sorted { $0.number < $1.number }
+        let restActivities = try ctx.fetch(FetchDescriptor<RestDayActivity>())
+        let recoveries = try ctx.fetch(FetchDescriptor<ActiveRecovery>())
+        guard let active = phases.first(where: \.isActive) else {
+            throw XCTSkip("No active phase in this store.")
+        }
+        let r = StatsEngine.phaseBestStreak(phase: active, allPhases: phases,
+                                            restActivities: restActivities,
+                                            activeRecoveries: recoveries)
+        XCTAssertGreaterThanOrEqual(r.maxStreak, r.currentStreak,
+                                    "the record can never be shorter than the run still open")
+        XCTAssertLessThanOrEqual(r.maxStreakRestDays, r.maxStreak,
+                                 "rest days are counted INSIDE the streak, so they cannot exceed it")
+        XCTAssertLessThanOrEqual(r.currentStreakRestDays, r.currentStreak)
+        if let range = r.maxStreakRange {
+            let span = (Calendar.current.dateComponents([.day], from: range.start,
+                                                        to: range.end).day ?? 0) + 1
+            XCTAssertGreaterThanOrEqual(span, r.maxStreak,
+                                        "the calendar span must cover every counted day — unlogged "
+                                        + "days are absorbed without being counted, never the "
+                                        + "other way round")
         }
     }
 }
