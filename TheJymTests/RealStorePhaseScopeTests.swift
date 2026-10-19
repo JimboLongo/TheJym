@@ -247,44 +247,84 @@ final class RealStorePhaseScopeTests: XCTestCase {
                       """)
     }
 
-    /// The headline numbers, computed through the real engine against the
-    /// real store, so the offsets baked into ProgramStreakAcceptanceTests
-    /// can be caught drifting from reality.
+    /// Best Streak for each CLOSED phase, pinned.
     ///
-    /// CLOSED PHASES ONLY, and that is the whole design of this test. A
-    /// closed phase's inputs cannot change unless history is edited, so
-    /// 45 and 48 are stable facts and pinning them is free. The ACTIVE
-    /// phase's Best Streak moves every time a workout is logged — it went
-    /// 2 -> 3 the day after the figure was accepted, for the entirely
-    /// correct reason that a session was logged on 17 Oct — so pinning it
-    /// here would turn this file red every few days for no defect. That
-    /// is exactly how a detector earns its deletion.
+    /// Hand-written, but NOT hand-maintained: the test below fails if a
+    /// closed phase is missing from this list, and hands you the line to
+    /// paste. A pin list that nothing checks for completeness is a list
+    /// that silently stops covering things — the same reason the scale
+    /// floor re-derives its own binding string instead of trusting a
+    /// catalogue.
     ///
-    /// The active phase's behaviour is still pinned, by the frozen offset
-    /// fixture in ProgramStreakAcceptanceTests: fixed arrays, fixed
-    /// answer, unaffected by new logs. What is asserted HERE for the
-    /// active phase is only what stays true as it grows.
-    func testClosedPhaseBestStreaksMatchTheAcceptanceFigures() throws {
+    /// Pinning at the moment a phase CLOSES is the real coverage here.
+    /// The active-phase assertions further down are invariants, and
+    /// deliberately weak ones: record >= open run, rest <= streak,
+    /// span >= count all hold under the old crediting rule as well as
+    /// the new one, so they would have passed the bug this work fixed.
+    /// An active phase's actual behaviour is pinned by the frozen offset
+    /// fixture in ProgramStreakAcceptanceTests, and a frozen fixture
+    /// ages. Capturing the figure the day a phase stops moving is what
+    /// keeps that ageing from becoming permanent.
+    static let pinnedClosedPhaseBestStreaks: [Int: Int] = [
+        1: 45,
+        2: 48,
+    ]
+
+    /// Every closed phase's Best Streak matches its pin, and every closed
+    /// phase HAS one. A closed phase's inputs cannot change unless
+    /// history is edited, so these figures are stable and a mismatch is
+    /// a real finding rather than a day's training.
+    func testEveryClosedPhaseIsPinnedAndMatches() throws {
         let ctx = try openCopy()
         let phases = try ctx.fetch(FetchDescriptor<Phase>()).sorted { $0.number < $1.number }
         let restActivities = try ctx.fetch(FetchDescriptor<RestDayActivity>())
         let recoveries = try ctx.fetch(FetchDescriptor<ActiveRecovery>())
-        let expected = [1: 45, 2: 48]
-        var checked = 0
-        for phase in phases where !phase.isActive {
-            guard let want = expected[phase.number] else { continue }
-            checked += 1
-            let r = StatsEngine.phaseBestStreak(phase: phase, allPhases: phases,
-                                                restActivities: restActivities,
-                                                activeRecoveries: recoveries)
-            XCTAssertEqual(r.maxStreak, want,
-                           "Phase \(phase.number) Best Streak — the accepted figure is \(want), "
-                           + "and this phase is CLOSED, so new training cannot have moved it. "
-                           + "Either history was edited or the walk changed.")
+
+        func best(_ phase: Phase) -> Int {
+            StatsEngine.phaseBestStreak(phase: phase, allPhases: phases,
+                                        restActivities: restActivities,
+                                        activeRecoveries: recoveries).maxStreak
         }
-        XCTAssertEqual(checked, expected.count,
-                       "expected to check \(expected.count) closed phases — if a phase named "
-                       + "here has become active again, this test needs rethinking, not bumping")
+
+        let closed = phases.filter { !$0.isActive }
+        var unpinned: [String] = []
+        for phase in closed where Self.pinnedClosedPhaseBestStreaks[phase.number] == nil {
+            unpinned.append("        \(phase.number): \(best(phase)),"
+                            + "   // Phase \(phase.number), closed")
+        }
+        XCTAssertTrue(unpinned.isEmpty,
+                      """
+
+                      \(unpinned.count) closed phase\(unpinned.count == 1 ? " has" : "s have") \
+                      no pinned Best Streak. A closed phase cannot move again, so this is the \
+                      moment to capture it — paste into \
+                      RealStorePhaseScopeTests.pinnedClosedPhaseBestStreaks:
+
+                      \(unpinned.joined(separator: "\n"))
+
+                      This is the only durable coverage a phase gets. While it was active its \
+                      behaviour was pinned by a frozen fixture, and the live invariants are too \
+                      weak to catch a crediting change on their own.
+                      """)
+
+        for phase in closed {
+            guard let want = Self.pinnedClosedPhaseBestStreaks[phase.number] else { continue }
+            XCTAssertEqual(best(phase), want,
+                           "Phase \(phase.number) Best Streak — pinned at \(want), and this "
+                           + "phase is CLOSED, so new training cannot have moved it. Either "
+                           + "history was edited or the walk changed.")
+        }
+
+        // The other direction, same reasoning as the divergence accept
+        // list: a pin for a phase that is no longer closed (a phase can
+        // be reactivated) stops describing anything and starts hiding
+        // whatever takes its number later.
+        let closedNumbers = Set(closed.map(\.number))
+        let stale = Self.pinnedClosedPhaseBestStreaks.keys.filter { !closedNumbers.contains($0) }
+        XCTAssertTrue(stale.isEmpty,
+                      "Pinned Best Streaks for \(stale.sorted()) but "
+                      + "\(stale.count == 1 ? "that phase is" : "those phases are") not closed — "
+                      + "remove the pin, or work out why a closed phase became active again.")
     }
 
     /// What stays true of the ACTIVE phase however much is logged into
