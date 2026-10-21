@@ -295,7 +295,7 @@ struct StatsView: View {
             } header: {
                 Text("Rolling Averages")
             } footer: {
-                Text("Each window divides by its own length, so days before your training start count as Rest. That's deliberately different from the Consistency table below, which divides by days since you started.")
+                Text("Each window divides by its own length, so any day with nothing logged counts as Rest — including days before your training start, though anything you did log then still counts as Active. That's deliberately different from the Consistency table below, which divides by days since you started. Best is the highest Active percentage any window of that length has ever reached, over your whole history rather than the last year. Rest isn't shown: it's exactly 100% minus Active.")
             }
         }
     }
@@ -1647,7 +1647,15 @@ struct RollingWindowTable: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let windows: [RollingWindow]
 
-    private static let columns = ["Active", "Lift", "Walk", "Rest"]
+    /// Best FIRST, then Active — the benchmark reads left of the figure
+    /// it benchmarks. Rest is gone: it was exactly `days - active`, the
+    /// one cell derivable from its neighbour, and dropping it is what
+    /// made room for Best at the unchanged spacing of 12.
+    static let columns = ["Best", "Active", "Lift", "Walk"]
+    /// Exposed so RollingWindowBestTests can re-derive the width budget
+    /// from the real values rather than restating them.
+    static var columnCount: Int { columns.count }
+    static let horizontalSpacing: CGFloat = 12
 
     private func pct(_ v: Double) -> String { String(format: "%.1f%%", v) }
 
@@ -1686,12 +1694,43 @@ struct RollingWindowTable: View {
             // "1" is narrower than "176". Only the row label stays
             // intrinsic.
             //
-            // The narrowest case clears comfortably. At 375pt:
-            // (375 - 32 insets - 64 label - 48 spacing) / 4 = 57.8pt per
-            // column, against the 44.5pt that "100.0%" needs at .caption
-            // — the widest line any cell can contain. 13pt spare, so
-            // nothing wraps or shrinks at equal width.
-            Grid(alignment: .center, horizontalSpacing: 12, verticalSpacing: 10) {
+            // THE BUDGET IS TOTAL-NEEDED vs TOTAL-AVAILABLE, not
+            // per-column, and this comment used to get that wrong in a
+            // way that would have broken the table.
+            //
+            // Every cell is .fixedSize(), so a Grid that doesn't fit
+            // OVERFLOWS rather than compressing its columns. Probing a
+            // five-column version returned the same 55.667pt column at
+            // 375, 393 and 402pt containers — that is the cell's
+            // intrinsic width, not the space it was given. There is no
+            // per-column squeeze to spend.
+            //
+            // Measured at .large, which is what these cells actually
+            // render at:
+            //
+            //   "100.0%"    55.667pt   .subheadline monospaced BOLD
+            //   "365 days"  63.667pt   .subheadline (the widest label)
+            //
+            // The previous note claimed 44.5pt "at .caption". No cell
+            // renders the percent at .caption — the count beneath it
+            // does, the percent does not — so the real requirement was
+            // 11pt wider than documented, and the four-column table had
+            // 2.2pt of slack rather than the 13pt claimed.
+            //
+            // Total needed = label + N x 55.667 + N x spacing + 32 insets:
+            //
+            //   4 cols, spacing 12   366.3pt   fits 375 and 402
+            //   5 cols, spacing 12   434.0pt   over 375 by 59
+            //   5 cols, spacing  8   414.0pt   over 375 by 39
+            //   5 cols, spacing  4   394.0pt   over 375 by 19
+            //
+            // So a FIFTH column does not fit at any sane spacing, which
+            // is why Best replaced Rest rather than joining it. At four
+            // columns the total is unchanged from before. Before adding
+            // a column, re-measure — and note
+            // testTheTableFitsTheNarrowestDevice asserts the total.
+            Grid(alignment: .center, horizontalSpacing: Self.horizontalSpacing,
+                 verticalSpacing: 10) {
                 GridRow {
                     Text("")
                     ForEach(Self.columns, id: \.self) { column in

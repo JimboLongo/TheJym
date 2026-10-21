@@ -346,11 +346,19 @@ struct RollingWindow: Identifiable, Hashable {
     let active: Int
     let lift: Int
     let walk: Int
+    /// The highest Active count any window of this length has ever
+    /// reached, over the WHOLE history rather than the last 365 days —
+    /// see StatsEngine.bestActiveCounts.
+    let bestActive: Int
+    /// Still derivable, and no longer shown: Rest is exactly
+    /// `days - active`, the only cell in the table that carried no
+    /// information its neighbour didn't. Its column became Best.
     var rest: Int { days - active }
     var id: Int { days }
 
     func count(for column: String) -> Int {
         switch column {
+        case "Best": return bestActive
         case "Lift": return lift
         case "Walk": return walk
         case "Rest": return rest
@@ -730,8 +738,14 @@ enum StatsEngine {
             if streakLiftDays.contains(day) { liftAges.append(age) } else { walkAges.append(age) }
         }
         liftAges.sort(); walkAges.sort()
+        // Best-ever needs the whole history, not the `age < 365` slice the
+        // live windows run on — see bestActiveCounts, which is memoised
+        // because this function is not called once.
+        let bestCounts = StatsEngine.bestActiveCounts(activeDays: activeDays,
+                                                      effectiveToday: effectiveToday,
+                                                      lengths: rollingLengths)
         var liftCursor = 0, walkCursor = 0, liftSoFar = 0, walkSoFar = 0
-        let rollingWindows: [RollingWindow] = rollingLengths.map { length in
+        let rollingWindows: [RollingWindow] = rollingLengths.enumerated().map { index, length in
             while liftCursor < liftAges.count, liftAges[liftCursor] < length {
                 liftCursor += 1; liftSoFar += 1
             }
@@ -741,7 +755,8 @@ enum StatsEngine {
             // active is the SUM, never counted separately, which is what
             // makes lift + walk == active true by construction.
             return RollingWindow(days: length, active: liftSoFar + walkSoFar,
-                                 lift: liftSoFar, walk: walkSoFar)
+                                 lift: liftSoFar, walk: walkSoFar,
+                                 bestActive: bestCounts[index])
         }
 
         let liftStreaks = activeDayStreaks(activeDays: streakLiftDays, today: today, cal: cal)
@@ -1701,6 +1716,76 @@ enum StatsEngine {
                                plainRestDates: plainRestDates,
                                resetEvents: phase.restBankResetEvents,
                                now: end)
+    }
+
+    /// The best Active count ever reached by a window of each length,
+    /// scanning the WHOLE history rather than the 365 days the live
+    /// windows look at.
+    ///
+    /// WINDOW ELIGIBILITY. Only windows whose start is on or after the
+    /// first active day count. A window reaching back before anything was
+    /// logged would be padded with days that could not have been logged,
+    /// so it would measure the length of the history rather than how the
+    /// training went — and it would be measuring Best on a different rule
+    /// from Active, which is anchored to real days. Note this deliberately
+    /// does NOT use the training start date: imported history predating it
+    /// is real logged training (296 active days reach back to Feb 2025 on
+    /// a store whose start date is Jul 2026) and the 180-day best lives
+    /// inside it.
+    ///
+    /// MEMOISED, and that is not an optimisation. compute() runs ~215
+    /// times per render — the same reason the rest runs come out of gaps
+    /// rather than a fourth walk — and a prefix-sum scan of a 616-day
+    /// history measured 0.51 ms, so 215 of them is 110 ms of a render.
+    /// The cache key is the full input, not a checksum: a collision would
+    /// show a stale best figure, which is indistinguishable from a wrong
+    /// one.
+    private struct BestKey: Hashable {
+        let days: Set<Date>
+        let end: Date
+        let lengths: [Int]
+    }
+    nonisolated(unsafe) private static var bestCache: (key: BestKey, value: [Int])?
+
+    static func bestActiveCounts(activeDays: Set<Date>, effectiveToday: Date,
+                                 lengths: [Int]) -> [Int] {
+        let key = BestKey(days: activeDays, end: effectiveToday, lengths: lengths)
+        if let cached = bestCache, cached.key == key { return cached.value }
+
+        let cal = Calendar.current
+        guard let first = activeDays.min() else {
+            let zeros = [Int](repeating: 0, count: lengths.count)
+            bestCache = (key, zeros)
+            return zeros
+        }
+        let span = (cal.dateComponents([.day], from: first, to: effectiveToday).day ?? 0) + 1
+        guard span > 0 else {
+            let zeros = [Int](repeating: 0, count: lengths.count)
+            bestCache = (key, zeros)
+            return zeros
+        }
+        // One bucket per day of age, then a prefix sum, so any window is
+        // a single subtraction rather than a rescan.
+        var byAge = [Int](repeating: 0, count: span + 1)
+        for day in activeDays {
+            guard let age = cal.dateComponents([.day], from: day, to: effectiveToday).day,
+                  age >= 0, age < byAge.count else { continue }
+            byAge[age] += 1
+        }
+        var prefix = [Int](repeating: 0, count: byAge.count + 1)
+        for i in 0..<byAge.count { prefix[i + 1] = prefix[i] + byAge[i] }
+
+        let result = lengths.map { length -> Int in
+            guard span >= length else { return 0 }
+            var best = 0
+            for offset in 0...(span - length) {
+                let hi = min(offset + length, byAge.count)
+                best = max(best, prefix[hi] - prefix[min(offset, byAge.count)])
+            }
+            return best
+        }
+        bestCache = (key, result)
+        return result
     }
 
     /// Required pace (slots per calendar day) implied by the phase's own
